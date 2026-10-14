@@ -42,6 +42,14 @@ jobs:
       - name: Test (C++)
         run: ctest --test-dir build --output-on-failure
 
+      - name: CRDT load benchmark (Release, 200k notes in at most 3 s)
+        env:
+          WEFT_BENCH_ENFORCE: "1"
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEFT_WITH_JUCE=OFF
+          cmake --build build-release --target weft_bench_tests --parallel
+          ./build-release/tests/weft_bench_tests
+
       - name: Test (Rust)
         run: cargo test --workspace --locked
 
