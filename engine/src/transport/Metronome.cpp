@@ -38,19 +38,20 @@ int Metronome::clicksIn (const EngineSnapshot& snap, std::int64_t from, std::int
     // Start one beat early so rounding between ticks and samples can't skip a click.
     const auto startTick = static_cast<Ticks> (std::floor (snap.tempo.sampleToTick (static_cast<double> (from)))) - 1;
     auto bp = snap.signatures.barAt (startTick);
-    auto sig = snap.signatures.signatureAtBar (bp.bar);
-    auto beatLen = 4 * ticksPerQuarter / sig.denominator;
+    // A pointer, not a copy: SignaturePoint holds a string, and copying one may allocate.
+    const SignaturePoint* sig = &snap.signatures.signatureAtBar (bp.bar);
+    auto beatLen = 4 * ticksPerQuarter / sig->denominator;
     auto beat = static_cast<int> (bp.offset / beatLen);
     auto barStart = snap.signatures.barStart (bp.bar);
 
     int count = 0;
     for (int guard = 0; guard < 100000 && count < maxClicks; ++guard)
     {
-        if (beat >= sig.numerator)
+        if (beat >= sig->numerator)
         {
             ++bp.bar;
-            sig = snap.signatures.signatureAtBar (bp.bar);
-            beatLen = 4 * ticksPerQuarter / sig.denominator;
+            sig = &snap.signatures.signatureAtBar (bp.bar);
+            beatLen = 4 * ticksPerQuarter / sig->denominator;
             barStart = snap.signatures.barStart (bp.bar);
             beat = 0;
         }
