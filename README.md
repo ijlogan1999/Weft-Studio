@@ -31,13 +31,13 @@ design in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Building
 
-You need CMake 3.25+, a C++20 compiler (Visual Studio 2022 on Windows, GCC 13 or
+You need CMake 3.25+, a C++20 compiler (Visual Studio 2022 or newer on Windows, GCC 13 or
 Clang 17 on Linux), Python 3, and a Rust toolchain (1.90 or newer, from
 [rustup](https://rustup.rs)). CMake downloads JUCE, Catch2 and Corrosion at
 configure time; versions are pinned in [`third_party/cpp-deps.json`](third_party/cpp-deps.json).
 
 ```sh
-# Windows (Visual Studio)
+# Windows (newest installed Visual Studio)
 cmake --preset vs
 cmake --build --preset vs
 ctest --preset vs

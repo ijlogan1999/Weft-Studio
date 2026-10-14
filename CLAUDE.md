@@ -10,7 +10,7 @@
 
 ```sh
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev   # Linux/Ninja
-cmake --preset vs && cmake --build --preset vs && ctest --preset vs      # Windows/VS 2022
+cmake --preset vs && cmake --build --preset vs && ctest --preset vs      # Windows/Visual Studio
 cargo test --workspace && cargo fmt --all --check && cargo clippy --workspace -- -D warnings
 ```
 

@@ -65,7 +65,8 @@ jobs:
           key: deps-windows-${{ hashFiles('third_party/cpp-deps.json') }}
 
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        # No explicit generator: CMake picks the newest installed Visual Studio, x64 by default.
+        run: cmake -S . -B build
 
       - name: Build
         run: cmake --build build --config Debug --parallel

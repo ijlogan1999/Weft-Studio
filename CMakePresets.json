@@ -17,9 +17,7 @@
     },
     {
       "name": "vs",
-      "displayName": "Visual Studio 2022",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
+      "displayName": "Visual Studio (newest installed, x64)",
       "binaryDir": "${sourceDir}/build/vs"
     }
   ],
