@@ -150,7 +150,7 @@ Ctrl+drag copies. Ctrl+C then Ctrl+V pastes at the playhead onto the selected tr
 ### W-3f · Join
 
 - MIDI: Ctrl+J merges selected MIDI regions on the same track into one region spanning them; events keep absolute positions.
-- Audio: if selected regions are contiguous pieces of the same file at their original relative offsets, joining just re-creates one region. Otherwise the system renders the selection (with gain and fades) to a new WAV and replaces the regions with one region. **Decision D-ARR-3:** rendering is acceptable in MVP; the original regions remain recoverable through undo and version history.
+- Audio: if selected regions are contiguous pieces of the same file at their original relative offsets, joining just re-creates one region. Otherwise the system renders the selection (with gain and fades) to a new WAV and replaces the regions with one region. **Decision D-ARR-3:** rendering is acceptable in MVP; the original regions remain recoverable through undo and version history. Contiguous means: same file, each region's `sourceOffset` equals the previous region's `sourceOffset + length`, and its start lies within one sample of the previous region's end. **Decision D-ARR-4:** the joined region keeps the first region's fade-in and takes the last region's fade-out.
 
 ### W-3g · Delete
 
@@ -406,6 +406,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W3-2 | Overlap stacking by per-region z-order. |
 | D-W3-3 | Split keeps crossing notes whole in the left region. |
 | D-ARR-3 | Joining non-contiguous audio renders a new file. |
+| D-ARR-4 | Joined audio keeps the first fade-in and the last fade-out. |
 | D-W3-4 | Undo history is per session, not persisted. |
 | D-W4-1 | MIDI 60 is labeled C3. |
 | D-W5-1 | Swing 0–100% maps from straight to triplet feel. |

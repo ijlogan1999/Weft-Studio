@@ -1,0 +1,200 @@
+#pragma once
+
+// The editing session: owns the document and its projection, runs commands as
+// CRDT changes, and keeps this user's undo/redo stacks (spec 05 §6).
+
+#include "weft/commands/Txn.h"
+#include "weft/core/Id.h"
+#include "weft/model/ProjectModel.h"
+
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace weft::commands
+{
+using model::ProjectModel;
+
+/** Result of a command: ok, or the reason it was rejected (nothing was written). */
+struct EditResult
+{
+    bool ok = true;
+    std::string error;
+
+    static EditResult fail (std::string why) { return { false, std::move (why) }; }
+    explicit operator bool() const noexcept { return ok; }
+};
+
+struct UndoResult
+{
+    bool done = false;      // something was undone/redone (a change was made)
+    std::string message;    // status bar text when parts were skipped
+};
+
+struct NewProjectOptions
+{
+    std::string name = "Untitled";
+    int sampleRate = 48000;
+    int recordBitDepth = 24;
+};
+
+/** Milliseconds since the Unix epoch. Injectable so tests are deterministic. */
+using Clock = std::function<std::int64_t()>;
+std::int64_t systemClockMs();
+
+/** Commit message: "weft1|<userId>|<command name>" (attribution and history labels). */
+std::string commitMessage (const UserId& user, std::string_view name);
+
+class Session
+{
+public:
+    Session (doc::Document document, UserId user, Clock clock = systemClockMs, std::uint64_t idSeed = 0);
+
+    /** A new project (AT-PRJ-1). Not undoable: it is the document's first change. */
+    static std::optional<Session> createNew (const NewProjectOptions& options, UserId user, std::string* error = nullptr,
+                                             Clock clock = systemClockMs, std::uint64_t idSeed = 0);
+
+    const ProjectModel& model() const noexcept { return projection; }
+    doc::Document& document() noexcept { return doc; }
+    const doc::Document& document() const noexcept { return doc; }
+    const UserId& user() const noexcept { return userId; }
+    Id newId() { return ids.next(); }
+
+    /** Called with each local change's bytes after commit (the recovery log listens here). */
+    std::function<void (const doc::Bytes& change, std::int64_t timeMs)> onLocalChange;
+
+    // Remote/merged changes ---------------------------------------------------
+    /** Applies changes from elsewhere and refreshes the projection. Not undoable. */
+    doc::Status applyChanges (std::span<const std::uint8_t> changes);
+    /** Re-reads the whole document (after a merge or load). */
+    void reproject();
+
+    // Undo ----------------------------------------------------------------------
+    bool canUndo() const noexcept { return ! undoStack.empty() && ! gesture; }
+    bool canRedo() const noexcept { return ! redoStack.empty() && ! gesture; }
+    std::string undoName() const { return undoStack.empty() ? std::string() : undoStack.back().name; }
+    std::string redoName() const { return redoStack.empty() ? std::string() : redoStack.back().name; }
+    UndoResult undo();
+    UndoResult redo();
+
+    // Gestures: begin, any number of command calls, then end (one change, one undo step) or cancel.
+    void beginGesture (std::string name);
+    bool inGesture() const noexcept { return gesture.has_value(); }
+    void endGesture();
+    void cancelGesture();
+
+    /** Runs fn as one undoable change. fn returns false to reject (its writes are rolled back). */
+    EditResult edit (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn);
+
+    // Project -------------------------------------------------------------------
+    EditResult renameProject (const std::string& name);
+    EditResult setCycle (bool enabled, Ticks start, Ticks end);
+    EditResult setPunch (bool enabled, Ticks start, Ticks end);
+    EditResult setEndMarker (std::optional<Ticks> end);
+
+    // Tracks ------------------------------------------------------------------
+    std::optional<Id> createTrack (model::TrackKind kind, const std::string& name, int channels = 2, std::optional<std::size_t> orderIndex = {});
+    EditResult deleteTrack (const Id& trackId);
+    EditResult renameTrack (const Id& trackId, const std::string& name);
+    EditResult moveTrack (const Id& trackId, std::size_t newIndex);
+    EditResult setTrackVolume (const Id& trackId, double volumeDb);
+    EditResult setTrackPan (const Id& trackId, double pan);
+    EditResult setTrackMute (const Id& trackId, bool mute);
+    EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
+    /** Writes the Recovered tracks the projection synthesized for orphan regions (D-DM-17). */
+    EditResult materializeRecoveredTracks();
+
+    // Regions -----------------------------------------------------------------
+    std::optional<Id> createAudioRegion (const Id& trackId, Ticks start, const std::string& mediaHash, Samples sourceOffset, Samples length);
+    std::optional<Id> createMidiRegion (const Id& trackId, Ticks start, Ticks length);
+    EditResult moveRegion (const Id& regionId, Ticks newStart, std::optional<Id> newTrackId = {});
+    /** Moves the region's start edge, keeping the end fixed on the timeline. */
+    EditResult trimRegionStart (const Id& regionId, Ticks newStart);
+    /** Sets the region length (ticks for MIDI, samples for audio), keeping the start fixed. */
+    EditResult trimRegionLength (const Id& regionId, std::int64_t newLength);
+    std::optional<Id> splitRegion (const Id& regionId, Ticks at);
+    /** Joins regions on one track into the earliest one (MIDI, or contiguous audio from one file). */
+    EditResult joinRegions (const std::vector<Id>& regionIds);
+    EditResult deleteRegions (const std::vector<Id>& regionIds);
+    EditResult setRegionFades (const Id& regionId, std::optional<model::Fade> fadeIn, std::optional<model::Fade> fadeOut);
+    EditResult setRegionGain (const Id& regionId, double gainDb);
+    EditResult setRegionMuted (const Id& regionId, bool muted);
+    EditResult setRegionName (const Id& regionId, const std::string& name);
+    EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
+
+    // Media ---------------------------------------------------------------------
+    EditResult addMedia (const model::MediaRef& media);
+
+    // Notes (positions are sequence ticks) ------------------------------------------
+    std::optional<Id> addNote (const Id& regionId, model::Note note);
+    EditResult updateNote (const Id& regionId, const model::Note& note);
+    EditResult deleteNotes (const Id& regionId, const std::vector<Id>& noteIds);
+    /** Destructive quantize of notes (all notes in the region window if noteIds is empty). */
+    EditResult quantizeNotes (const Id& regionId, const std::vector<Id>& noteIds, Ticks grid, double strength, double swingPercent);
+
+    // Plugins and sends ---------------------------------------------------------
+    std::optional<Id> addInsert (const Id& trackId, model::PluginInstance plugin, std::optional<std::size_t> index = {});
+    EditResult removeInsert (const Id& trackId, const Id& pluginId);
+    EditResult setInsertBypass (const Id& trackId, const Id& pluginId, bool bypass);
+    EditResult setPluginParam (const Id& trackId, const Id& pluginId, const std::string& paramId, double normalized);
+    std::optional<Id> addSend (const Id& trackId, const Id& busId, double levelDb = 0.0, bool pre = false);
+    EditResult setSendLevel (const Id& trackId, const Id& sendId, double levelDb);
+    EditResult setSendTarget (const Id& trackId, const Id& sendId, const Id& busId);
+    EditResult removeSend (const Id& trackId, const Id& sendId);
+
+    // Automation ----------------------------------------------------------------
+    std::optional<Id> addAutomationPoint (const Id& trackId, const model::AutomationTarget& target, Ticks pos, double value, double curve = 0.0);
+    EditResult moveAutomationPoint (const Id& laneId, const Id& pointId, Ticks pos, double value);
+    EditResult deleteAutomationPoint (const Id& laneId, const Id& pointId);
+
+    // Tempo, signature, markers --------------------------------------------------
+    std::optional<Id> addTempoPoint (Ticks pos, double bpm);
+    EditResult setTempoPoint (const Id& pointId, Ticks pos, double bpm);
+    EditResult deleteTempoPoint (const Id& pointId);
+    std::optional<Id> addSignaturePoint (int bar, int numerator, int denominator);
+    EditResult setSignaturePoint (const Id& pointId, int bar, int numerator, int denominator);
+    EditResult deleteSignaturePoint (const Id& pointId);
+    std::optional<Id> addMarker (Ticks pos, const std::string& name);
+    EditResult moveMarker (const Id& markerId, Ticks pos);
+    EditResult renameMarker (const Id& markerId, const std::string& name);
+    EditResult deleteMarker (const Id& markerId);
+
+    /** Message of the last rejected command (for the status bar). */
+    const std::string& lastError() const noexcept { return error; }
+
+private:
+    struct Gesture
+    {
+        Txn txn;
+        std::unique_ptr<TxnWriter> writer;
+    };
+
+    EditResult run (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn);
+    std::optional<Id> runCreate (std::string_view name, Id id, const std::function<EditResult (TxnWriter&)>& fn);
+    void finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo);
+    void refreshFor (const Txn& txn);
+    UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
+    bool wouldCycle (const Id& fromTrack, const Id& toTrack, const std::string& ignoreEdgeKey) const;
+    void stamp (TxnWriter& w, const Id& regionId);
+    EditResult reject (std::string why)
+    {
+        error = why;
+        return EditResult::fail (std::move (why));
+    }
+
+    doc::Document doc;
+    UserId userId;
+    Clock clock;
+    IdGenerator ids;
+    ProjectModel projection;
+    std::vector<Txn> undoStack, redoStack;
+    /** Objects re-created by undo/redo get new op ids; older records still name the old ones. */
+    std::map<std::string, std::string> opIdAliases;
+    std::string resolveOpId (std::string opId) const;
+    std::optional<Gesture> gesture;
+    std::string error;
+};
+} // namespace weft::commands

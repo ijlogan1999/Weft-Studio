@@ -305,7 +305,7 @@ samplesPerTick_i = sampleRate × 60 / (bpm_i × 960)
 S_{i+1} = S_i + (T_{i+1} − T_i) × samplesPerTick_i
 sample(t) = S_i + (t − T_i) × samplesPerTick_i     for T_i ≤ t < T_{i+1}
 ```
-Results are computed in float64 and rounded to the nearest sample only at the point of use. The inverse (sample → tick) uses the same segments.
+Results are computed in float64 and rounded to the nearest sample only at the point of use. **Decision D-DM-19:** adding a tempo or signature change where one already exists (same tick or bar) changes that point instead of adding a second one; the first tempo and signature (id `"initial"`) can be changed but not moved or deleted. The inverse (sample → tick) uses the same segments.
 
 **Bar/beat ↔ ticks.** A bar of `n/d` lasts `n × (4/d) × 960` ticks. Signature changes are only at bar starts, so bar *b*'s start tick is the sum of preceding bar lengths. Signature points are stored by bar number, so changing a meter shifts later bar numbers. **Decision D-DM-10:** when a signature point is inserted or changed, existing regions keep their tick positions (they don't jump to stay on the same bar number). Users who want content to follow bar numbers re-place it. This is simplest and avoids moving every object in a CRDT transaction.
 
@@ -495,3 +495,4 @@ All repairs are deterministic functions of the document state so every client sh
 | D-DM-16 | Delete beats concurrent edit. |
 | D-DM-17 | Orphaned regions go to a deterministic Recovered track. |
 | D-DM-18 | List moves are delete+insert with dedupe repair. |
+| D-DM-19 | Adding a tempo/signature change at an existing position edits that point. |

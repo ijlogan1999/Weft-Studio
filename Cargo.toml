@@ -13,3 +13,8 @@ automerge = "0.12"
 
 [profile.release]
 debug = 1
+
+# Debug builds still optimize dependencies (Automerge), so engine and document
+# tests run at realistic speed. Weft's own crates stay debuggable.
+[profile.dev.package."*"]
+opt-level = 3
