@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (core, engine, plugins, relay)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JUCE dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache fetched C++ dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps/*-src
+          key: deps-linux-${{ hashFiles('third_party/cpp-deps.json') }}
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test (C++)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Test (Rust)
+        run: cargo test --workspace --locked
+
+      - name: Rust lint
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --locked -- -D warnings
+
+  windows:
+    name: Windows (full build)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache fetched C++ dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps/*-src
+          key: deps-windows-${{ hashFiles('third_party/cpp-deps.json') }}
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Debug --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Debug --output-on-failure
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeftStudio-windows-debug
+          path: build/app/WeftStudio_artefacts/Debug/
+          if-no-files-found: error

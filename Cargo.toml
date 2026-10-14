@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/weft-crdt", "relay"]
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-only"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+automerge = "0.12"
+
+[profile.release]
+debug = 1

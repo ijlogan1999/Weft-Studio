@@ -1,0 +1,37 @@
+{
+  "JUCE": {
+    "git": "https://github.com/juce-framework/JUCE",
+    "tag": "8.0.9",
+    "license": "AGPL-3.0-only",
+    "license_files": ["LICENSE.md"],
+    "ships": true,
+    "purpose": "Windowing, graphics, audio/MIDI devices, VST3 hosting, audio file I/O",
+    "bundled": [
+      {"name": "Steinberg VST3 SDK", "license": "GPL-3.0-only", "license_files": ["modules/juce_audio_processors/format_types/VST3_SDK/LICENSE.txt"], "note": "Dual licensed Steinberg VST3 License / GPLv3; Weft uses it under GPLv3."},
+      {"name": "FLAC", "license": "BSD-3-Clause", "license_files": ["modules/juce_audio_formats/codecs/flac/Flac Licence.txt"]},
+      {"name": "Ogg Vorbis", "license": "BSD-3-Clause", "license_files": ["modules/juce_audio_formats/codecs/oggvorbis/Ogg Vorbis Licence.txt"]},
+      {"name": "jpeglib", "license": "IJG", "license_files": ["modules/juce_graphics/image_formats/jpglib/README"]},
+      {"name": "libpng", "license": "Zlib", "license_files": ["modules/juce_graphics/image_formats/pnglib/LICENSE"]},
+      {"name": "zlib", "license": "Zlib", "license_files": ["modules/juce_core/zip/zlib/README"]},
+      {"name": "HarfBuzz", "license": "MIT-Modern-Variant", "license_files": ["modules/juce_graphics/fonts/harfbuzz/COPYING"]},
+      {"name": "SheenBidi", "license": "Apache-2.0", "license_files": ["modules/juce_graphics/unicode/sheenbidi/LICENSE"]},
+      {"name": "pslextensions", "license": "LicenseRef-Public-Domain", "license_files": ["modules/juce_audio_processors/format_types/pslextensions/ipslcontextinfo.h"]}
+    ]
+  },
+  "Catch2": {
+    "git": "https://github.com/catchorg/Catch2",
+    "tag": "v3.9.1",
+    "license": "BSL-1.0",
+    "license_files": ["LICENSE.txt"],
+    "ships": false,
+    "purpose": "C++ unit test framework (tests only)"
+  },
+  "Corrosion": {
+    "git": "https://github.com/corrosion-rs/corrosion",
+    "tag": "v0.6.1",
+    "license": "MIT",
+    "license_files": ["LICENSE"],
+    "ships": false,
+    "purpose": "CMake integration for Rust crates (build only)"
+  }
+}

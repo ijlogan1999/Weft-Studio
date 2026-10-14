@@ -1,0 +1,6 @@
+#include "weft/core/Version.h"
+
+namespace weft
+{
+std::string_view versionString() noexcept { return "@PROJECT_VERSION@"; }
+} // namespace weft
