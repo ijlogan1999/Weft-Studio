@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "dev",
+      "displayName": "Debug (Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dev",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "headless",
+      "displayName": "Debug, no JUCE (core, engine, CLI only)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/headless",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "WEFT_WITH_JUCE": "OFF" }
+    },
+    {
+      "name": "vs",
+      "displayName": "Visual Studio (newest installed, x64)",
+      "binaryDir": "${sourceDir}/build/vs"
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "headless", "configurePreset": "headless" },
+    { "name": "vs", "configurePreset": "vs", "configuration": "Debug" }
+  ],
+  "testPresets": [
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
+    { "name": "headless", "configurePreset": "headless", "output": { "outputOnFailure": true } },
+    { "name": "vs", "configurePreset": "vs", "configuration": "Debug", "output": { "outputOnFailure": true } }
+  ]
+}
