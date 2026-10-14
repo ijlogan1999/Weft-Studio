@@ -5,6 +5,7 @@ add_executable(weft_unit_tests
     unit/ProjectTests.cpp
     unit/RepairTests.cpp
     unit/TimeTests.cpp
+    unit/TransportTests.cpp
     unit/UndoTests.cpp
     unit/ValueTests.cpp
 )
@@ -20,7 +21,9 @@ endif()
 
 # [E] engine tests (NullDevice)
 add_executable(weft_engine_tests
+    engine/AllocationCounter.cpp
     engine/NullDeviceTests.cpp
+    engine/TransportEngineTests.cpp
 )
 target_link_libraries(weft_engine_tests PRIVATE weft::engine Catch2::Catch2WithMain)
 catch_discover_tests(weft_engine_tests)
@@ -48,10 +51,18 @@ foreach(mode IN ITEMS recover discard)
                      $<TARGET_FILE:weft-cli> "${CMAKE_CURRENT_BINARY_DIR}/kill-${mode}" ${mode})
 endforeach()
 
+add_test(NAME cli.render
+         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cli_render.py"
+                 $<TARGET_FILE:weft-cli> "${CMAKE_CURRENT_BINARY_DIR}/cli-render")
+
 add_test(NAME cli.version COMMAND weft-cli version)
 set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "Weft Studio ${PROJECT_VERSION}")
 
 if(WEFT_WITH_JUCE)
+    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp)
+    target_link_libraries(weft_juce_device_tests PRIVATE weft::engine_juce Catch2::Catch2WithMain)
+    catch_discover_tests(weft_juce_device_tests)
+
     add_subdirectory(fixtures/plugins)
     add_subdirectory(plugins)
 endif()

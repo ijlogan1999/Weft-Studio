@@ -1,6 +1,6 @@
 #include "weft/engine/devices/NullDevice.h"
 
-#include "weft/engine/rt/AudioThread.h"
+#include "weft/rt/AudioThread.h"
 
 #include <algorithm>
 #include <chrono>

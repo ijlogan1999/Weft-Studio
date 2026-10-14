@@ -1149,4 +1149,57 @@ EditResult Session::deleteMarker (const Id& markerId)
         return reject ("That marker no longer exists.");
     return run ("Delete Marker", [&] (TxnWriter& w) { return wrote (w.remove (markerPath (markerId))); });
 }
+
+// Transport displays (F-TRN-9, 10, 20) ------------------------------------------------
+
+EditResult Session::setTempoAt (Ticks at, double bpm)
+{
+    // The tempo display edits the tempo in effect at the playhead, clamped to range (AT-TRN-13).
+    bpm = std::round (std::clamp (bpm, TempoMap::minBpm, TempoMap::maxBpm) * 100.0) / 100.0;
+    const auto& points = projection.tempo.points();
+    const TempoPoint* inEffect = &points.front();
+    for (const auto& p : points)
+        if (p.pos <= at)
+            inEffect = &p;
+    return setTempoPoint (inEffect->id, inEffect->pos, bpm);
+}
+
+EditResult Session::setSignatureAt (int bar, int numerator, int denominator)
+{
+    const auto& p = projection.signatures.signatureAtBar (std::max (0, bar));
+    return setSignaturePoint (p.id, p.bar, numerator, denominator);
+}
+
+EditResult Session::setCycleToRegions (const std::vector<Id>& regionIds)
+{
+    double first = 0, last = 0;
+    bool any = false;
+    for (const auto& id : regionIds)
+        if (const auto* r = projection.region (id))
+        {
+            const auto start = static_cast<double> (r->start), end = projection.regionEndTick (*r);
+            first = any ? std::min (first, start) : start;
+            last = any ? std::max (last, end) : end;
+            any = true;
+        }
+    if (! any)
+        return EditResult::fail ({}); // nothing selected: U does nothing (AT-TRN-19)
+
+    // Round outward to whole bars.
+    const auto& sig = projection.signatures;
+    const auto start = sig.barStart (sig.barAt (static_cast<Ticks> (std::floor (first))).bar);
+    const auto endBar = sig.barAt (static_cast<Ticks> (std::ceil (last)));
+    const auto end = sig.barStart (endBar.offset == 0 ? endBar.bar : endBar.bar + 1);
+    return setCycle (true, std::max<Ticks> (0, start), end);
+}
+
+Ticks projectEndTick (const ProjectModel& model)
+{
+    if (model.info.endMarker)
+        return *model.info.endMarker;
+    double end = 0;
+    for (const auto& [id, r] : model.regions)
+        end = std::max (end, model.regionEndTick (*r));
+    return static_cast<Ticks> (std::ceil (end));
+}
 } // namespace weft::commands

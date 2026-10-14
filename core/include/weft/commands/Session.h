@@ -41,6 +41,9 @@ struct NewProjectOptions
     int recordBitDepth = 24;
 };
 
+/** End of the project: the end marker, or the end of the last region (Go to End, F-TRN-4). */
+Ticks projectEndTick (const ProjectModel& model);
+
 /** Milliseconds since the Unix epoch. Injectable so tests are deterministic. */
 using Clock = std::function<std::int64_t()>;
 std::int64_t systemClockMs();
@@ -94,6 +97,8 @@ public:
     EditResult setCycle (bool enabled, Ticks start, Ticks end);
     EditResult setPunch (bool enabled, Ticks start, Ticks end);
     EditResult setEndMarker (std::optional<Ticks> end);
+    /** U: sets the cycle to the regions' span rounded outward to bars and turns it on. No regions: no change. */
+    EditResult setCycleToRegions (const std::vector<Id>& regionIds);
 
     // Tracks ------------------------------------------------------------------
     std::optional<Id> createTrack (model::TrackKind kind, const std::string& name, int channels = 2, std::optional<std::size_t> orderIndex = {});
@@ -157,6 +162,10 @@ public:
     std::optional<Id> addSignaturePoint (int bar, int numerator, int denominator);
     EditResult setSignaturePoint (const Id& pointId, int bar, int numerator, int denominator);
     EditResult deleteSignaturePoint (const Id& pointId);
+    /** Tempo display edit: sets the tempo in effect at `at`, clamped to 20-999 BPM (F-TRN-9). */
+    EditResult setTempoAt (Ticks at, double bpm);
+    /** Signature display edit: changes the signature in effect at the 0-based bar (F-TRN-10). */
+    EditResult setSignatureAt (int bar, int numerator, int denominator);
     std::optional<Id> addMarker (Ticks pos, const std::string& name);
     EditResult moveMarker (const Id& markerId, Ticks pos);
     EditResult renameMarker (const Id& markerId, const std::string& name);

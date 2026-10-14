@@ -3,6 +3,9 @@
 #include "weft/commands/Session.h"
 #include "weft/core/Version.h"
 #include "weft/engine/devices/NullDevice.h"
+#include "weft/engine/transport/Engine.h"
+#include "weft/media/WavFile.h"
+#include "weft/time/Position.h"
 #include "weft/project/ProjectFolder.h"
 
 #include <chrono>
@@ -44,7 +47,8 @@ int usage()
                 "       weft-cli null-render [seconds] [sample-rate] [block-size]\n"
                 "       weft-cli new <parent-dir> <name> [sample-rate]\n"
                 "       weft-cli demo-edits <project.weft> [--dump <file.json>] [--hold]\n"
-                "       weft-cli open <project.weft> [--recover | --discard] [--dump <file.json>]\n",
+                "       weft-cli open <project.weft> [--recover | --discard] [--dump <file.json>]\n"
+                "       weft-cli render <project.weft> <out.wav> [--from <bar beat>] [--seconds <s>] [--metronome]\n",
                 stderr);
     return 2;
 }
@@ -58,8 +62,9 @@ constexpr const char* cliUser = "cli";
 struct Options
 {
     std::vector<std::string_view> positional;
-    std::string_view dump;
-    bool hold = false, recover = false, discard = false;
+    std::string_view dump, from;
+    double seconds = 0;
+    bool hold = false, recover = false, discard = false, metronome = false;
 };
 
 Options parse (int argc, char** argv)
@@ -70,6 +75,12 @@ Options parse (int argc, char** argv)
         const std::string_view a = argv[i];
         if (a == "--dump" && i + 1 < argc)
             o.dump = argv[++i];
+        else if (a == "--from" && i + 1 < argc)
+            o.from = argv[++i];
+        else if (a == "--seconds" && i + 1 < argc)
+            o.seconds = std::atof (argv[++i]);
+        else if (a == "--metronome")
+            o.metronome = true;
         else if (a == "--hold")
             o.hold = true;
         else if (a == "--recover")
@@ -182,6 +193,76 @@ int openProject (const Options& o)
         return fail ("couldn't write the dump");
     return 0;
 }
+/** Plays the saved project through the engine and the null device into a WAV file. */
+int renderProject (const Options& o)
+{
+    if (o.positional.size() < 2)
+        return usage();
+    ProjectFolder folder { fs::path (std::string (o.positional[0])) };
+    auto opened = folder.open();
+    if (! opened.document)
+        return fail (opened.error);
+    Session session (std::move (*opened.document), cliUser);
+    const auto& model = session.model();
+
+    weft::engine::MediaPool media;
+    for (const auto& [hash, ref] : model.media)
+    {
+        std::string error;
+        if (! media.load (folder.mediaDir(), hash, &error))
+            std::fprintf (stderr, "warning: %s plays as silence (%s)\n", ref->originalName.c_str(), error.c_str());
+    }
+    weft::engine::InstrumentRack rack;
+    weft::engine::Engine engine (media, rack);
+    auto settings = weft::engine::TransportSettings::fromDefaults (model.info.metronomeDefaults);
+    settings.metronomeOn = o.metronome;
+    settings.metronomeDuring = weft::engine::ClickDuring::both;
+    engine.setSettings (settings);
+
+    weft::Ticks from = 0;
+    if (! o.from.empty())
+    {
+        const auto parsed = weft::parseBarsBeats (o.from, model.signatures);
+        if (! parsed)
+            return fail ("couldn't read the --from position");
+        from = *parsed;
+    }
+    const double seconds = o.seconds > 0 ? o.seconds
+                                         : std::max (1.0, (model.tempo.tickToSample (static_cast<double> (weft::commands::projectEndTick (model)))
+                                                           - model.tempo.tickToSample (static_cast<double> (from)))
+                                                              / model.info.sampleRate);
+
+    weft::engine::DeviceConfig config;
+    config.sampleRate = model.info.sampleRate;
+    config.maxBlockSize = 512;
+    config.numInputChannels = 0;
+    config.numOutputChannels = 2;
+    weft::engine::NullDevice device;
+    if (! device.open (config) || ! device.start (engine))
+        return fail ("couldn't start the null device");
+    engine.setProject (model);
+    engine.play (from);
+    const auto frames = static_cast<std::int64_t> (std::llround (seconds * config.sampleRate));
+    device.setCaptureCapacity (frames);
+    device.render (frames);
+    device.stop();
+
+    weft::media::AudioData out;
+    out.sampleRate = config.sampleRate;
+    float peak = 0;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const auto c = device.capturedOutput (ch);
+        out.channels.emplace_back (c.begin(), c.end());
+        for (const float v : c)
+            peak = std::max (peak, std::abs (v));
+    }
+    std::string error;
+    if (! weft::media::writeWav (fs::path (std::string (o.positional[1])), out, weft::media::SampleFormat::float32, &error))
+        return fail (error);
+    std::printf ("frames=%lld peak=%.4f\n", static_cast<long long> (frames), static_cast<double> (peak));
+    return 0;
+}
 } // namespace
 
 int main (int argc, char** argv)
@@ -227,6 +308,8 @@ int main (int argc, char** argv)
         return demoEdits (options);
     if (command == "open")
         return openProject (options);
+    if (command == "render")
+        return renderProject (options);
 
     return usage();
 }

@@ -9,9 +9,12 @@ add_library(weft_core STATIC
     src/doc/Document.cpp
     src/doc/Path.cpp
     src/doc/Value.cpp
+    src/media/WavFile.cpp
     src/model/Model.cpp
     src/model/Projector.cpp
     src/project/ProjectFolder.cpp
+    src/rt/AudioThread.cpp
+    src/time/Position.cpp
     src/time/Quantize.cpp
     src/time/SignatureMap.cpp
     src/time/TempoMap.cpp
