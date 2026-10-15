@@ -1,5 +1,6 @@
 #pragma once
 
+#include "weft/engine/media/MediaSource.h"
 #include "weft/media/WavFile.h"
 
 #include <filesystem>
@@ -10,26 +11,29 @@
 namespace weft::engine
 {
 /**
-    Decoded media by blob hash, shared with engine snapshots. Milestone 2 keeps
-    whole files in memory (D-ARCH-12); disk streaming replaces this in M3.
-    Message thread only.
+    Project media by blob hash, shared with engine snapshots. Short files are held
+    in memory; longer ones stream from disk (D-ARCH-17). Message thread only.
 */
 class MediaPool
 {
 public:
-    using Audio = std::shared_ptr<const media::AudioData>;
+    using Audio = std::shared_ptr<MediaSource>;
 
-    /** Adds decoded audio under a hash (tests, recording). */
-    void add (const std::string& hash, media::AudioData audio);
+    /** Adds audio from memory under a hash (tests, generated media). */
+    void add (const std::string& hash, const media::AudioData& audio);
 
-    /** Loads `<mediaDir>/<hex>.wav` for the hash if it isn't loaded yet. Returns null when missing or unreadable. */
+    /** Opens `<mediaDir>/<hex>.wav` for the hash if it isn't open yet. Returns null when missing or unreadable. */
     Audio load (const std::filesystem::path& mediaDir, const std::string& hash, std::string* error = nullptr);
 
     Audio find (const std::string& hash) const;
     void remove (const std::string& hash) { pool.erase (hash); }
     std::size_t size() const noexcept { return pool.size(); }
 
+    /** Files up to this many frames are read whole; longer ones stream. Default: 30 s at 48 kHz. */
+    void setResidentLimit (std::int64_t frames) noexcept { residentFrames = frames; }
+
 private:
     std::map<std::string, Audio> pool;
+    std::int64_t residentFrames = 30 * 48000;
 };
 } // namespace weft::engine

@@ -12,3 +12,4 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 automerge.workspace = true
+blake3.workspace = true

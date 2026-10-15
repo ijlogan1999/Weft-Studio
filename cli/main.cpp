@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -206,6 +207,7 @@ int renderProject (const Options& o)
     const auto& model = session.model();
 
     weft::engine::MediaPool media;
+    media.setResidentLimit (INT64_MAX); // offline render runs faster than real time: no streaming
     for (const auto& [hash, ref] : model.media)
     {
         std::string error;

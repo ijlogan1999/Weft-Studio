@@ -29,13 +29,16 @@ original or redistributable and be listed here.
 
 | Crate | Version | License |
 |---|---|---|
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 |
 | automerge | 0.12.0 | MIT |
+| blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 |
 | borsh | 1.8.1 | MIT OR Apache-2.0 |
 | bytes | 1.12.1 | MIT |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
+| constant_time_eq | 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |

@@ -587,3 +587,72 @@ mod tests {
         assert_ne!(Segment::ById("a".into()), Segment::Index(0));
     }
 }
+
+// ---------------------------------------------------------------------------
+// BLAKE3 content hashing for media blobs (spec 03 §4.5, 05 §8). Lives here so
+// the client links one Rust library.
+
+/// Opaque incremental hasher; free with `weft_hasher_free`.
+pub struct WeftHasher(blake3::Hasher);
+
+#[no_mangle]
+pub extern "C" fn weft_hasher_new() -> *mut WeftHasher {
+    Box::into_raw(Box::new(WeftHasher(blake3::Hasher::new())))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weft_hasher_update(
+    hasher: *mut WeftHasher,
+    data: *const u8,
+    len: usize,
+) -> WeftStatus {
+    if hasher.is_null() || (data.is_null() && len > 0) {
+        return WeftStatus::InvalidArgument;
+    }
+    if len > 0 {
+        (*hasher).0.update(slice::from_raw_parts(data, len));
+    }
+    WeftStatus::Ok
+}
+
+/// Writes the 64 lowercase hex digits of the hash (no terminator) to `out_hex`.
+#[no_mangle]
+pub unsafe extern "C" fn weft_hasher_finish_hex(
+    hasher: *const WeftHasher,
+    out_hex: *mut u8,
+) -> WeftStatus {
+    if hasher.is_null() || out_hex.is_null() {
+        return WeftStatus::InvalidArgument;
+    }
+    let hex = (*hasher).0.finalize().to_hex();
+    ptr::copy_nonoverlapping(hex.as_bytes().as_ptr(), out_hex, 64);
+    WeftStatus::Ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weft_hasher_free(hasher: *mut WeftHasher) {
+    if !hasher.is_null() {
+        drop(Box::from_raw(hasher));
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    #[test]
+    fn hasher_matches_known_vector() {
+        // BLAKE3 of the empty input.
+        let h = weft_hasher_new();
+        let mut out = [0u8; 64];
+        unsafe {
+            assert_eq!(weft_hasher_update(h, ptr::null(), 0), WeftStatus::Ok);
+            assert_eq!(weft_hasher_finish_hex(h, out.as_mut_ptr()), WeftStatus::Ok);
+            weft_hasher_free(h);
+        }
+        assert_eq!(
+            std::str::from_utf8(&out).unwrap(),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+    }
+}

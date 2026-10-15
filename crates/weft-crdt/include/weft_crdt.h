@@ -55,6 +55,14 @@ WeftStatus weft_doc_merge(WeftDoc* doc, WeftDoc* other);
 
 void weft_bytes_free(WeftBytes bytes);
 
+/* BLAKE3 content hashing (media blobs) */
+typedef struct WeftHasher WeftHasher;
+WeftHasher* weft_hasher_new(void);
+WeftStatus weft_hasher_update(WeftHasher* hasher, const uint8_t* data, size_t len);
+/* Writes 64 lowercase hex digits, no terminator. */
+WeftStatus weft_hasher_finish_hex(const WeftHasher* hasher, uint8_t* out_hex);
+void weft_hasher_free(WeftHasher* hasher);
+
 #ifdef __cplusplus
 }
 #endif

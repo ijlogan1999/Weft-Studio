@@ -40,6 +40,8 @@ struct JuceAudioDevice::Impl final : juce::AudioIODeviceCallback
         cfg.maxBlockSize = d->getCurrentBufferSizeSamples();
         cfg.numInputChannels = d->getActiveInputChannels().countNumberOfSetBits();
         cfg.numOutputChannels = d->getActiveOutputChannels().countNumberOfSetBits();
+        cfg.inputLatency = d->getInputLatencyInSamples();
+        cfg.outputLatency = d->getOutputLatencyInSamples();
         const auto block = static_cast<std::size_t> (cfg.maxBlockSize);
         silentInputs.assign (static_cast<std::size_t> (cfg.numInputChannels), std::vector<float> (block));
         inputPtrs.assign (static_cast<std::size_t> (cfg.numInputChannels), nullptr);
@@ -163,6 +165,8 @@ bool JuceAudioDevice::open (const DeviceConfig& config)
     impl->cfg.maxBlockSize = impl->device->getCurrentBufferSizeSamples();
     impl->cfg.numInputChannels = impl->device->getActiveInputChannels().countNumberOfSetBits();
     impl->cfg.numOutputChannels = impl->device->getActiveOutputChannels().countNumberOfSetBits();
+    impl->cfg.inputLatency = impl->device->getInputLatencyInSamples();
+    impl->cfg.outputLatency = impl->device->getOutputLatencyInSamples();
     return true;
 }
 

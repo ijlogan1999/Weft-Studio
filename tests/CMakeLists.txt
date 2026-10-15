@@ -5,6 +5,7 @@ add_executable(weft_unit_tests
     unit/ProjectTests.cpp
     unit/RepairTests.cpp
     unit/TimeTests.cpp
+    unit/TrackTests.cpp
     unit/TransportTests.cpp
     unit/UndoTests.cpp
     unit/ValueTests.cpp
@@ -23,6 +24,9 @@ endif()
 add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
     engine/NullDeviceTests.cpp
+    engine/RecordingTests.cpp
+    engine/StreamingTests.cpp
+    engine/TrackEngineTests.cpp
     engine/TransportEngineTests.cpp
 )
 target_link_libraries(weft_engine_tests PRIVATE weft::engine Catch2::Catch2WithMain)

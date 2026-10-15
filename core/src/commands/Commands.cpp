@@ -217,6 +217,29 @@ EditResult Session::setTrackMute (const Id& trackId, bool mute)
     return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "mute", Value (mute))); });
 }
 
+EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (mode != "auto" && mode != "on" && mode != "off")
+        return reject ("Monitoring is auto, on or off.");
+    return run ("Input Monitoring", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "monitor", Value (mode))); });
+}
+
+EditResult Session::setTrackInput (const Id& trackId, const model::InputAssignment& input)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    const bool fits = (t->kind == TrackKind::audio && input.kind != model::InputAssignment::Kind::midi)
+                   || (t->kind == TrackKind::instrument && input.kind != model::InputAssignment::Kind::audio)
+                   || input.kind == model::InputAssignment::Kind::none;
+    if (! fits || input.firstChannel < 0 || input.channel < 0 || input.channel > 16)
+        return reject ("That input doesn't fit this track.");
+    return run ("Set Input", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "input", input.toValue())); });
+}
+
 EditResult Session::setTrackOutput (const Id& trackId, const Id& busId)
 {
     const auto* t = projection.track (trackId);

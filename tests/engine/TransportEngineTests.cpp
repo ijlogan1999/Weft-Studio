@@ -68,9 +68,7 @@ TEST_CASE ("AT-TRN-4: record with no armed tracks plays and says so", "[E][trans
     CHECK (result.message == "No tracks armed");
     rig.run (48000);
     CHECK (rig.engine.state() == TransportState::playing);
-    rig.engine.stop();
-    rig.run (256);
-    CHECK_FALSE (rig.engine.takeRecording());
+    CHECK_FALSE (rig.finishRecording());
     CHECK (rig.session.model().regions.size() == regionsBefore);
 }
 
@@ -205,6 +203,8 @@ TEST_CASE ("AT-TRN-11: one-bar count-in before recording at bar 3", "[E][transpo
         for (int i = 0; i < n; ++i)
             dest[i] = inputValue (ch, start + i);
     });
+    REQUIRE (rig.session.setTrackMonitor (rig.audioTrack(), "off")); // hear only the clicks
+    rig.sync();
     rig.engine.setArmedTracks ({ rig.audioTrack() });
     clickSettings (rig, ClickDuring::record, 0.0, 1);
 
@@ -217,19 +217,21 @@ TEST_CASE ("AT-TRN-11: one-bar count-in before recording at bar 3", "[E][transpo
     CHECK (rig.engine.state() == TransportState::recording);
     CHECK (rig.engine.positionSamples() == 3 * barSamples);
 
-    rig.engine.stop();
-    rig.run (256);
-    const auto take = rig.engine.takeRecording();
-    REQUIRE (take);
-    CHECK (take->startTick == 2 * barTicks);
-    CHECK (take->startSample == 2 * barSamples);
-    REQUIRE (take->audio.numChannels() == 2);
-    REQUIRE (take->audio.numFrames() == barSamples);
+    const auto outcome = rig.finishRecording();
+    REQUIRE (outcome);
+    CHECK (outcome->committed);
+    CHECK (rig.engine.positionSamples() == 2 * barSamples); // return to the record start
+    const auto regions = rig.regionsOn (rig.audioTrack());
+    REQUIRE (regions.size() == 1);
+    CHECK (regions[0]->start == 2 * barTicks);
+    CHECK (regions[0]->audio.sourceOffset == 0);
+    const auto file = rig.regionFile (regions[0]->id);
+    REQUIRE (file.numChannels() == 2);
+    REQUIRE (file.numFrames() >= barSamples);
     // The file holds the input from bar 3 on: nothing from the count-in, and no clicks.
     for (int ch = 0; ch < 2; ++ch)
         for (std::int64_t i = 0; i < barSamples; ++i)
-            REQUIRE (take->audio.channels[static_cast<std::size_t> (ch)][static_cast<std::size_t> (i)] == inputValue (ch, barSamples + i));
-    CHECK (rig.engine.positionSamples() == 2 * barSamples); // return to the record start
+            REQUIRE (file.channels[static_cast<std::size_t> (ch)][static_cast<std::size_t> (i)] == inputValue (ch, barSamples + i));
 }
 
 TEST_CASE ("AT-TRN-12: a two-bar count-in from bar 1 pre-rolls into negative time", "[E][transport][AT-TRN-12]")
@@ -251,15 +253,14 @@ TEST_CASE ("AT-TRN-12: a two-bar count-in from bar 1 pre-rolls into negative tim
     for (std::size_t i = 1; i < 8; ++i)
         CHECK (clicks[i] == static_cast<std::int64_t> (i) * 24000 - 1);
     // Regions don't play during the count-in; recording and playback start at tick 0.
-    const auto take = [&] {
-        rig.engine.stop();
-        rig.run (256);
-        return rig.engine.takeRecording();
-    }();
-    REQUIRE (take);
-    CHECK (take->startTick == 0);
-    CHECK (take->startSample == 0);
-    CHECK (take->audio.numFrames() == barSamples + 1);
+    const auto outcome = rig.finishRecording();
+    REQUIRE (outcome);
+    CHECK (outcome->committed);
+    const auto regions = rig.regionsOn (rig.audioTrack());
+    REQUIRE (regions.size() == 2); // the existing region and the recording on top
+    const auto* recorded = regions[0]->z > regions[1]->z ? regions[0] : regions[1];
+    CHECK (recorded->start == 0);
+    CHECK (rig.regionFile (recorded->id).numFrames() == barSamples + 1);
 }
 
 TEST_CASE ("AT-TRN-17: CPU meter and dropout counter", "[E][transport][AT-TRN-17]")
@@ -461,8 +462,21 @@ TEST_CASE ("AT-RT-1: no allocation or blocking calls on the audio thread", "[E][
     rig.sync();
     REQUIRE (rig.device.render (200000));
     rig.engine.stop();
+    rig.engine.setArmedTracks ({ track, keys });
     REQUIRE (rig.engine.record (3840).recording);
-    REQUIRE (rig.device.render (250000));
+    for (int i = 0; i < 50; ++i)
+    {
+        // Live MIDI while recording audio and MIDI through cycle wraps.
+        const auto at = rig.engine.deviceFrames() + 100;
+        rig.engine.sendMidi (0x90, static_cast<std::uint8_t> (60 + i % 12), 100, at);
+        rig.engine.sendMidi (0xB0, 64, i % 2 == 0 ? 127 : 0, at + 50);
+        rig.engine.sendMidi (0x80, static_cast<std::uint8_t> (60 + i % 12), 0, at + 2000);
+        REQUIRE (rig.device.render (5000));
+    }
+    rig.engine.stopRecording();
+    REQUIRE (rig.device.render (5000));
+    REQUIRE (rig.engine.record (0).recording);
+    REQUIRE (rig.device.render (5000));
     rig.engine.locate (7680);
     REQUIRE (rig.device.render (10000));
     rig.engine.stop();
@@ -473,6 +487,8 @@ TEST_CASE ("AT-RT-1: no allocation or blocking calls on the audio thread", "[E][
     CHECK (v.blockingCalls == 0);
     rig.engine.collectGarbage();
     CHECK (rig.engine.pendingRetired() <= 1);
+    while (rig.engine.recordingPending())
+        REQUIRE (rig.engine.finishRecording (rig.session));
 }
 
 TEST_CASE ("Engine snapshot plays the topmost of overlapping regions, with gain and fades", "[E][graph]")

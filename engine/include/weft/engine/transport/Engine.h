@@ -2,6 +2,9 @@
 
 #include "weft/engine/devices/AudioDevice.h"
 #include "weft/engine/graph/EngineSnapshot.h"
+#include "weft/engine/media/MediaStreamer.h"
+#include "weft/engine/record/RecordPass.h"
+#include "weft/engine/record/RecordWriter.h"
 #include "weft/engine/rt/SpscQueue.h"
 #include "weft/engine/transport/Metronome.h"
 #include "weft/model/ProjectModel.h"
@@ -10,12 +13,19 @@
 #include <atomic>
 #include <climits>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
+
+namespace weft::commands
+{
+class Session;
+}
 
 namespace weft::engine
 {
@@ -42,6 +52,9 @@ struct TransportSettings
     double metronomeLevelDb = 0.0;
     ClickDuring metronomeDuring = ClickDuring::record;
     int countInBars = 1; // 0, 1 or 2
+    /** MIDI recording over an existing region: merge into it, or a new region on top (F-REC-7). */
+    bool midiMergeLinear = false;
+    bool midiMergeCycle = true;
 
     static TransportSettings fromDefaults (const model::MetronomeSettings& m);
 };
@@ -53,13 +66,13 @@ struct RecordResult
     std::string message; // status bar text, e.g. "No tracks armed"
 };
 
-/** Audio captured by the last recording pass. Milestone 3 turns this into regions. */
-struct RecordedTake
+/** What finishing a recording pass did. */
+struct RecordingOutcome
 {
-    Ticks startTick = 0;
-    std::int64_t startSample = 0; // device rate
-    media::AudioData audio;
-    std::int64_t droppedFrames = 0; // frames that didn't fit the capture buffer
+    bool committed = false;        // regions were added (one undo step "Record")
+    std::size_t files = 0;         // media files kept
+    std::int64_t droppedFrames = 0; // input that didn't reach the disk in time
+    std::string message;
 };
 
 /**
@@ -79,6 +92,11 @@ public:
     /** Recompiles the last model (after media loads or instrument changes). */
     void refresh();
 
+    /** Makes the instrument for an instrument track that has none in the rack yet. The default
+        creates Weft Keys for tracks with no instrument or the built-in one; hosted plug-ins arrive in M6. */
+    using InstrumentFactory = std::function<std::shared_ptr<Instrument> (const model::Track&)>;
+    void setInstrumentFactory (InstrumentFactory factory) { instrumentFactory = std::move (factory); }
+
     // Transport ------------------------------------------------------------------
     void play();                  // from the playhead
     void play (Ticks from);
@@ -87,14 +105,45 @@ public:
     /** Starts recording at the playhead (or `from`), with the count-in from the settings. */
     RecordResult record();
     RecordResult record (Ticks from);
+    /** Ends the recording pass but keeps playing (R while recording, D-W1-2). */
+    void stopRecording();
     void locate (Ticks to);
 
     void setSettings (const TransportSettings& settings);
     const TransportSettings& settings() const noexcept { return currentSettings; }
-    /** Record-enabled tracks (local view state). */
-    void setArmedTracks (std::set<Id> trackIds) { armed = std::move (trackIds); }
-    /** Seconds of input to keep per recording pass (preallocated in prepare). */
+    /** Record-enabled tracks (local view state, D-DM-2). Recompiles the snapshot. */
+    void setArmedTracks (std::set<Id> trackIds);
+    /** Soloed tracks (local, F-TRK-10). Recompiles the snapshot. */
+    void setSoloedTracks (std::set<Id> trackIds);
+    /** The selected track: an instrument track receives live MIDI when selected (D-W2-1). */
+    void setSelectedTrack (const Id& trackId);
+    /** All of the local view state at once (record enables, solos, selection). */
+    void setLocalView (const LocalMixState& view);
+    const LocalMixState& localState() const noexcept { return local; }
+
+    struct Meter
+    {
+        float output = 0; // post-fader peak, linear
+        float input = 0;  // input peak of an armed track
+    };
+    /** Peaks since the last call for a track's channel (or the master, for an empty id). */
+    Meter takeMeter (const Id& trackId);
+    /** Seconds of input buffered between the audio thread and the disk writer, per armed track. */
     void setRecordCapacitySeconds (double seconds);
+    /** The project folder: recordings go to Recovery/ while running and Media/ when done. */
+    void setProjectFolder (std::filesystem::path folder) { projectFolder = std::move (folder); }
+    /** The user's recording delay in samples, added to the driver latency (F-REC-9). */
+    void setRecordDelay (int samples) noexcept { recordDelay = samples; }
+    /** Writes recordings from a background thread (default). Off: finishRecording() writes everything. */
+    void setRecordWriterThread (bool on) noexcept { writerThread = on; }
+    /** Total latency a recording is shifted by. */
+    std::int64_t recordLatency() const noexcept { return deviceLatency + recordDelay; }
+
+    /** Live MIDI input (keyboard, MIDI devices). `deviceFrame` is the device frame it arrived at,
+        or -1 for the next block. Call from one thread only. */
+    bool sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame = -1) noexcept;
+    /** Frames processed since the device started. */
+    std::int64_t deviceFrames() const noexcept { return published.frames.load (std::memory_order_acquire); }
 
     TransportState state() const noexcept { return static_cast<TransportState> (published.state.load (std::memory_order_acquire)); }
     /** Playhead in device-rate samples (negative during a count-in before bar 1). */
@@ -102,8 +151,10 @@ public:
     double positionTicks() const noexcept;
     double sampleRate() const noexcept { return rate; }
 
-    /** Takes the audio of the last finished recording pass, if any. */
-    std::optional<RecordedTake> takeRecording();
+    /** Once a pass has stopped: finishes its files, moves them into Media/ and commits the regions
+        to the session. Nothing yet (still recording, or no pass): nullopt. Call from a timer. */
+    std::optional<RecordingOutcome> finishRecording (commands::Session& session);
+    bool recordingPending() const noexcept { return ! passes.empty(); }
 
     // Meters (F-TRN-16) -------------------------------------------------------------
     /** Audio-thread load as a fraction of the block period, smoothed. */
@@ -111,6 +162,14 @@ public:
     /** Blocks whose processing overran their period, plus dropouts the device reported. */
     std::int64_t dropouts() const noexcept { return published.dropouts.load (std::memory_order_relaxed); }
     void addDeviceDropouts (std::int64_t count) noexcept { published.dropouts.fetch_add (count, std::memory_order_relaxed); }
+    /** Reads of streamed media that found the block not loaded yet (played as silence). */
+    std::int64_t diskUnderruns() const noexcept { return published.underruns.load (std::memory_order_relaxed); }
+
+    // Disk streaming (D-ARCH-17) ----------------------------------------------------------
+    /** Streams from a background thread while the device runs (default). Off: call pumpDisk(). */
+    void setDiskThread (bool on);
+    void pumpDisk() { streamer.pump(); }
+    MediaStreamer& diskStreamer() noexcept { return streamer; }
 
     /** Frees snapshots the audio thread has moved past. Called by setProject; call it periodically too. */
     void collectGarbage();
@@ -128,13 +187,14 @@ private:
         stop,
         record,
         locate,
-        settings
+        settings,
+        stopRecording
     };
     struct Command
     {
         CommandType type = CommandType::stop;
         std::int64_t a = 0, b = 0; // play/locate/record: position (or fromPlayhead); record: b = count-in bars
-        bool capture = false;
+        RecordPass* pass = nullptr;
         // settings
         bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
         float clickGain = 1;
@@ -147,12 +207,16 @@ private:
 
     // Audio thread.
     void apply (const Command& c, const EngineSnapshot* snap) noexcept;
-    void renderTimeline (const EngineSnapshot& snap, std::int64_t from, int offset, int frames) noexcept;
-    void renderInstruments (const EngineSnapshot& snap, std::int64_t from, int offset, int frames, bool timeline) noexcept;
+    void renderSpan (const EngineSnapshot& snap, const float* const* inputs, std::int64_t from, int offset, int frames, bool timeline) noexcept;
+    void mixSegments (const ChannelPlan& channel, std::int64_t from, int frames, float* left, float* right) noexcept;
+    void renderInstrument (const ChannelPlan& channel, std::int64_t from, int offset, int frames, bool timeline, float* left, float* right) noexcept;
+    bool monitoring (const ChannelPlan& channel) const noexcept;
     void renderClicks (const EngineSnapshot& snap, std::int64_t from, int offset, int frames, bool audible) noexcept;
     void flushAllNotes (const EngineSnapshot* snap) noexcept;
     void finishCapture() noexcept;
-    void captureInput (const float* const* inputs, int offset, int frames) noexcept;
+    void captureSpan (const float* const* inputs, std::int64_t from, int offset, int frames) noexcept;
+    void captureWrap (std::int64_t at) noexcept;
+    void takeLiveMidi (int numFrames) noexcept;
 
     MediaPool& mediaPool;
     InstrumentRack& rack;
@@ -167,9 +231,20 @@ private:
     std::vector<Retired> retired;
     std::uint64_t nextSerial = 1;
     TransportSettings currentSettings;
-    std::set<Id> armed;
-    double recordSeconds = 600;
-    bool running = false;
+    LocalMixState local;
+    InstrumentFactory instrumentFactory;
+    double recordSeconds = 10;
+    std::filesystem::path projectFolder;
+    int recordDelay = 0;
+    std::int64_t deviceLatency = 0;
+    bool writerThread = true;
+    struct Pass
+    {
+        std::unique_ptr<RecordPass> pass;
+        std::unique_ptr<RecordWriter> writer;
+    };
+    std::vector<Pass> passes; // oldest first; the audio thread fills the newest
+    std::atomic<bool> running { false };
     double rate = 48000;
     int maxBlock = 0;
     int numInputs = 0, numOutputs = 0;
@@ -184,21 +259,32 @@ private:
         std::atomic<std::int64_t> position { 0 };
         std::atomic<double> load { 0 };
         std::atomic<std::int64_t> dropouts { 0 };
-        std::atomic<std::int64_t> capturedFrames { 0 };
-        std::atomic<std::int64_t> droppedFrames { 0 };
-        std::atomic<std::int64_t> captureStart { 0 };
-        std::atomic<bool> captureReady { false };
+        std::atomic<std::int64_t> frames { 0 };
+        std::atomic<std::int64_t> underruns { 0 };
     } published;
+    MediaStreamer streamer;
+    bool diskThread = true;
+    struct LiveMidiIn
+    {
+        std::int64_t frame = -1;
+        std::uint8_t status = 0, data1 = 0, data2 = 0;
+    };
+    rt::SpscQueue<LiveMidiIn, 1024> midiIn;
 
     // Audio thread.
     TransportState transport = TransportState::stopped;
     std::int64_t position = 0, playStart = 0, recordStart = 0;
-    bool capturing = false;
+    std::int64_t frameCounter = 0;
+    RecordPass* pass = nullptr; // the pass being recorded
+    std::optional<LiveMidiIn> laterMidi; // popped, but for a later block
+    static constexpr int maxLiveEvents = 512;
+    std::array<MidiEvent, maxLiveEvents> liveEvents {}; // this block's live MIDI, offsets in the block
+    int numLive = 0;
     bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
     float clickGain = 1;
     double loadAverage = 0;
-    std::vector<std::vector<float>> mix, scratch, capture;
-    std::vector<float*> mixPtrs, scratchPtrs;
+    std::vector<std::vector<float>> mix;
+    std::vector<float*> mixPtrs;
     std::vector<MidiEvent> events;
     static constexpr int maxClicksPerSpan = 64;
     std::array<Metronome::Click, maxClicksPerSpan> clickScratch {};

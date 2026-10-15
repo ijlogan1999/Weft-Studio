@@ -13,6 +13,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <random>
 #include <vector>
 
 namespace weft::test
@@ -109,9 +111,29 @@ public:
     double rate = 48000;
 };
 
+/** A fresh directory under the system temp folder, removed afterwards. */
+struct TempFolder
+{
+    std::filesystem::path path;
+    TempFolder()
+    {
+        std::random_device rd;
+        path = std::filesystem::temp_directory_path() / ("weft-engine-" + std::to_string (rd()) + std::to_string (rd()));
+        std::filesystem::create_directories (path);
+    }
+    ~TempFolder()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all (path, ec);
+    }
+    TempFolder (const TempFolder&) = delete;
+    TempFolder& operator= (const TempFolder&) = delete;
+};
+
 /** A project session, an engine and a NullDevice driving it. */
 struct Rig
 {
+    TempFolder folder; // the project folder (Recovery/, Media/)
     Session session = newP0();
     MediaPool media;
     InstrumentRack rack;
@@ -123,6 +145,8 @@ struct Rig
         TransportSettings quiet;
         quiet.metronomeOn = false;
         engine.setSettings (quiet);
+        engine.setProjectFolder (folder.path);
+        engine.setRecordCapacitySeconds (60); // renders run faster than real time
         open (blockSize, rate, inputs);
     }
 
@@ -138,21 +162,47 @@ struct Rig
         engine.setProject (session.model());
     }
 
-    void reopen (int blockSize, double rate = 48000.0)
+    void reopen (int blockSize, double rate = 48000.0, int inputs = 2)
     {
         device.close();
-        open (blockSize, rate);
+        open (blockSize, rate, inputs);
     }
+
+    /** Stops the transport and commits the recording pass. */
+    std::optional<RecordingOutcome> finishRecording()
+    {
+        engine.stop();
+        run (256);
+        return engine.finishRecording (session);
+    }
+
+    std::filesystem::path mediaFile (const std::string& hash) const { return folder.path / "Media" / media::mediaFileName (hash); }
+
+    /** The decoded file a region plays. */
+    media::AudioData regionFile (const Id& regionId) const
+    {
+        const auto* r = session.model().region (regionId);
+        REQUIRE (r != nullptr);
+        auto audio = media::readWav (mediaFile (r->audio.media));
+        REQUIRE (audio.has_value());
+        return std::move (*audio);
+    }
+
+    std::vector<const model::Region*> regionsOn (const Id& trackId) const { return session.model().regionsOnTrack (trackId); }
 
     void sync() { engine.setProject (session.model()); }
 
-    Id audioTrack() const
+    /** A stereo audio track, so mono test media plays at unity on both sides (no pan law). */
+    Id audioTrack()
     {
-        for (const auto& id : session.model().trackOrder)
-            if (session.model().track (id)->kind == TrackKind::audio)
-                return id;
-        return {};
+        if (stereoTrack.empty())
+        {
+            stereoTrack = session.createTrack (TrackKind::audio, "Stereo", 2).value();
+            sync();
+        }
+        return stereoTrack;
     }
+    Id stereoTrack;
 
     /** Adds ramp media and an audio region using it from source frame 0. */
     Id addAudioRegion (const Id& track, Ticks start, std::int64_t frames, const std::string& hash = "b3:ramp")

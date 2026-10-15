@@ -72,6 +72,8 @@ struct ProjectModel
 
     /** End of a region on the timeline in ticks (audio lengths convert through the tempo map). */
     double regionEndTick (const Region& r) const;
+    /** The color a region shows: its own, or its track's (F-TRK-9). */
+    Color regionColor (const Region& r) const;
 };
 
 /** Document root keys for entity collections (depth-2 paths are entities). */

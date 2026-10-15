@@ -54,6 +54,7 @@ Shortcuts are Weft defaults (see `00-README.md`).
    - The new region sits on top of any region it overlaps; overlapped portions of older regions are hidden (not deleted). **Decision D-W1-3:** in linear recording over existing material, the newer region simply covers the older region where they overlap; the older region is not trimmed. Moving the new region away reveals the old one. This is the simplest non-destructive behavior.
    - Pushes one undo step: "Record".
 9. If the recording lasted less than 100 ms, no region is created and the file is deleted.
+10. **Decision D-W1-7:** the display name's `<n>` is one more than the highest `<TrackName>#<n>` already in the project's media, so names stay unique after deletes and across collaborators' recordings of the same track.
 
 ### W-1b · Multitrack recording
 
@@ -64,7 +65,7 @@ Same as W-1a with several tracks armed. Each armed track records its own input. 
 1. User enables Cycle (C) and sets a cycle range by dragging in the ruler's cycle strip.
 2. User presses R. Count-in plays (if enabled) before the cycle start.
 3. Recording continues across passes. At each wrap from cycle end to cycle start, the system ends the current take and starts a new one.
-4. On stop, for each armed track the system creates one **take folder** spanning the cycle range, containing one take per completed pass plus the partial final pass if it lasted ≥ 1 beat. The most recent take is active (plays); others are muted and visible when the folder is expanded.
+4. On stop, for each armed track the system creates one **take folder** spanning the cycle range, containing one take per completed pass plus the partial final pass if it lasted ≥ 1 beat. The most recent take is active (plays); others are muted and visible when the folder is expanded. **Decision D-W1-8:** the first take starts where recording started (the folder starts there if that's before the cycle start); "1 beat" is a beat of the time signature at the cycle start.
 5. The take folder header shows "Take N of M"; clicking a take makes it active.
 6. All takes live in one continuous WAV file per track for the whole recording; each take is a region referencing a different offset in that file. **Decision D-W1-4:** one file per track per recording pass is simpler for the disk-writing thread and blob sync than one file per take.
 7. Comping (selecting parts of different takes) is v2 (F-REC-6). In MVP a take folder plays exactly one whole take.
@@ -99,12 +100,13 @@ Same as W-1a with several tracks armed. Each armed track records its own input. 
    - If nothing was played, no region is created.
    - One undo step: "Record".
 7. Cycle recording with **Merge** (default for cycle, F-REC-7): every pass adds its notes into the same region, so users can build a drum pattern layer by layer. With **Take folders** mode (option), each pass creates a take as for audio.
-8. Linear recording over an existing MIDI region with **Replace** (default for linear): a new region on top, like audio. With **Merge**: notes merge into the existing region (region extends if needed).
+8. Linear recording over an existing MIDI region with **Replace** (default for linear): a new region on top, like audio. With **Merge**: notes merge into the existing region (region extends if needed). **Decision D-W2-4:** "the existing region" is the topmost unlooped MIDI region on the track that overlaps the recorded span; if the new notes start before its sequence does, its notes shift so positions stay non-negative. Cycle recording uses Merge or Replace in MVP; the Take folders option for MIDI arrives with the piano roll (M5).
 
 **Edge cases**
 - Sustain pedal (CC64) held at stop: a CC64 value 0 is appended at the stop position.
 - MIDI arrives on several channels: stored with their channel. Instrument receives them all.
 - Tempo change during recording: positions are converted with the tempo map at each event's position.
+- **Decision D-W2-3 (F-REC-17):** keyboard MIDI uses `A W S E D F T G Y H U J K O L P ;` for C to E an octave up, starting at C3 (60); Z/X move the octave down/up (±5), C/V lower/raise the velocity by 20 (starting at 100, clamped 1–127). Key repeat never retriggers; a key's release ends the note it started even after an octave change; turning the mode off releases held notes. Keys the mode doesn't use keep their commands.
 
 ---
 

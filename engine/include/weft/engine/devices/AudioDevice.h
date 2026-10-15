@@ -10,6 +10,9 @@ struct DeviceConfig
     int maxBlockSize = 256;
     int numInputChannels = 2;
     int numOutputChannels = 2;
+    /** Driver-reported latencies in samples; recordings shift earlier by their sum (F-REC-9). */
+    int inputLatency = 0;
+    int outputLatency = 0;
 };
 
 /** Implemented by the engine. process() runs on the audio thread and must be
