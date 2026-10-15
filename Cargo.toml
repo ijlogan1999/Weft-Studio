@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 automerge = "0.12"
+blake3 = { version = "1", features = ["pure"] }
 
 [profile.release]
 debug = 1

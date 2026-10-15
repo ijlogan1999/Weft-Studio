@@ -3,12 +3,15 @@ configure_file(src/version.cpp.in "${CMAKE_CURRENT_BINARY_DIR}/version.cpp" @ONL
 add_library(weft_core STATIC
     "${CMAKE_CURRENT_BINARY_DIR}/version.cpp"
     src/commands/Commands.cpp
+    src/commands/Recording.cpp
+    src/commands/Tracks.cpp
     src/commands/Session.cpp
     src/commands/Txn.cpp
     src/core/Id.cpp
     src/doc/Document.cpp
     src/doc/Path.cpp
     src/doc/Value.cpp
+    src/media/Hash.cpp
     src/media/WavFile.cpp
     src/model/Model.cpp
     src/model/Projector.cpp

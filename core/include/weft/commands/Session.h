@@ -3,6 +3,7 @@
 // The editing session: owns the document and its projection, runs commands as
 // CRDT changes, and keeps this user's undo/redo stacks (spec 05 §6).
 
+#include "weft/commands/Recording.h"
 #include "weft/commands/Txn.h"
 #include "weft/core/Id.h"
 #include "weft/model/ProjectModel.h"
@@ -102,6 +103,11 @@ public:
 
     // Tracks ------------------------------------------------------------------
     std::optional<Id> createTrack (model::TrackKind kind, const std::string& name, int channels = 2, std::optional<std::size_t> orderIndex = {});
+    /** New Track dialog (W-5): `count` tracks named in sequence, inserted below `belowTrackId` (or at the end), one undo step. */
+    std::vector<Id> createTracks (model::TrackKind kind, int count, int channels = 2, const Id& belowTrackId = {});
+    /** Duplicate (F-TRK-6): "<name> copy" below the original with the same strip and settings; regions only when asked. */
+    std::optional<Id> duplicateTrack (const Id& trackId, bool includeRegions = false);
+    EditResult setTrackColor (const Id& trackId, const model::Color& color);
     EditResult deleteTrack (const Id& trackId);
     EditResult renameTrack (const Id& trackId, const std::string& name);
     EditResult moveTrack (const Id& trackId, std::size_t newIndex);
@@ -109,6 +115,10 @@ public:
     EditResult setTrackPan (const Id& trackId, double pan);
     EditResult setTrackMute (const Id& trackId, bool mute);
     EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
+    /** Input monitoring: "auto", "on" or "off" (F-REC-4). */
+    EditResult setTrackMonitor (const Id& trackId, const std::string& mode);
+    /** Audio input channel(s) or MIDI filter (F-TRK-17). */
+    EditResult setTrackInput (const Id& trackId, const model::InputAssignment& input);
     /** Writes the Recovered tracks the projection synthesized for orphan regions (D-DM-17). */
     EditResult materializeRecoveredTracks();
 
@@ -128,10 +138,20 @@ public:
     EditResult setRegionGain (const Id& regionId, double gainDb);
     EditResult setRegionMuted (const Id& regionId, bool muted);
     EditResult setRegionName (const Id& regionId, const std::string& name);
+    /** A region's own color, or nullopt to follow its track (F-TRK-9). */
+    EditResult setRegionColor (const Id& regionId, std::optional<model::Color> color);
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);
+
+    // Recording -------------------------------------------------------------------
+    /** Adds the recorded media, regions and take folders as one undo step "Record" (W-1a step 8). */
+    EditResult commitRecording (const std::vector<RecordedAudio>& audio, const std::vector<RecordedMidi>& midi);
+    /** Makes a take the one that plays (W-1c step 5). */
+    EditResult setActiveTake (const Id& takeFolderId, const Id& regionId);
+    /** Display name for the next recording on a track: "<TrackName>#<n>" (W-1a step 8). */
+    std::string nextRecordingName (const std::string& trackName) const;
 
     // Notes (positions are sequence ticks) ------------------------------------------
     std::optional<Id> addNote (const Id& regionId, model::Note note);

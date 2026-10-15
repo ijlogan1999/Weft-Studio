@@ -13,7 +13,17 @@ bool NullDevice::open (const DeviceConfig& config)
         || config.numInputChannels < 0 || config.numOutputChannels < 0)
         return false;
 
+    if (loopback > 0 && loopback < config.maxBlockSize)
+        return false;
     cfg = config;
+    if (loopback > 0)
+    {
+        cfg.outputLatency = loopback / 2;
+        cfg.inputLatency = loopback - cfg.outputLatency;
+        loopHistory.assign (static_cast<std::size_t> (cfg.numOutputChannels), std::vector<float> (static_cast<std::size_t> (loopback + cfg.maxBlockSize)));
+    }
+    else
+        loopHistory.clear();
     const auto block = static_cast<std::size_t> (cfg.maxBlockSize);
     inputBuffers.assign (static_cast<std::size_t> (cfg.numInputChannels), std::vector<float> (block));
     outputBuffers.assign (static_cast<std::size_t> (cfg.numOutputChannels), std::vector<float> (block));
@@ -106,7 +116,17 @@ bool NullDevice::renderBlock (int numFrames)
     for (std::size_t ch = 0; ch < inputBuffers.size(); ++ch)
     {
         auto* dest = inputBuffers[ch].data();
-        if (inputGenerator)
+        if (! loopHistory.empty())
+        {
+            const auto& hist = loopHistory[std::min (ch, loopHistory.size() - 1)];
+            const auto size = static_cast<std::int64_t> (hist.size());
+            for (int i = 0; i < numFrames; ++i)
+            {
+                const auto src = counters.framesProcessed + i - loopback;
+                dest[i] = src < 0 ? 0.0f : hist[static_cast<std::size_t> (src % size)];
+            }
+        }
+        else if (inputGenerator)
             inputGenerator (static_cast<int> (ch), counters.framesProcessed, dest, numFrames);
         else
             std::fill_n (dest, frames, 0.0f);
@@ -124,6 +144,14 @@ bool NullDevice::renderBlock (int numFrames)
         const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
         if (elapsed.count() > numFrames / cfg.sampleRate)
             ++counters.deadlineMisses;
+    }
+
+    for (std::size_t ch = 0; ch < loopHistory.size(); ++ch)
+    {
+        auto& hist = loopHistory[ch];
+        const auto size = static_cast<std::int64_t> (hist.size());
+        for (int i = 0; i < numFrames; ++i)
+            hist[static_cast<std::size_t> ((counters.framesProcessed + i) % size)] = outputBuffers[ch][static_cast<std::size_t> (i)];
     }
 
     for (std::size_t ch = 0; ch < capture.size(); ++ch)

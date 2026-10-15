@@ -86,6 +86,14 @@ double ProjectModel::regionEndTick (const Region& r) const
     return tempo.sampleToTick (tempo.tickToSample (static_cast<double> (r.start)) + static_cast<double> (r.length));
 }
 
+Color ProjectModel::regionColor (const Region& r) const
+{
+    if (r.color)
+        return *r.color;
+    const auto* t = track (effectiveTrackId (r));
+    return t != nullptr ? t->color : Color {};
+}
+
 // Reading -------------------------------------------------------------------
 
 namespace

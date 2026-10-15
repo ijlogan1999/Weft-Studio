@@ -1,8 +1,15 @@
 add_library(weft_engine STATIC
     src/devices/NullDevice.cpp
+    src/dsp/WeftKeys.cpp
     src/graph/Instrument.cpp
     src/graph/SnapshotCompiler.cpp
     src/media/MediaPool.cpp
+    src/media/MediaSource.cpp
+    src/media/MediaStreamer.cpp
+    src/midi/KeyboardMidi.cpp
+    src/record/RecordLayout.cpp
+    src/record/RecordPass.cpp
+    src/record/RecordWriter.cpp
     src/transport/Engine.cpp
     src/transport/Metronome.cpp
 )

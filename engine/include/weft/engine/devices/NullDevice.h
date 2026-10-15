@@ -46,6 +46,11 @@ public:
     void setCaptureCapacity (std::int64_t capacityFrames);
     std::span<const float> capturedOutput (int channel) const;
 
+    /** Feeds each output channel back into the input with the same index, `roundTripFrames` later
+        (at least the block size), and reports that round trip as the device latency. 0 turns it off.
+        Takes effect at the next open(). */
+    void setLoopback (int roundTripFrames) noexcept { loopback = roundTripFrames; }
+
     void setDeadlineSimulation (bool enabled) noexcept { simulateDeadlines = enabled; }
 
     /** Renders numFrames in blocks of blockSize frames (0 = maxBlockSize); the last block may be shorter. */
@@ -70,6 +75,8 @@ private:
     std::vector<float*> outputPointers;
     std::vector<std::vector<float>> capture;
     std::int64_t captureCapacity = 0;
+    int loopback = 0;
+    std::vector<std::vector<float>> loopHistory; // ring of past output, per output channel
     Stats counters;
 };
 } // namespace weft::engine
