@@ -130,7 +130,6 @@ private:
     std::unique_ptr<arrange::RegionDrag> regionDrag;
     Id dragRegion;
     juce::Point<float> downAt, lastAt;
-    float rowHeightAtDown = 0;
     bool gestureOpen = false;
 };
 

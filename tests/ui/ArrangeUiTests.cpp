@@ -384,3 +384,43 @@ TEST_CASE ("AT-REC-20 keyboard MIDI mode takes letter keys first", "[UI]")
     ui.key ('K', juce::ModifierKeys::commandModifier);
     CHECK_FALSE (ui.studio.keyboardMidiOn());
 }
+
+TEST_CASE ("AT-ARR-20 a 200-event drag in the tracks area is one undo step", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    ui.studio.view.pixelsPerTick = 200.0 / bar;
+    const auto id = *ui.studio.session().createMidiRegion (tracks[0], bar, bar);
+    ui.studio.edited();
+    ui.settle();
+    auto& tl = ui.timeline();
+
+    // Move: 200 pointer moves, then release.
+    const auto from = ui.centreOf (id);
+    tl.pointerDown (from, {});
+    for (int i = 1; i <= 200; ++i)
+        tl.pointerDrag (from.translated (static_cast<float> (i), 0.0f), {});
+    tl.pointerUp (from.translated (200.0f, 0.0f), {});
+    ui.settle();
+    const auto movedTo = ui.region (id).start;
+    CHECK (movedTo > bar);
+
+    // Trim the end: 200 moves inside one gesture.
+    const auto box = tl.regionBounds (ui.region (id));
+    const juce::Point<float> corner { box.getRight() - 2.0f, box.getBottom() - 4.0f };
+    REQUIRE (tl.zoneAt (ui.region (id), corner) == Timeline::Zone::trimEnd);
+    tl.pointerDown (corner, {});
+    for (int i = 1; i <= 200; ++i)
+        tl.pointerDrag (corner.translated (static_cast<float> (i) * 0.5f, 0.0f), {});
+    tl.pointerUp (corner.translated (100.0f, 0.0f), {});
+    ui.settle();
+    CHECK (ui.region (id).length > bar);
+
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).length == bar);
+    CHECK (ui.region (id).start == movedTo);
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).start == bar);
+}

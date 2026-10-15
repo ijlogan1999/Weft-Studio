@@ -176,8 +176,6 @@ void Ruler::pointerUp()
         studio.session().endGesture();
         studio.edited();
     }
-    if (drag == Drag::cycle && studio.model().info.cycle.start == dragFrom && false)
-        studio.perform (Cmd::cycle);
     drag = Drag::none;
 }
 
@@ -711,10 +709,6 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
     }
     else if (! studio.selection.contains (r->id))
         studio.selection.click (r->id, false);
-    if (mods.isCommandDown() && zone == Zone::move)
-    {
-        // Ctrl+drag on the gain line: region gain (W-3i). Ctrl+drag elsewhere copies.
-    }
     startRegionDrag (*r, zone, p, mods);
     studio.sendChangeMessage();
 }
