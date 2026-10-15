@@ -1,5 +1,5 @@
 #include "weft/engine/devices/NullDevice.h"
-#include "weft/engine/rt/AudioThread.h"
+#include "weft/rt/AudioThread.h"
 
 #include <catch2/catch_test_macros.hpp>
 
