@@ -22,12 +22,10 @@ add_custom_command(OUTPUT "${notices}"
 juce_add_binary_data(WeftStudioData SOURCES "${notices}" "${PROJECT_SOURCE_DIR}/LICENSE")
 
 target_compile_definitions(WeftStudio PRIVATE
-    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:WeftStudio,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:WeftStudio,JUCE_VERSION>"
     WEFT_DONATE_URL="${WEFT_DONATE_URL}")
 
 target_link_libraries(WeftStudio PRIVATE
-    WeftStudioData weft::engine
-    juce::juce_gui_extra juce::juce_audio_utils
-    juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+    WeftStudioData weft::engine_juce weft::juce_modules
+    juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)

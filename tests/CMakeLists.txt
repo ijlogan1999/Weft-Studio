@@ -5,6 +5,7 @@ add_executable(weft_unit_tests
     unit/ProjectTests.cpp
     unit/RepairTests.cpp
     unit/ArrangeTests.cpp
+    unit/MediaImportTests.cpp
     unit/TimeTests.cpp
     unit/TrackTests.cpp
     unit/TransportTests.cpp
@@ -25,6 +26,7 @@ endif()
 add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
     engine/ArrangeEngineTests.cpp
+    engine/ImportTests.cpp
     engine/NullDeviceTests.cpp
     engine/RecordingTests.cpp
     engine/StreamingTests.cpp
@@ -65,8 +67,9 @@ add_test(NAME cli.version COMMAND weft-cli version)
 set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "Weft Studio ${PROJECT_VERSION}")
 
 if(WEFT_WITH_JUCE)
-    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp)
+    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp engine/JuceImportTests.cpp)
     target_link_libraries(weft_juce_device_tests PRIVATE weft::engine_juce Catch2::Catch2WithMain)
+    target_compile_definitions(weft_juce_device_tests PRIVATE WEFT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
     catch_discover_tests(weft_juce_device_tests)
 
     add_subdirectory(fixtures/plugins)
