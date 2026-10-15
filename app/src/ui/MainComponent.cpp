@@ -181,7 +181,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll })
                 add (c);
             menu.addSeparator();
-            for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::nudgeLeft, Cmd::nudgeRight })
+            for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::nudgeLeft, Cmd::nudgeRight,
+                            Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
                 add (c);
             menu.addSeparator();
             add (Cmd::toolMenu);
