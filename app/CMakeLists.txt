@@ -10,6 +10,7 @@ target_sources(WeftStudio PRIVATE src/Main.cpp)
 add_library(weft_app_lib STATIC
     src/ui/AboutPanel.cpp
     src/ui/BottomArea.cpp
+    src/ui/PianoRoll.cpp
     src/ui/Commands.cpp
     src/ui/ControlBar.cpp
     src/ui/Inspector.cpp

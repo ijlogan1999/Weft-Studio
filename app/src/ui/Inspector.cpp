@@ -1,5 +1,9 @@
 #include "Inspector.h"
 
+#include "PianoRoll.h"
+
+#include "weft/time/Position.h"
+
 namespace weft::ui
 {
 namespace
@@ -97,6 +101,79 @@ Inspector::Inspector (Studio& s) : studio (s)
     describe (fadeInCurve, "Fade-in curve");
     describe (fadeOutCurve, "Fade-out curve");
 
+    regionQuantize.addItem ("Off", 1);
+    for (std::size_t i = 1; i < gridValues().size(); ++i)
+        regionQuantize.addItem (gridValues()[i].name, static_cast<int> (i) + 1);
+    describe (regionQuantize, "Region quantize", "Playback quantize for the region: Off or a grid value (notes keep their positions)");
+    regionQuantize.onChange = [this] { setRegionQuantize(); };
+    setupSlider (quantizeStrength, 0.0, 100.0, 1.0, "%");
+    setupSlider (quantizeSwing, 0.0, 100.0, 1.0, "%");
+    describe (quantizeStrength, "Region quantize strength");
+    describe (quantizeSwing, "Region quantize swing");
+    for (auto* sl : { &quantizeStrength, &quantizeSwing })
+    {
+        sl->onDragStart = [this] { studio.session().beginGesture ("Region Quantize"); };
+        sl->onDragEnd = [this] {
+            studio.session().endGesture();
+            studio.edited();
+        };
+        sl->onValueChange = [this] { setRegionQuantize(); };
+    }
+    describe (applyQuantize, Cmd::applyQuantize);
+    applyQuantize.onClick = [this] {
+        if (const auto* r = region())
+            studio.check (studio.session().applyRegionQuantize (r->id));
+    };
+
+    const auto noteField = [this] (juce::Label& l, const juce::String& name, std::function<void (const juce::String&)> apply) {
+        l.setEditable (true, true, true);
+        describe (l, name, name + " of the selected notes (click to type)");
+        l.onTextChange = [this, &l, apply] {
+            if (! refreshing && l.getText().trim().isNotEmpty() && l.getText() != juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94")))
+                apply (l.getText().trim());
+            refresh();
+        };
+    };
+    noteField (notePitch, "Pitch", [this] (const juce::String& t) {
+        int pitch = -1;
+        if (t.containsOnly ("0123456789"))
+            pitch = t.getIntValue();
+        else
+            for (int p = 0; p < 128; ++p)
+                if (t.equalsIgnoreCase (juce::String (commands::noteName (p))))
+                    pitch = p;
+        if (pitch < 0 || pitch > 127)
+            studio.setStatus ("Pitch is a note name like C3 or a number 0-127.");
+        else
+            editNotes ("Pitch", [pitch] (model::Note& n) { n.pitch = pitch; });
+    });
+    noteField (noteVelocity, "Velocity", [this] (const juce::String& t) {
+        studio.check (studio.session().setNotesVelocity (notes(), std::clamp (t.getIntValue(), 1, 127)));
+    });
+    noteField (noteLength, "Length", [this] (const juce::String& t) {
+        const auto ticks = std::max<Ticks> (1, t.getLargeIntValue());
+        editNotes ("Length", [ticks] (model::Note& n) { n.length = ticks; });
+    });
+    noteField (notePosition, "Position", [this] (const juce::String& t) {
+        const auto at = parseBarsBeats (t.toStdString(), studio.model().signatures);
+        if (! at)
+        {
+            studio.setStatus ("Position is bar beat division tick, like 2 1 1 1.");
+            return;
+        }
+        auto& session = studio.session();
+        session.beginGesture ("Position");
+        for (const auto& ref : notes())
+            if (const auto* n = commands::findNote (studio.model(), ref))
+                session.setNoteSpan (ref, *at, n->length);
+        session.endGesture();
+        studio.edited();
+    });
+    noteField (noteChannel, "Channel", [this] (const juce::String& t) {
+        const auto ch = std::clamp (t.getIntValue(), 1, 16);
+        editNotes ("Channel", [ch] (model::Note& n) { n.channel = ch; });
+    });
+
     trackName.setEditable (false, true, true);
     describe (trackName, "Track name", "Track name (double-click to rename)");
     trackName.onTextChange = [this] {
@@ -122,7 +199,9 @@ Inspector::Inspector (Studio& s) : studio (s)
     };
 
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &fadeIn, &fadeOut,
-                                                                          &fadeInCurve, &fadeOutCurve, &trackName, &trackColour, &monitor })
+                                                                          &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
+                                                                          &applyQuantize, &notePitch, &noteVelocity, &noteLength, &notePosition,
+                                                                          &noteChannel, &trackName, &trackColour, &monitor })
     {
         c->setWantsKeyboardFocus (dynamic_cast<juce::Label*> (c) != nullptr);
         addChildComponent (c);
@@ -137,6 +216,40 @@ const model::Region* Inspector::region() const
 {
     const auto ids = studio.selection.ids();
     return ids.empty() ? nullptr : studio.model().region (ids.front());
+}
+
+std::vector<commands::NoteRef> Inspector::notes() const
+{
+    if (! studio.notesFocused())
+        return {};
+    return { studio.piano.selection.begin(), studio.piano.selection.end() };
+}
+
+void Inspector::editNotes (std::string_view name, const std::function<void (model::Note&)>& change)
+{
+    auto& s = studio.session();
+    s.beginGesture (std::string (name));
+    for (const auto& ref : notes())
+        if (const auto* n = commands::findNote (studio.model(), ref))
+        {
+            auto copy = *n;
+            change (copy);
+            s.updateNote (ref.regionId, copy);
+        }
+    s.endGesture();
+    studio.edited();
+}
+
+void Inspector::setRegionQuantize()
+{
+    const auto* r = region();
+    if (r == nullptr || refreshing || ! r->isMidi)
+        return;
+    const auto index = regionQuantize.getSelectedId() - 1;
+    std::optional<model::RegionQuantize> q;
+    if (index > 0)
+        q = model::RegionQuantize { gridValues()[static_cast<std::size_t> (index)].ticks, quantizeStrength.getValue() / 100.0, quantizeSwing.getValue() / 100.0 };
+    studio.check (studio.session().setRegionQuantize (r->id, q));
 }
 
 void Inspector::refresh()
@@ -163,6 +276,62 @@ void Inspector::refresh()
         fadeInCurve.setSelectedItemIndex (curveIndex (r->audio.fadeIn.curve), juce::dontSendNotification);
         fadeOutCurve.setSelectedItemIndex (curveIndex (r->audio.fadeOut.curve), juce::dontSendNotification);
     }
+    const bool midi = r != nullptr && r->isMidi;
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &applyQuantize })
+        c->setVisible (midi);
+    if (midi)
+    {
+        const auto& q = r->midi.quantize;
+        int id = 1;
+        for (std::size_t i = 1; q && i < gridValues().size(); ++i)
+            if (gridValues()[i].ticks == q->grid)
+                id = static_cast<int> (i) + 1;
+        regionQuantize.setSelectedId (id, juce::dontSendNotification);
+        quantizeStrength.setValue (q ? q->strength * 100.0 : 100.0, juce::dontSendNotification);
+        quantizeSwing.setValue (q ? q->swing * 100.0 : 0.0, juce::dontSendNotification);
+        quantizeStrength.setEnabled (q.has_value());
+        quantizeSwing.setEnabled (q.has_value());
+        applyQuantize.setEnabled (q.has_value());
+    }
+
+    // Note section: one value, or a dash when the selected notes differ.
+    const auto selected = notes();
+    std::vector<const model::Note*> found;
+    for (const auto& ref : selected)
+        if (const auto* n = commands::findNote (studio.model(), ref))
+            found.push_back (n);
+    for (auto* l : { &notePitch, &noteVelocity, &noteLength, &notePosition, &noteChannel })
+        l->setVisible (! found.empty());
+    if (! found.empty())
+    {
+        const auto common = [&found] (auto field) {
+            const auto v = field (*found.front());
+            return std::all_of (found.begin(), found.end(), [&] (const model::Note* n) { return field (*n) == v; }) ? std::optional (v) : std::nullopt;
+        };
+        const juce::String mixed (juce::CharPointer_UTF8 ("\xe2\x80\x94"));
+        const auto pitch = common ([] (const model::Note& n) { return n.pitch; });
+        notePitch.setText (pitch ? juce::String (commands::noteName (*pitch)) : mixed, juce::dontSendNotification);
+        // Velocity shows the range of a mixed selection, like "64–110" (W-4 step 9).
+        const auto [lowest, highest] = std::minmax_element (found.begin(), found.end(), [] (const model::Note* a, const model::Note* b) { return a->velocity < b->velocity; });
+        noteVelocity.setText ((*lowest)->velocity == (*highest)->velocity
+                                  ? juce::String ((*lowest)->velocity)
+                                  : juce::String ((*lowest)->velocity) + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x93")) + juce::String ((*highest)->velocity),
+                              juce::dontSendNotification);
+        const auto length = common ([] (const model::Note& n) { return n.length; });
+        noteLength.setText (length ? juce::String (*length) : mixed, juce::dontSendNotification);
+        const auto channel = common ([] (const model::Note& n) { return n.channel; });
+        noteChannel.setText (channel ? juce::String (*channel) : mixed, juce::dontSendNotification);
+        std::optional<Ticks> position;
+        for (std::size_t i = 0; i < found.size(); ++i)
+        {
+            const auto at = commands::noteTimelineTick (*studio.model().region (selected[i].regionId), found[i]->pos);
+            position = i == 0 || (position && *position == at) ? std::optional (at) : std::nullopt;
+            if (! position)
+                break;
+        }
+        notePosition.setText (position ? juce::String (formatBarsBeats (*position, studio.model().signatures)) : mixed, juce::dontSendNotification);
+    }
+
     const auto* t = studio.model().track (studio.selectedTrack());
     for (juce::Component* c : std::initializer_list<juce::Component*> { &trackName, &trackColour, &monitor })
         c->setVisible (t != nullptr);
@@ -188,6 +357,8 @@ void Inspector::paint (juce::Graphics& g)
         g.drawText ("REGION", 12, regionTop, getWidth() - 24, 18, juce::Justification::left);
     if (trackName.isVisible())
         g.drawText ("TRACK", 12, trackTop, getWidth() - 24, 18, juce::Justification::left);
+    if (notePitch.isVisible())
+        g.drawText ("NOTE", 12, noteTop, getWidth() - 24, 18, juce::Justification::left);
     if (! regionName.isVisible() && ! trackName.isVisible())
         g.drawText ("Select a track or region.", getLocalBounds().reduced (12), juce::Justification::centredTop);
     g.setFont (juce::FontOptions (12.0f));
@@ -198,6 +369,14 @@ void Inspector::paint (juce::Graphics& g)
     label (regionGain, "Gain");
     label (fadeIn, "Fade in");
     label (fadeOut, "Fade out");
+    label (regionQuantize, "Quantize");
+    label (quantizeStrength, "Strength");
+    label (quantizeSwing, "Swing");
+    label (notePitch, "Pitch");
+    label (noteVelocity, "Velocity");
+    label (noteLength, "Length");
+    label (notePosition, "Position");
+    label (noteChannel, "Channel");
     label (trackColour, "Colour");
     label (monitor, "Monitor");
 }
@@ -227,6 +406,21 @@ void Inspector::resized()
             fadeOut.setBounds (withLabel (row()));
             fadeOutCurve.setBounds (withLabel (row (24)));
         }
+        if (regionQuantize.isVisible())
+        {
+            regionQuantize.setBounds (withLabel (row (24)));
+            quantizeStrength.setBounds (withLabel (row()));
+            quantizeSwing.setBounds (withLabel (row()));
+            applyQuantize.setBounds (withLabel (row (24)));
+        }
+        r.removeFromTop (14);
+    }
+    if (notePitch.isVisible())
+    {
+        noteTop = r.getY();
+        row (18);
+        for (auto* l : { &notePitch, &noteVelocity, &noteLength, &notePosition, &noteChannel })
+            l->setBounds (withLabel (row (22)));
         r.removeFromTop (14);
     }
     trackTop = r.getY();

@@ -188,9 +188,9 @@ Delete or Backspace removes selected regions. Gap remains. Deleting a take folde
 1. Double-clicking a MIDI region (or pressing P with it selected) opens the piano roll in the bottom editor area showing that region. Selecting several regions on one track shows all of their notes; the region boundaries are drawn as vertical lines.
 2. Vertical axis: keyboard C-2 (MIDI 0) to G8 (127). Middle C (60) is labeled C3. **Decision D-W4-1:** octave naming uses C3 = 60, a common DAW convention; configurable to C4 = 60 in v2.
 3. Horizontal axis matches the arrange ruler; the piano roll has its own zoom and grid.
-4. **Create note:** pencil tool click, or Ctrl+click with the pointer tool on empty grid. Starts at the snapped click position, length = last used length (default 1/16), velocity = last used (default 100), channel = region default (1).
+4. **Create note:** pencil tool click, or Ctrl+click with the pointer tool on empty grid. Starts at the snapped click position, length = last used length (default 1/16), velocity = last used (default 100), channel = region default (1). **Decision D-W4-2:** the snapped position is the grid line at or before the click (the cell clicked), and dragging on after the click lengthens the new note in the same undo step.
 5. **Audition:** clicking an existing note or creating one plays it through the instrument at its velocity for its length (max 1 s) when audition is on (default on).
-6. **Move:** drag horizontally (snaps note start to grid) and vertically (semitones). Up/Down arrows transpose selected notes by a semitone; Shift+Up/Down by an octave; Left/Right move by grid value. Notes cannot go below 0 or above 127; a transpose that would push any selected note out of range is clamped for the whole selection (the move stops at the boundary).
+6. **Move:** drag horizontally (snaps note start to grid) and vertically (semitones). Up/Down arrows transpose selected notes by a semitone; Shift+Up/Down by an octave; Left/Right move by grid value. Notes cannot go below 0 or above 127; a transpose that would push any selected note out of range is clamped for the whole selection (the move stops at the boundary). **Decision D-W4-3:** "clamped for the whole selection" means no note changes pitch (AT-PRL-4: Shift+Up on a note at 120 moves nothing). Moving left stops when the earliest selected note reaches its region's start. Drags preview and commit one undo step on release; Alt drags without snap; Ctrl+drag copies.
 7. **Resize:** drag a note's right edge to change length (snapped); drag left edge to change start keeping end fixed. Minimum length 1 tick.
 8. **Delete:** Delete key or eraser click.
 9. **Velocity:**
@@ -200,7 +200,10 @@ Delete or Backspace removes selected regions. Gap remains. Deleting a take folde
    - Inspector shows the selected note's velocity, or the range "64–110" for multi-selection; typing sets all.
 10. **Controller lanes:** a lane selector picks Velocity, Mod (CC1), Sustain (CC64), Pitch Bend, Aftertouch, or any CC number. Click adds a point; drag moves; Delete removes. Pitch bend is drawn centered.
 11. **Note mute:** Ctrl+M mutes/unmutes selected notes.
-12. Edits outside the region's current bounds: creating a note after the region end extends the region to the next bar boundary. Notes before region start are not allowed (the click is ignored).
+12. Edits outside the region's current bounds: creating a note after the region end extends the region to the next bar boundary. Notes before region start are not allowed (the click is ignored). **Decision D-W4-4:** the same applies to notes moved, resized or pasted past the end: the region grows to the end of the bar holding the note's end. **Decision D-W4-5:** Ctrl+V pastes into the topmost MIDI region under the playhead on the piano roll's track, keeping the notes' relative offsets; with no region there nothing is pasted and the status bar says why.
+14. **Scissors** split a note at the snapped point into two notes with the same pitch, velocity and channel (one undo step "Split Note"). **Decision D-W4-6.**
+15. **Controller points** snap to the piano roll grid and hold their value until the next point (drawn as steps; no interpolation in MVP). Pitch bend is stored as −8192…8191 and sent as a 14-bit message centred on 8192; aftertouch is channel pressure. Clicking a point selects it and Delete removes it; the eraser or Alt+click also removes points. **Decision D-W4-7.**
+16. **Velocity tool:** each pixel of vertical drag is one velocity step. **Decision D-W4-8.**
 13. The piano roll follows the playhead when "follow" is on.
 
 **Collaboration notes:** collaborators editing the same region see each other's pointer and selected notes in their colors (05 §5). Concurrent edits to different notes merge; concurrent edits to the same note's same field resolve last-writer-wins by CRDT rules (05 §4).
@@ -414,6 +417,13 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels keep the first 2. |
 | D-W3-4 | Undo history is per session, not persisted. |
 | D-W4-1 | MIDI 60 is labeled C3. |
+| D-W4-2 | The pencil places a note on the grid line at or before the click; dragging on lengthens it in the same undo step. |
+| D-W4-3 | A transpose that would leave 0–127 for any selected note moves none; moving left stops at the earliest region start; drags commit on release; Alt bypasses snap; Ctrl+drag copies. |
+| D-W4-4 | Notes moved, resized, drawn or pasted past a region's end grow it to the end of that bar. |
+| D-W4-5 | Note paste goes into the topmost MIDI region under the playhead on the shown track; none there means no paste. |
+| D-W4-6 | Scissors split a note into two at the snapped point. |
+| D-W4-7 | Controller points snap to the grid and hold until the next point; pitch bend is 14-bit centred on 8192. |
+| D-W4-8 | Velocity tool: one velocity step per pixel. |
 | D-W5-1 | Swing 0–100% maps from straight to triplet feel. |
 | D-W5-2 | Quantize moves note starts only. |
 | D-W6-1 | Solo keeps upstream/downstream routing audible. |

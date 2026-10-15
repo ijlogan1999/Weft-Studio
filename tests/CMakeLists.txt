@@ -80,7 +80,7 @@ endif()
 
 # [UI] tests: the arrange window, headless. Linux needs a virtual X server (xvfb-run).
 if(WEFT_WITH_JUCE)
-    add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp)
+    add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
     if(WIN32 OR APPLE)
         add_test(NAME ui-tests COMMAND weft_ui_tests)

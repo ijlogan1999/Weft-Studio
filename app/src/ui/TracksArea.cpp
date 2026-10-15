@@ -627,6 +627,7 @@ void Timeline::startRegionDrag (const model::Region& r, Zone zone, juce::Point<f
 
 void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int clicks)
 {
+    studio.piano.focus = false; // keys act on regions again
     downAt = lastAt = p;
     auto& s = studio.session();
     const auto& m = studio.model();
