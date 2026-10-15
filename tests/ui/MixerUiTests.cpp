@@ -449,3 +449,46 @@ TEST_CASE ("AT-PLG-4 plug-in manager: list, disable, rescan", "[UI]")
     ui.main->pluginWindows().closeAll();
     forgetPlugins();
 }
+
+// Not an acceptance test: the mixer with some content, as a PNG for reports.
+// Run with: weft_ui_tests "[.screenshot-mixer]" (writes WEFT_SCREENSHOT or ./mixer.png).
+TEST_CASE ("Screenshot of the mixer", "[.screenshot-mixer]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto audio = ui.m().trackOrder.front();
+    s.renameTrack (audio, "Guitar");
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto bass = s.createTrack (model::TrackKind::instrument, "Bass").value();
+    const auto verb = s.newBus (audio, true).value();
+    s.renameTrack (verb, "Reverb");
+    REQUIRE (s.addSend (keys, verb));
+    for (const auto& [track, uid, name] : std::vector<std::tuple<Id, std::string, std::string>> {
+             { audio, "weft.eq", "Weft EQ" }, { audio, "weft.compressor", "Weft Compressor" }, { keys, "weft.delay", "Weft Delay" },
+             { verb, "weft.reverb", "Weft Reverb" }, { ui.m().info.masterTrackId, "weft.gain", "Weft Gain" } })
+    {
+        model::PluginInstance p;
+        p.pluginUid = uid;
+        p.name = name;
+        REQUIRE (s.addInsert (track, p));
+    }
+    s.setTrackVolume (audio, -4.5);
+    s.setTrackPan (keys, -0.4);
+    s.setTrackVolume (bass, -9.0);
+    s.setTrackOutput (bass, verb);
+    ui.studio.selectTrack (keys);
+    ui.studio.layout.bottom = BottomTab::mixer;
+    ui.studio.layout.bottomHeight = 600;
+    ui.studio.edited();
+    ui.settle();
+    auto& mixer = ui.main->bottom().mixerView();
+    mixer.stripFor (audio)->meter.update (0.5f, false, 1.0);
+    mixer.stripFor (keys)->meter.update (0.3f, false, 1.0);
+    mixer.masterStrip().meter.update (1.2f, true, 1.0);
+    const auto image = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
+    const auto* env = std::getenv ("WEFT_SCREENSHOT");
+    juce::File out (env != nullptr ? juce::String (env) : juce::File::getCurrentWorkingDirectory().getChildFile ("mixer.png").getFullPathName());
+    out.deleteFile();
+    juce::FileOutputStream stream (out);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+}

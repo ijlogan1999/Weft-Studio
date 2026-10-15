@@ -264,12 +264,15 @@ input (hardware input / instrument output / bus input)
 1. User hovers an empty insert slot on a channel strip; clicking opens the plugin menu (built-in effects first, then VST3 grouped by vendor).
 2. Choosing a plugin instantiates it, places it in the slot, and opens its editor window.
 3. Clicking a filled slot's left edge toggles bypass; dragging moves it to another slot or (with Ctrl) copies it to another channel; the slot menu offers Remove and Replace.
-4. Adding a plugin that reports latency triggers delay compensation (F-MIX-13): every path to the master is delayed so all paths have equal total latency. Delay compensation updates within one buffer of the change, with a short crossfade (10 ms) to avoid clicks. **Decision D-W6-3:** compensation applies to all channels, including live-monitored inputs, in MVP; low-latency monitoring mode (F-REC-10) is v2.
+4. Adding a plugin that reports latency triggers delay compensation (F-MIX-13): every path to the master is delayed so all paths have equal total latency. Delay compensation updates within one buffer of the change, with a short crossfade (10 ms) to avoid clicks. **Decision D-W6-3:** compensation applies to all channels, including live-monitored inputs, in MVP; low-latency monitoring mode (F-REC-10) is v2. **Decision D-W6-6:** a bypassed insert adds no latency, so bypassing a latent plug-in re-aligns the paths like removing it. Latency of master inserts isn't compensated: everything has already been summed, so there is nothing left to align (the offline render still drops that delay from the start of the file).
+5. **Decision D-W6-4:** a mono channel runs its inserts in stereo (the signal copied to both sides) and averages the result back to mono before the fader, so stereo-only plug-ins work on mono tracks.
+6. **Decision D-W6-5:** a parameter changed outside automation (a plug-in window, the generic editor, undo, a collaborator) takes effect from the start of the next audio block; only automation is sample-accurate (D-W8-3).
+7. **Decision D-W6-7:** muting cuts the channel at once; unmuting brings it back with the fader's one-block ramp from silence, so it doesn't click.
 
 ### Steps: choosing outputs
 1. The channel strip's Output button shows the current destination (default "Master").
 2. Clicking lists Master, existing buses, and "New Bus".
-3. Choosing a bus that would create a cycle (the bus's own path leads back to this channel) is disallowed: the menu item is disabled with tooltip "Would create a feedback loop". This check runs on the routing graph including sends.
+3. Choosing a bus that would create a cycle (the bus's own path leads back to this channel) is disallowed: the menu item is disabled with tooltip "Would create a feedback loop". This check runs on the routing graph including sends. **Decision D-W6-8:** menu items can't carry tooltips, so the disabled item shows the reason in its text: "Bus 2 (Would create a feedback loop)". A send menu also disables a bus the channel already sends to, marked "(already sending)" (step 7 of W-7).
 
 ---
 
@@ -278,7 +281,7 @@ input (hardware input / instrument output / bus input)
 **Covers:** F-MIX-8, F-MIX-9, F-TRK-4.
 
 1. User clicks an empty send slot on a channel. The menu lists existing buses and "New Bus".
-2. Choosing **New Bus** creates a bus channel named "Bus N" (N = next free number), output Master, fader at 0 dB, placed in the mixer to the right of the track channels and listed as a bus track in the arrange view (no regions; can show automation). **Decision D-W7-1:** buses appear in the tracks area so their automation can be edited; their header has no record or region lane.
+2. Choosing **New Bus** creates a bus channel named "Bus N" (N = next free number), output Master, fader at 0 dB, placed in the mixer to the right of the track channels and listed as a bus track in the arrange view (no regions; can show automation). **Decision D-W7-3:** the bus goes at the end of the track order, and "next free number" is the lowest N with no track named "Bus N". New Bus from an output menu routes the channel to the new bus instead of adding a send. Creating the bus and its send (or output) is one undo step "New Bus". **Decision D-W7-1:** buses appear in the tracks area so their automation can be edited; their header has no record or region lane.
 3. The send appears in the slot. **Decision D-W7-2:** a new send starts at 0 dB (unity) so the user hears the effect immediately; moving the knob adjusts. Alt+click resets to 0 dB.
 4. Send mode toggles Post (default) / Pre fader via the send's context menu.
 5. Users typically add a reverb or delay insert on the bus. The bus channel processes the sum of all sends.
@@ -429,8 +432,14 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W6-1 | Solo keeps upstream/downstream routing audible. |
 | D-W6-2 | Mute silences pre-fader sends too. |
 | D-W6-3 | Delay compensation applies to monitored inputs in MVP. |
+| D-W6-4 | Mono channels run inserts in stereo, then average back to mono. |
+| D-W6-5 | Parameter changes outside automation apply from the next block. |
+| D-W6-6 | Bypassed inserts add no latency; master insert latency isn't compensated. |
+| D-W6-7 | Mute cuts at once; unmute ramps in over one block. |
+| D-W6-8 | Disabled routing menu items show the reason in their text. |
 | D-W7-1 | Buses appear in the tracks area. |
 | D-W7-2 | New sends start at 0 dB. |
+| D-W7-3 | New buses go at the end of the track order, lowest free "Bus N", one undo step. |
 | D-W8-1 | Write mode reverts to Latch after a pass. |
 | D-W8-2 | Automation thinning thresholds. |
 | D-W8-3 | Automation interpolation and parameter queues. |

@@ -238,6 +238,10 @@ PluginInstance {
 
 **Decision D-DM-5:** plugin state is opaque bytes, so concurrent edits to the *same plugin's* internal state cannot be merged; the CRDT treats `state` as a single last-writer-wins register. Concurrent edits to *different* plugins, or to automatable parameters recorded in `params`, merge normally. To reduce conflicts, the client writes `state` only when the user closes the plugin window or after 2 s without parameter changes, and writes individual `params` entries on every parameter change.
 
+**Decision D-DM-20:** state over 64 KB is stored in the project folder as `Blobs/<hash>.bin`, named by the lowercase hex of its BLAKE3 hash, and `state` holds the `"b3:<hex>"` hash string; loading checks the hash. Blobs travel with the project like media.
+
+**Decision D-DM-21:** a VST3 `pluginUid` is the 32-hex-digit class ID of the plug-in's audio processor class, as its factory reports it. A hosted plug-in's `ParamId` is its VST3 parameter ID written as a decimal string; built-ins use readable ids (`"threshold"`). When an undo removes a parameter from `params`, the plug-in goes back to what `state` says (or the parameter's default if there is no state).
+
 ### 5.3 Routing graph
 
 Nodes: every track's channel. Edges: `output` assignments and sends. The graph must be a DAG. Any edit that would create a cycle is rejected locally. Because concurrent edits from two users could combine into a cycle (A→B by one user, B→A by another), the engine runs a **cycle breaker** on every document update: if a cycle exists, the edge belonging to the most recently modified send/output (by CRDT timestamp, ties by `Id`) is treated as disabled (silent) and flagged in the UI with "Disabled: feedback loop". **Decision D-DM-6.** The document is not mutated by the breaker; the user resolves it.
@@ -496,3 +500,5 @@ All repairs are deterministic functions of the document state so every client sh
 | D-DM-17 | Orphaned regions go to a deterministic Recovered track. |
 | D-DM-18 | List moves are delete+insert with dedupe repair. |
 | D-DM-19 | Adding a tempo/signature change at an existing position edits that point. |
+| D-DM-20 | Plugin state over 64 KB lives in `Blobs/<hash>.bin`; `state` holds the hash. |
+| D-DM-21 | VST3 uid is the 32-hex class ID; hosted ParamIds are VST3 parameter IDs; removed params revert to state. |

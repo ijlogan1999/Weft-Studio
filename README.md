@@ -6,8 +6,10 @@ online or offline, and every change merges.
 
 A weft is the thread woven across a loom; Weft weaves many people's ideas into one song.
 
-> **Status:** early development. Milestone 0 (repository skeleton, build, CI) is in
-> progress. Nothing here makes music yet. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan).
+> **Status:** early development. Milestones 0 to 6 are done: recording, arranging, the
+> piano roll, and a mixer with buses, built-in effects and VST3 plug-ins. Automation and
+> collaboration come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
+> and [the milestone reports](docs/reports).
 
 ## Support Weft
 

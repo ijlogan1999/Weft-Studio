@@ -13,7 +13,32 @@ const char* const feedbackText = "Would create a feedback loop";
 
 bool isSilent (double db) { return db <= fader::minDb + 1e-6; }
 
-void styleSlider (juce::Slider& s, juce::Slider::SliderStyle style, double min, double max, double resetTo)
+} // namespace
+
+void KnobLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&)
+{
+    const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat().reduced (2.0f);
+    const auto radius = std::min (bounds.getWidth(), bounds.getHeight()) / 2.0f;
+    const auto line = std::max (2.0f, radius * 0.25f);
+    const auto arcRadius = radius - line / 2.0f;
+    const auto c = bounds.getCentre();
+    juce::Path track;
+    track.addCentredArc (c.x, c.y, arcRadius, arcRadius, 0.0f, start, end, true);
+    g.setColour (colour (Token::border));
+    g.strokePath (track, juce::PathStrokeType (line, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    const auto angle = start + pos * (end - start);
+    juce::Path value;
+    value.addCentredArc (c.x, c.y, arcRadius, arcRadius, 0.0f, start, angle, true);
+    g.setColour (colour (Token::accent));
+    g.strokePath (value, juce::PathStrokeType (line, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    const auto tip = c.getPointOnCircumference (arcRadius - line, angle);
+    g.setColour (colour (Token::text));
+    g.drawLine (juce::Line<float> (c, tip), 1.5f);
+}
+
+namespace
+{
+void styleSlider (juce::Slider& s, juce::Slider::SliderStyle style, double min, double max, double resetTo, KnobLook& knobs)
 {
     s.setSliderStyle (style);
     s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
@@ -21,6 +46,8 @@ void styleSlider (juce::Slider& s, juce::Slider::SliderStyle style, double min, 
     s.setDoubleClickReturnValue (true, resetTo, juce::ModifierKeys::altModifier); // Alt+click resets (F-MIX-2, F-MIX-3)
     s.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier); // Shift-drag: fine
     s.setWantsKeyboardFocus (false);
+    if (style != juce::Slider::LinearVertical)
+        s.setLookAndFeel (&knobs);
 }
 
 void small (juce::TextButton& b)
@@ -184,7 +211,7 @@ SendSlot::SendSlot (ChannelStrip& strip, std::size_t i, const model::Send* send,
 {
     target.setButtonText (send != nullptr ? busName : juce::String ("Send"));
     describe (target, send != nullptr ? "Send to " + busName : juce::String ("Add a send"),
-              disabledEdge ? juce::String (feedbackText) + ": this send is off" : send != nullptr ? juce::String ("Send to ") + busName : juce::String ("Send to a bus"));
+              disabledEdge ? juce::String ("Disabled: feedback loop") : send != nullptr ? juce::String ("Send to ") + busName : juce::String ("Send to a bus"));
     small (target);
     target.onClick = [this] { owner.showMenu (owner.sendMenu (index), [s = &owner, i = index] (int item) { s->pickSend (i, item); }); };
     addAndMakeVisible (target);
@@ -198,7 +225,7 @@ SendSlot::SendSlot (ChannelStrip& strip, std::size_t i, const model::Send* send,
         target.setColour (juce::TextButton::buttonColourId, colour (Token::warning));
         target.setColour (juce::TextButton::textColourOffId, colour (Token::onWarning));
     }
-    styleSlider (level, juce::Slider::RotaryHorizontalVerticalDrag, fader::minDb, fader::maxDb, 0.0);
+    styleSlider (level, juce::Slider::RotaryHorizontalVerticalDrag, fader::minDb, fader::maxDb, 0.0, *knobs);
     level.setSkewFactor (3.0);
     level.setValue (std::clamp (send->levelDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
     describe (level, "Send level", "Send level (Alt+click: 0 dB)");
@@ -238,8 +265,8 @@ void SendSlot::resized()
         return;
     }
     mute.setBounds (r.removeFromRight (16));
-    mode.setBounds (r.removeFromRight (26));
-    level.setBounds (r.removeFromRight (20));
+    mode.setBounds (r.removeFromRight (28));
+    level.setBounds (r.removeFromRight (22).expanded (0, 1));
     target.setBounds (r);
 }
 
@@ -292,7 +319,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     };
     addAndMakeVisible (automation);
 
-    styleSlider (pan, juce::Slider::RotaryHorizontalVerticalDrag, -100.0, 100.0, 0.0);
+    styleSlider (pan, juce::Slider::RotaryHorizontalVerticalDrag, -100.0, 100.0, 0.0, *knobs);
     pan.textFromValueFunction = [] (double v) {
         const auto n = juce::roundToInt (v);
         return n == 0 ? juce::String ("C") : juce::String (std::abs (n)) + (n < 0 ? "L" : "R");
@@ -306,7 +333,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     };
     addAndMakeVisible (pan);
 
-    styleSlider (volume, juce::Slider::LinearVertical, fader::minDb, fader::maxDb, 0.0);
+    styleSlider (volume, juce::Slider::LinearVertical, fader::minDb, fader::maxDb, 0.0, *knobs);
     volume.setSkewFactor (3.0);
     describe (volume, "Volume", "Volume (Alt+click: 0 dB, Shift-drag: fine)");
     volume.textFromValueFunction = [] (double v) { return fader::dbText (v) + " dB"; };
@@ -363,7 +390,11 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     refresh();
 }
 
-ChannelStrip::~ChannelStrip() = default;
+ChannelStrip::~ChannelStrip()
+{
+    sends.clear();
+    pan.setLookAndFeel (nullptr);
+}
 
 bool ChannelStrip::isMaster() const { return id == studio.model().info.masterTrackId; }
 
@@ -507,7 +538,7 @@ void ChannelStrip::refresh()
     {
         const auto disabled = studio.model().disabledEdges.contains (model::RoutingEdge { id, t->output.busId, {} }.key());
         output.setButtonText (busName (t->output.busId));
-        describe (output, "Output", disabled ? juce::String (feedbackText) + ": this output is off" : "Output: " + busName (t->output.busId));
+        describe (output, "Output", disabled ? juce::String ("Disabled: feedback loop") : "Output: " + busName (t->output.busId));
         output.setColour (juce::TextButton::buttonColourId, disabled ? colour (Token::warning) : colour (Token::surfaceRaised));
         output.setColour (juce::TextButton::textColourOffId, disabled ? colour (Token::onWarning) : colour (Token::text));
     }
@@ -584,7 +615,7 @@ void ChannelStrip::resized()
     r.removeFromTop (gap);
     automation.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
-    pan.setBounds (r.removeFromTop (36).withSizeKeepingCentre (36, 36));
+    pan.setBounds (r.removeFromTop (36).withSizeKeepingCentre (32, 32));
     auto buttons = r.removeFromBottom (rowHeight);
     const auto bw = buttons.getWidth() / 4;
     for (auto* b : { &mute, &solo, &arm, &monitor })

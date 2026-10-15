@@ -1,5 +1,5 @@
 // VST3 hosting acceptance tests with the fixture plug-ins (spec 06 §10): AT-PLG-2, 3, 6 and
-// the fixture versions of AT-MIX-5, 6 and 12. They host through Weft's own VST3 host and
+// the fixture versions of AT-MIX-5, 6, 12 and AT-PRL-9, 13. They host through Weft's own VST3 host and
 // scanner, the way the app does.
 
 #include "../engine/EngineFixtures.h"
@@ -325,4 +325,55 @@ TEST_CASE ("AT-MIX-12 with TestLatency: impulses on two tracks reach the master 
     REQUIRE (hits.size() == 1);
     CHECK (hits[0].first == barSamples + 1000);
     CHECK (hits[0].second == Catch::Approx (0.75).epsilon (1e-5));
+}
+
+namespace
+{
+/** An instrument track playing TestSynth through the engine. */
+struct SynthRig
+{
+    Hosting hosting;
+    Rig rig;
+    Id keys, region;
+    SynthRig()
+    {
+        rig.engine.setPluginFactory (hosting.factory());
+        keys = rig.session.createTrack (TrackKind::instrument, "Synth").value();
+        region = rig.session.createMidiRegion (keys, 0, 2 * barTicks).value();
+        REQUIRE (rig.session.setInstrument (keys, hosting.instance ("TestSynth")));
+        rig.sync();
+        REQUIRE (dynamic_cast<HostedPlugin*> (&rig.rack.find (keys)->instrument()) != nullptr);
+    }
+};
+} // namespace
+
+TEST_CASE ("AT-PRL-9 with TestSynth: output amplitude follows note velocity", "[E][pianoroll][vst3][AT-PRL-9]")
+{
+    SynthRig k;
+    model::Note soft, loud;
+    soft.pos = 0;
+    soft.length = 960;
+    soft.velocity = 64;
+    loud.pos = 1920;
+    loud.length = 960;
+    loud.velocity = 127;
+    loud.pitch = 62;
+    REQUIRE (k.rig.session.addNote (k.region, soft));
+    REQUIRE (k.rig.session.addNote (k.region, loud));
+    k.rig.sync();
+    k.rig.engine.play (0);
+    const auto out = k.rig.run (barSamples);
+    const auto a = peak (out, 1000, 19000);
+    const auto b = peak (out, 49000, 19000);
+    REQUIRE (b > 0);
+    CHECK (a / b == Catch::Approx (64.0 / 127.0).epsilon (0.005));
+}
+
+TEST_CASE ("AT-PRL-13 with TestSynth: audition sounds at its velocity for at most 1 s", "[E][pianoroll][vst3][AT-PRL-13]")
+{
+    SynthRig k;
+    REQUIRE (k.rig.engine.audition (k.keys, 1, 69, 90, 5.0)); // longer than allowed: 1 s
+    const auto out = k.rig.run (72000);
+    CHECK (peak (out, 2000, 40000) == Catch::Approx (90.0 / 127.0).epsilon (0.01));
+    CHECK (peak (out, 49000, 23000) < 1e-4f); // off after 1 s
 }

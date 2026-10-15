@@ -21,6 +21,12 @@ juce::String dbText (double db);
 std::optional<double> parseDb (const juce::String& text);
 } // namespace fader
 
+/** Knobs drawn to fill their bounds (the stock look leaves a 10 px margin, too much for a send knob). */
+struct KnobLook final : juce::LookAndFeel_V4
+{
+    void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&) override;
+};
+
 /** A post-fader peak meter with peak hold and a clip light; clicking the light resets it (F-MIX-5). */
 class MeterView final : public juce::Component
 {
@@ -61,10 +67,12 @@ class SendSlot final : public juce::Component
 {
 public:
     SendSlot (ChannelStrip& strip, std::size_t index, const model::Send* send, const juce::String& busName, bool disabledEdge);
+    ~SendSlot() override { level.setLookAndFeel (nullptr); }
     void resized() override;
     void paint (juce::Graphics&) override;
     const std::size_t index;
     const Id sendId;
+    juce::SharedResourcePointer<KnobLook> knobs;
     juce::TextButton target, mode, mute { "M" };
     juce::Slider level;
 
@@ -98,6 +106,7 @@ public:
     int preferredHeight() const;
 
     // Controls (tests drive them) -------------------------------------------------------
+    juce::SharedResourcePointer<KnobLook> knobs;
     juce::Label name;
     juce::TextButton input;  // audio input, or the instrument slot of an instrument track
     juce::TextButton output;
