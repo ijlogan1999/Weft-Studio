@@ -21,6 +21,7 @@
 
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 
 namespace weft::ui
@@ -61,6 +62,23 @@ struct PanelLayout
     friend bool operator== (const PanelLayout&, const PanelLayout&) = default;
 };
 
+/** The piano roll's view state (local, F-PRL): its selection, clipboard, grid and quantize settings. */
+struct PianoRollState
+{
+    std::set<commands::NoteRef> selection;
+    std::optional<std::pair<Id, Id>> point; // a selected controller point (region, event): Delete removes it
+    commands::NoteClipboard clipboard;
+    bool focus = false;        // note commands go to the piano roll (it was clicked last)
+    Ticks grid = 240;          // snap; 0 = off
+    Ticks quantizeGrid = 240;
+    double strength = 100.0;   // percent
+    double swing = 0.0;        // percent
+    bool audition = true;
+    bool follow = true;
+    Ticks lastLength = 240;    // the pencil draws notes like the last one made or resized
+    int lastVelocity = 100;
+};
+
 /** Track lane heights: local view state (F-TRK-12). */
 inline constexpr int minTrackHeight = 24, maxTrackHeight = 400, defaultTrackHeight = 72;
 
@@ -92,6 +110,13 @@ public:
     Id editorRegion; // the region the audio editor shows
     commands::RegionClipboard clipboard;
     juce::String status;
+    PianoRollState piano;
+
+    /** The MIDI regions the piano roll shows: the opened one plus the selected MIDI regions on its track (F-PRL-1). */
+    std::vector<Id> pianoRollRegions() const;
+    bool notesFocused() const noexcept { return piano.focus && layout.bottom == BottomTab::pianoRoll; }
+    /** Plays a note on its track's instrument when audition is on (F-PRL-11): its length, at most 1 s. */
+    void auditionNote (const Id& regionId, int pitch, int velocity, int channel = 1, Ticks length = 960);
 
     /** The grid in effect (snap off when disabled). */
     arrange::Snap activeSnap() const { return snapEnabled ? snap : arrange::Snap::off(); }
@@ -148,6 +173,7 @@ public:
 
 private:
     void syncEngine();
+    std::optional<bool> performNotes (Cmd command);
     void zoomToFit();
 
     std::unique_ptr<engine::AudioDevice> audioDevice;

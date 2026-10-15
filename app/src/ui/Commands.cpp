@@ -59,6 +59,15 @@ std::vector<CommandInfo> build()
         { Cmd::keyboardMidi, "Keyboard MIDI", "Ctrl+K", { key ('K', ctrl) } },
         { Cmd::toggleTheme, "Light/Dark Theme", "", {} },
         { Cmd::about, "About Weft Studio", "", {} },
+        { Cmd::muteNotes, "Mute Notes", "Ctrl+M", { key ('M', ctrl) } },
+        { Cmd::quantize, "Quantize", "Q", { key ('Q') } },
+        { Cmd::transposeUp, "Transpose Up", "Up", { key (K::upKey) } },
+        { Cmd::transposeDown, "Transpose Down", "Down", { key (K::downKey) } },
+        { Cmd::octaveUp, "Transpose Octave Up", "Shift+Up", { key (K::upKey, shift) } },
+        { Cmd::octaveDown, "Transpose Octave Down", "Shift+Down", { key (K::downKey, shift) } },
+        { Cmd::notesLeft, "Move Notes Left", "Left", { key (K::leftKey) } },
+        { Cmd::notesRight, "Move Notes Right", "Right", { key (K::rightKey) } },
+        { Cmd::applyQuantize, "Apply Quantize", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

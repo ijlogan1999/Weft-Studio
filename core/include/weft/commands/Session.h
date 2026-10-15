@@ -4,6 +4,7 @@
 // CRDT changes, and keeps this user's undo/redo stacks (spec 05 §6).
 
 #include "weft/commands/Arrange.h"
+#include "weft/commands/Notes.h"
 #include "weft/commands/Recording.h"
 #include "weft/commands/Txn.h"
 #include "weft/core/Id.h"
@@ -186,8 +187,41 @@ public:
     std::optional<Id> addNote (const Id& regionId, model::Note note);
     EditResult updateNote (const Id& regionId, const model::Note& note);
     EditResult deleteNotes (const Id& regionId, const std::vector<Id>& noteIds);
-    /** Destructive quantize of notes (all notes in the region window if noteIds is empty). */
+    /** Destructive quantize of notes (all notes in the region window if noteIds is empty). Notes don't move before the region start. */
     EditResult quantizeNotes (const Id& regionId, const std::vector<Id>& noteIds, Ticks grid, double strength, double swingPercent);
+
+    // Piano roll (several regions; positions are timeline ticks) -----------------------
+    /**
+        Pencil (F-PRL-2): a note at timeline tick `at` (already snapped). A note before the region start
+        isn't made; one that ends past the region end extends the region to the next bar.
+    */
+    std::optional<NoteRef> drawNote (const Id& regionId, Ticks at, int pitch, Ticks length, int velocity, int channel = 1);
+    /**
+        Drag or arrow keys (F-PRL-4): shifts every note by deltaTicks and deltaPitch, as a group. If any
+        note would leave 0-127 the pitch doesn't change; if any would start before its region, the time
+        shift stops there. Regions grow to the next bar to hold notes moved past their end.
+    */
+    EditResult moveNotes (const std::vector<NoteRef>& notes, Ticks deltaTicks, int deltaPitch, std::string_view name = "Move Notes");
+    /** Sets a note's timeline start and length (resize, F-PRL-5). Length at least 1 tick. */
+    EditResult setNoteSpan (const NoteRef& note, Ticks start, Ticks length);
+    EditResult deleteNotes (const std::vector<NoteRef>& notes);
+    /** Ctrl+C / Ctrl+V (F-PRL-7): the clipboard's earliest note lands at `at` in the region under `at` on the track. */
+    std::vector<NoteRef> pasteNotes (const NoteClipboard& clip, const Id& trackId, Ticks at);
+    /** Velocity lane or inspector: one value for every note (clamped 1-127). */
+    EditResult setNotesVelocity (const std::vector<NoteRef>& notes, int velocity);
+    /** Velocity tool (F-PRL-8): adds delta to each note's velocity, each clamped to 1-127. */
+    EditResult offsetNotesVelocity (const std::vector<NoteRef>& notes, int delta);
+    /** Ctrl+M (F-PRL-15): mutes them all, or unmutes them all when every one is already muted. */
+    EditResult toggleNotesMuted (const std::vector<NoteRef>& notes);
+    /** Q (W-5): destructive quantize across regions, one undo step "Quantize". Empty = every note in the regions. */
+    EditResult quantizeNotes (const std::vector<Id>& regionIds, const std::vector<NoteRef>& notes, Ticks grid, double strength, double swingPercent);
+    /** Apply Quantize (W-5 region quantize step 4): bakes the region's playback quantize into its notes and turns it off. */
+    EditResult applyRegionQuantize (const Id& regionId);
+
+    // Controller lanes (F-PRL-12); positions are timeline ticks --------------------------
+    std::optional<Id> addController (const Id& regionId, model::CcEvent event);
+    EditResult moveController (const Id& regionId, const Id& eventId, Ticks at, int value);
+    EditResult deleteControllers (const Id& regionId, const std::vector<Id>& eventIds);
 
     // Plugins and sends ---------------------------------------------------------
     std::optional<Id> addInsert (const Id& trackId, model::PluginInstance plugin, std::optional<std::size_t> index = {});

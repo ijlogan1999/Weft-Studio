@@ -1,8 +1,9 @@
 #pragma once
 
-// F · Editors (spec 04 §7): the audio editor (F-EDA-1) and, until their milestones, the
-// mixer and piano roll as labelled placeholders.
+// G · Editors (spec 04 §7): the piano roll (F-PRL), the audio editor (F-EDA-1) and, until its
+// milestone, the mixer as a labelled placeholder.
 
+#include "PianoRoll.h"
 #include "Studio.h"
 #include "Widgets.h"
 
@@ -82,12 +83,13 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     AudioEditor& audioEditor() noexcept { return editor; }
+    PianoRoll& pianoRoll() noexcept { return roll; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     Studio& studio;
     AudioEditor editor;
     Placeholder mixer { "Mixer", "channel strips arrive with the mixer milestone." };
-    Placeholder pianoRoll { "Piano Roll", "note editing arrives with the MIDI editing milestone." };
+    PianoRoll roll;
 };
 } // namespace weft::ui

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "weft/core/Id.h"
+#include "weft/engine/rt/SpscQueue.h"
 
 #include <array>
 #include <cstdint>
@@ -64,6 +65,22 @@ public:
     std::array<ActiveNote, maxActiveNotes> active {};
     std::size_t numActive = 0;
     bool flushPending = false; // send note-offs for everything at the next process call
+
+    /** Audition (F-PRL-11): a note the editor plays on its own, outside the timeline. */
+    struct Audition
+    {
+        std::uint8_t channel = 1, pitch = 60, velocity = 100;
+        std::int32_t frames = 0; // how long it sounds
+    };
+    rt::SpscQueue<Audition, 64> auditions; // message thread pushes, audio thread pops
+    struct Auditioning
+    {
+        std::int64_t framesLeft = 0;
+        std::uint8_t channel = 1, pitch = 0;
+    };
+    static constexpr std::size_t maxAuditions = 16;
+    std::array<Auditioning, maxAuditions> auditioning {};
+    std::size_t numAuditioning = 0;
 
 private:
     std::shared_ptr<Instrument> inst;

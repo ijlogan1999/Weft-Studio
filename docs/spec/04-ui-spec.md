@@ -116,6 +116,9 @@ Tabs: **Mixer** (X), **Piano Roll** (P), **Audio Editor** (E). Double-clicking a
 - Bottom: collapsible controller lane(s) with a lane selector (Velocity default).
 - Toolbar: tool selector (pointer, pencil, eraser, velocity, scissors), audition toggle, follow toggle, zoom sliders.
 - Collaborator pointers and note selections appear here too when they have the same region open.
+- **Decision D-UI-7:** the piano roll's keys (arrows, Ctrl+X/C/V, Delete, Ctrl+A, Ctrl+M, Q, Esc) act on notes once the piano roll has been clicked; clicking the tracks area gives them back to regions. Left/Right move the selected notes by the piano roll's grid (1/16 when its snap is off); in the tracks area plain arrow keys do nothing.
+- **Decision D-UI-8:** clicking a piano key always sounds it, with audition on or off; the audition toggle governs notes clicked, drawn or moved. Auditioned notes go straight to the track's instrument for their length (at most 1 s), whether or not the transport runs.
+- **Decision D-UI-9:** the Inspector's note Position field sets every selected note to the typed start; Pitch, Length and Channel likewise set all; mixed values show "—", except velocity, which shows its range (W-4 step 9).
 
 ### 7.2 Audio editor
 - Waveform of the selected region's track, zoomable to sample level, with the region's used part highlighted against the full source file (greyed outside).
@@ -229,3 +232,6 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-4 | Region handles: lower corners trim; upper-left fades in (audio) or trims (MIDI); upper-right in the name bar fades out (audio), below it loops; the "Take n/m" label switches takes. |
 | D-UI-5 | The audio editor's start trim sets the source offset to the exact sample and keeps the region's end; the region start moves to the nearest tick. |
 | D-UI-6 | Z with nothing selected fits the project from its start to the end of the last region. |
+| D-UI-7 | Piano roll keys act on notes after the piano roll is clicked; Left/Right move notes by its grid. |
+| D-UI-8 | Piano keys always sound; audition plays notes up to 1 s on the track's instrument. |
+| D-UI-9 | Inspector note fields set every selected note; velocity shows a range when mixed. |

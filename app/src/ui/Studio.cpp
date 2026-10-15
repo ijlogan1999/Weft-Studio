@@ -114,6 +114,9 @@ void Studio::syncEngine()
 
 void Studio::edited()
 {
+    // Notes deleted here or by an undo leave the piano roll selection.
+    for (auto it = piano.selection.begin(); it != piano.selection.end();)
+        it = commands::findNote (model(), *it) == nullptr ? piano.selection.erase (it) : std::next (it);
     syncEngine();
     sendChangeMessage();
 }
@@ -224,8 +227,144 @@ void Studio::zoomToFit()
     view.fit (span->first, span->second, timelineWidth, 0.9);
 }
 
+std::vector<Id> Studio::pianoRollRegions() const
+{
+    const auto& m = model();
+    const auto ids = selection.ids();
+    const auto* base = m.region (editorRegion);
+    if (base == nullptr || ! base->isMidi)
+    {
+        base = nullptr;
+        for (const auto& id : ids)
+            if (const auto* r = m.region (id); r != nullptr && r->isMidi)
+            {
+                base = r;
+                break;
+            }
+    }
+    if (base == nullptr)
+        return {};
+    const auto track = m.effectiveTrackId (*base);
+    std::vector<const model::Region*> shown { base };
+    for (const auto& id : ids)
+        if (const auto* r = m.region (id); r != nullptr && r != base && r->isMidi && m.effectiveTrackId (*r) == track)
+            shown.push_back (r);
+    std::sort (shown.begin(), shown.end(), [] (const auto* a, const auto* b) { return a->start < b->start; });
+    std::vector<Id> out;
+    for (const auto* r : shown)
+        out.push_back (r->id);
+    return out;
+}
+
+void Studio::auditionNote (const Id& regionId, int pitch, int velocity, int channel, Ticks length)
+{
+    const auto* r = model().region (regionId);
+    if (! piano.audition || r == nullptr)
+        return;
+    const auto& tempo = model().tempo;
+    const auto seconds = tempo.samplesBetween (0.0, static_cast<double> (length)) / tempo.sampleRate();
+    eng->audition (model().effectiveTrackId (*r), channel, pitch, velocity, std::min (1.0, seconds));
+}
+
+std::optional<bool> Studio::performNotes (Cmd command)
+{
+    auto& s = *sess;
+    const auto& m = model();
+    const auto regions = pianoRollRegions();
+    if (regions.empty())
+        return std::nullopt;
+    const std::vector<commands::NoteRef> notes (piano.selection.begin(), piano.selection.end());
+    const auto needNotes = [&] {
+        if (notes.empty())
+            setStatus ("Select notes first.");
+        return ! notes.empty();
+    };
+    const auto audition = [&] {
+        if (! notes.empty())
+            if (const auto* n = commands::findNote (m, notes.front()))
+                auditionNote (notes.front().regionId, n->pitch, n->velocity, n->channel, n->length);
+    };
+    switch (command)
+    {
+        case Cmd::copy:
+        case Cmd::cut:
+            if (! needNotes())
+                return false;
+            piano.clipboard = commands::NoteClipboard::of (m, notes);
+            return command == Cmd::copy || check (s.deleteNotes (notes));
+        case Cmd::paste:
+        {
+            const auto pasted = s.pasteNotes (piano.clipboard, m.effectiveTrackId (*m.region (regions.front())), playhead());
+            if (pasted.empty())
+                setStatus (piano.clipboard.empty() ? juce::String ("Copy notes first.") : juce::String (s.lastError()));
+            piano.selection = { pasted.begin(), pasted.end() };
+            edited();
+            return ! pasted.empty();
+        }
+        case Cmd::deleteSelection:
+            if (const auto point = std::exchange (piano.point, std::nullopt))
+                return check (s.deleteControllers (point->first, { point->second }));
+            return needNotes() && check (s.deleteNotes (notes));
+        case Cmd::selectAll:
+            piano.selection.clear();
+            for (const auto& id : regions)
+            {
+                const auto* r = m.region (id);
+                if (const auto* seq = m.sequence (r->midi.sequenceId))
+                    for (const auto& [noteId, n] : seq->notes)
+                        if (n.pos >= r->midi.sequenceOffset && n.pos < r->midi.sequenceOffset + r->length)
+                            piano.selection.insert ({ id, noteId });
+            }
+            sendChangeMessage();
+            return true;
+        case Cmd::muteNotes: return needNotes() && check (s.toggleNotesMuted (notes));
+        case Cmd::quantize: return check (s.quantizeNotes (regions, notes, piano.quantizeGrid, piano.strength / 100.0, piano.swing));
+        case Cmd::transposeUp:
+        case Cmd::transposeDown:
+        case Cmd::octaveUp:
+        case Cmd::octaveDown:
+        {
+            if (! needNotes())
+                return false;
+            const int by = command == Cmd::transposeUp ? 1 : command == Cmd::transposeDown ? -1 : command == Cmd::octaveUp ? 12 : -12;
+            const auto ok = check (s.moveNotes (notes, 0, by, "Transpose"));
+            if (ok)
+                audition();
+            return ok;
+        }
+        case Cmd::notesLeft:
+        case Cmd::notesRight:
+        {
+            if (! needNotes())
+                return false;
+            const auto step = piano.grid > 0 ? piano.grid : Ticks (240);
+            return check (s.moveNotes (notes, command == Cmd::notesRight ? step : -step, 0));
+        }
+        case Cmd::escape:
+            if (piano.selection.empty())
+                return std::nullopt;
+            piano.selection.clear();
+            sendChangeMessage();
+            return true;
+        case Cmd::playStop: case Cmd::record: case Cmd::cycle: case Cmd::metronome: case Cmd::goToStart: case Cmd::goToEnd:
+        case Cmd::previousBar: case Cmd::nextBar: case Cmd::autopunch: case Cmd::followPlayhead: case Cmd::save: case Cmd::newTrack:
+        case Cmd::undo: case Cmd::redo: case Cmd::split: case Cmd::join: case Cmd::muteRegions: case Cmd::nudgeLeft: case Cmd::nudgeRight:
+        case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::setCycleToSelection: case Cmd::zoomToFit: case Cmd::zoomIn:
+        case Cmd::zoomOut: case Cmd::toolMenu: case Cmd::toggleInspector: case Cmd::toggleSidePanel: case Cmd::toggleMixer:
+        case Cmd::togglePianoRoll: case Cmd::toggleAudioEditor: case Cmd::toggleGlobalTracks: case Cmd::addMarker: case Cmd::previousMarker:
+        case Cmd::nextMarker: case Cmd::marker1: case Cmd::marker2: case Cmd::marker3: case Cmd::marker4: case Cmd::marker5: case Cmd::marker6:
+        case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
+        case Cmd::about: case Cmd::applyQuantize:
+            break;
+    }
+    return std::nullopt;
+}
+
 bool Studio::perform (Cmd command)
 {
+    if (notesFocused())
+        if (const auto handled = performNotes (command))
+            return *handled;
     auto& s = *sess;
     const auto& m = model();
     const auto ids = selection.ids();
@@ -401,6 +540,31 @@ bool Studio::perform (Cmd command)
             if (uiCommand)
                 uiCommand (command);
             break;
+        case Cmd::muteNotes:
+        case Cmd::quantize:
+            setStatus ("Click in the piano roll to edit notes.");
+            return false;
+        case Cmd::transposeUp:
+        case Cmd::transposeDown:
+        case Cmd::octaveUp:
+        case Cmd::octaveDown:
+        case Cmd::notesLeft:
+        case Cmd::notesRight:
+            return false; // arrows do nothing in the arrange view
+        case Cmd::applyQuantize:
+        {
+            bool any = false;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && r->isMidi && r->midi.quantize)
+                {
+                    if (! check (s.applyRegionQuantize (id)))
+                        return false;
+                    any = true;
+                }
+            if (! any)
+                setStatus ("Select a MIDI region with a quantize setting.");
+            return any;
+        }
         case Cmd::marker1:
         case Cmd::marker2:
         case Cmd::marker3:

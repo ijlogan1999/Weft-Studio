@@ -7,12 +7,37 @@
 #include <functional>
 #include <map>
 #include <numbers>
+#include <optional>
 
 namespace weft::engine
 {
 namespace
 {
 using Interval = std::pair<std::int64_t, std::int64_t>;
+
+/** The MIDI message for a controller point; pitch bend is 14-bit, centre 8192 (F-PRL-12). */
+std::optional<ScheduledEvent> scheduledEvent (const model::CcEvent& e)
+{
+    const auto ch = static_cast<std::uint8_t> ((std::clamp (e.channel, 1, 16) - 1) & 0x0f);
+    const auto b7 = [] (int v) { return static_cast<std::uint8_t> (std::clamp (v, 0, 127)); };
+    ScheduledEvent out;
+    if (e.kind == "cc")
+        out = { 0, static_cast<std::uint8_t> (0xb0 | ch), b7 (e.number), b7 (e.value) };
+    else if (e.kind == "pitchBend")
+    {
+        const auto v = std::clamp (e.value, -8192, 8191) + 8192;
+        out = { 0, static_cast<std::uint8_t> (0xe0 | ch), static_cast<std::uint8_t> (v & 0x7f), static_cast<std::uint8_t> ((v >> 7) & 0x7f) };
+    }
+    else if (e.kind == "channelPressure")
+        out = { 0, static_cast<std::uint8_t> (0xd0 | ch), b7 (e.value), 0 };
+    else if (e.kind == "polyPressure")
+        out = { 0, static_cast<std::uint8_t> (0xa0 | ch), b7 (e.number), b7 (e.value) };
+    else if (e.kind == "programChange")
+        out = { 0, static_cast<std::uint8_t> (0xc0 | ch), b7 (e.value), 0 };
+    else
+        return std::nullopt;
+    return out;
+}
 
 /** Parts of [a, b) not in covered (sorted, disjoint); then adds [coverA, coverB) to covered. */
 std::vector<Interval> takeVisible (std::vector<Interval>& covered, std::int64_t a, std::int64_t b, std::int64_t coverA, std::int64_t coverB)
@@ -268,9 +293,26 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             n.velocity = static_cast<std::uint8_t> (std::clamp (note->velocity + r.midi.velocityOffset, 1, 127));
             plan.notes.push_back (n);
         }
+        for (const auto& [id, e] : seq->controllers)
+        {
+            if (e.pos < windowStart || e.pos >= windowEnd)
+                continue;
+            const auto atTick = inst.startTick + (e.pos - windowStart);
+            if (atTick < inst.startTick || atTick >= inst.endTick)
+                continue;
+            const auto at = snap->tickToSample (atTick);
+            if (! std::any_of (visible.begin(), visible.end(), [at] (const Interval& iv) { return at >= iv.first && at < iv.second; }))
+                continue;
+            if (auto out = scheduledEvent (e))
+            {
+                out->at = at;
+                plan.controllers.push_back (*out);
+            }
+        }
     }
     std::sort (plan.segments.begin(), plan.segments.end(), [] (const AudioSegment& a, const AudioSegment& b) { return a.start < b.start; });
     std::stable_sort (plan.notes.begin(), plan.notes.end(), [] (const ScheduledNote& a, const ScheduledNote& b) { return a.on < b.on; });
+    std::stable_sort (plan.controllers.begin(), plan.controllers.end(), [] (const ScheduledEvent& a, const ScheduledEvent& b) { return a.at < b.at; });
 }
 
 MonitorMode monitorFromString (const std::string& s)

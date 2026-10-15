@@ -18,7 +18,9 @@ enum class Cmd
     zoomToFit, zoomIn, zoomOut, toolMenu, escape,
     toggleInspector, toggleSidePanel, toggleMixer, togglePianoRoll, toggleAudioEditor, toggleGlobalTracks,
     addMarker, previousMarker, nextMarker, marker1, marker2, marker3, marker4, marker5, marker6, marker7, marker8, marker9,
-    snapToggle, keyboardMidi, toggleTheme, about
+    snapToggle, keyboardMidi, toggleTheme, about,
+    // Piano roll (they act on notes while the piano roll has focus).
+    muteNotes, quantize, transposeUp, transposeDown, octaveUp, octaveDown, notesLeft, notesRight, applyQuantize
 };
 
 struct CommandInfo

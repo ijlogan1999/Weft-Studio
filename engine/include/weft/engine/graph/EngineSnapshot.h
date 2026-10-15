@@ -56,6 +56,13 @@ struct ScheduledNote
     std::uint8_t channel = 1, pitch = 60, velocity = 100;
 };
 
+/** A MIDI message other than a note (controllers, pitch bend, pressure, program) at a device-rate position. */
+struct ScheduledEvent
+{
+    std::int64_t at = 0;
+    std::uint8_t status = 0, data1 = 0, data2 = 0;
+};
+
 enum class MonitorMode : std::uint8_t
 {
     autoMode, // armed and (stopped or recording), D-W1-1
@@ -89,6 +96,7 @@ struct ChannelPlan
     std::vector<AudioSegment> segments; // sorted by start; overlapping only where regions crossfade
     std::int64_t longestSegment = 0;
     std::vector<ScheduledNote> notes;   // sorted by on
+    std::vector<ScheduledEvent> controllers; // sorted by at
     std::shared_ptr<InstrumentSlot> instrument;
 
     // Live input (F-REC-4, F-REC-14).
