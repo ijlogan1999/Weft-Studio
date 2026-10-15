@@ -226,3 +226,6 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-1 | Side panel Ctrl+L; Add marker is semicolon. |
 | D-UI-2 | Add Comment is Shift+C. |
 | D-UI-3 | Chat time links: "bar N", "bar N beat M", "m:ss". |
+| D-UI-4 | Region handles: lower corners trim; upper-left fades in (audio) or trims (MIDI); upper-right in the name bar fades out (audio), below it loops; the "Take n/m" label switches takes. |
+| D-UI-5 | The audio editor's start trim sets the source offset to the exact sample and keeps the region's end; the region start moves to the nearest tick. |
+| D-UI-6 | Z with nothing selected fits the project from its start to the end of the last region. |

@@ -4,6 +4,8 @@ add_executable(weft_unit_tests
     unit/DocumentTests.cpp
     unit/ProjectTests.cpp
     unit/RepairTests.cpp
+    unit/ArrangeTests.cpp
+    unit/MediaImportTests.cpp
     unit/TimeTests.cpp
     unit/TrackTests.cpp
     unit/TransportTests.cpp
@@ -23,6 +25,8 @@ endif()
 # [E] engine tests (NullDevice)
 add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
+    engine/ArrangeEngineTests.cpp
+    engine/ImportTests.cpp
     engine/NullDeviceTests.cpp
     engine/RecordingTests.cpp
     engine/StreamingTests.cpp
@@ -63,10 +67,27 @@ add_test(NAME cli.version COMMAND weft-cli version)
 set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "Weft Studio ${PROJECT_VERSION}")
 
 if(WEFT_WITH_JUCE)
-    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp)
+    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp engine/JuceImportTests.cpp)
     target_link_libraries(weft_juce_device_tests PRIVATE weft::engine_juce Catch2::Catch2WithMain)
+    target_compile_definitions(weft_juce_device_tests PRIVATE WEFT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
     catch_discover_tests(weft_juce_device_tests)
 
     add_subdirectory(fixtures/plugins)
     add_subdirectory(plugins)
+endif()
+
+# [UI] tests: the arrange window, headless. Linux needs a virtual X server (xvfb-run).
+if(WEFT_WITH_JUCE)
+    add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp)
+    target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
+    if(WIN32 OR APPLE)
+        add_test(NAME ui-tests COMMAND weft_ui_tests)
+    else()
+        find_program(XVFB_RUN xvfb-run)
+        if(XVFB_RUN)
+            add_test(NAME ui-tests COMMAND "${XVFB_RUN}" -a $<TARGET_FILE:weft_ui_tests>)
+        else()
+            message(WARNING "xvfb-run not found: the [UI] tests won't run under ctest")
+        endif()
+    endif()
 endif()

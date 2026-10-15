@@ -4,7 +4,23 @@ juce_add_gui_app(WeftStudio
     BUNDLE_ID "org.weftstudio.app"
     VERSION ${PROJECT_VERSION})
 
-target_sources(WeftStudio PRIVATE src/Main.cpp src/MainComponent.cpp src/AboutPanel.cpp)
+target_sources(WeftStudio PRIVATE src/Main.cpp)
+
+# The window and everything in it, as a library the UI tests link too.
+add_library(weft_app_lib STATIC
+    src/ui/AboutPanel.cpp
+    src/ui/BottomArea.cpp
+    src/ui/Commands.cpp
+    src/ui/ControlBar.cpp
+    src/ui/Inspector.cpp
+    src/ui/MainComponent.cpp
+    src/ui/NewTrackDialog.cpp
+    src/ui/SidePanel.cpp
+    src/ui/Studio.cpp
+    src/ui/Theme.cpp
+    src/ui/TracksArea.cpp)
+add_library(weft::app_lib ALIAS weft_app_lib)
+target_include_directories(weft_app_lib PUBLIC src)
 
 # Third-party notices for the About box (F-SYS-1), generated from the license manifest.
 get_property(fetched GLOBAL PROPERTY WEFT_FETCHED_DEPS)
@@ -21,13 +37,14 @@ add_custom_command(OUTPUT "${notices}"
     COMMENT "Generating third-party notices")
 juce_add_binary_data(WeftStudioData SOURCES "${notices}" "${PROJECT_SOURCE_DIR}/LICENSE")
 
-target_compile_definitions(WeftStudio PRIVATE
-    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+target_compile_definitions(weft_app_lib PUBLIC
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:WeftStudio,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:WeftStudio,JUCE_VERSION>"
     WEFT_DONATE_URL="${WEFT_DONATE_URL}")
+target_link_libraries(weft_app_lib
+    PUBLIC WeftStudioData weft::engine_juce weft::juce_modules
+    PRIVATE juce::juce_recommended_warning_flags)
+set_target_properties(weft_app_lib PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
 target_link_libraries(WeftStudio PRIVATE
-    WeftStudioData weft::engine
-    juce::juce_gui_extra juce::juce_audio_utils
-    juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+    weft::app_lib juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)

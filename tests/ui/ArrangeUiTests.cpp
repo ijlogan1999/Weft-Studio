@@ -1,0 +1,426 @@
+// Arrange window [UI] criteria: ruler, selection, zoom, tools, markers, track headers.
+
+#include "UiFixture.h"
+
+#include "weft/time/Position.h"
+
+using namespace weft;
+using namespace weft::ui;
+using namespace weft::ui::test;
+
+TEST_CASE ("AT-ARR-1 ruler bar numbers follow the signature map; Ctrl+wheel zooms at the pointer", "[UI]")
+{
+    Ui ui;
+    REQUIRE (ui.studio.session().addSignaturePoint (2, 3, 4)); // bar 3 onward in 3/4
+    ui.studio.view.pixelsPerTick = 80.0 / bar;
+    ui.studio.edited();
+    ui.settle();
+    const auto& m = ui.m();
+    const auto labels = Ruler::barLabels (m, ui.studio.view, 2000);
+    REQUIRE (labels.size() >= 6);
+    for (const auto& [number, x] : labels)
+    {
+        INFO ("bar " << number);
+        CHECK (x == Catch::Approx (ui.studio.view.tickToX (static_cast<double> (m.signatures.barStart (number - 1)))));
+    }
+    // Bars 1-2 are 4/4, bar 3 on is 3/4: label spacing changes accordingly.
+    CHECK (labels[1].second - labels[0].second == Catch::Approx (bar * ui.studio.view.pixelsPerTick));
+    CHECK (labels[3].second - labels[2].second == Catch::Approx (bar * 3 / 4 * ui.studio.view.pixelsPerTick));
+
+    // Zoomed far out, labels thin out instead of colliding.
+    auto far = ui.studio.view;
+    far.pixelsPerTick = 2.0 / bar;
+    const auto thin = Ruler::barLabels (m, far, 2000);
+    for (std::size_t i = 1; i < thin.size(); ++i)
+        CHECK (thin[i].second - thin[i - 1].second >= 30.0);
+
+    auto& tl = ui.timeline();
+    for (const float x : { 137.0f, 512.0f, 901.0f })
+        for (const float delta : { 0.5f, -0.35f })
+        {
+            const auto tickUnder = ui.studio.view.xToTick (x);
+            tl.wheel ({ x, 40.0f }, juce::ModifierKeys::commandModifier, delta);
+            ui.settle();
+            CHECK (std::abs (ui.studio.view.tickToX (tickUnder) - x) <= 2.0);
+        }
+}
+
+TEST_CASE ("AT-ARR-4 click, Shift+click, rubber band, Ctrl+A, click empty", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (2);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 2 * bar, bar);
+    const auto c = *s.createMidiRegion (tracks[1], bar, bar);
+    ui.studio.edited();
+    ui.settle();
+    auto& sel = ui.studio.selection;
+
+    ui.click (ui.centreOf (a));
+    CHECK (sel.ids() == std::vector<Id> { a });
+    ui.click (ui.centreOf (b), juce::ModifierKeys::shiftModifier);
+    CHECK (sel.contains (a));
+    CHECK (sel.contains (b));
+    ui.click (ui.centreOf (a), juce::ModifierKeys::shiftModifier);
+    CHECK_FALSE (sel.contains (a));
+    CHECK (sel.contains (b));
+
+    // Click on empty lane space deselects.
+    const auto empty = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (6.0 * bar)), ui.centreOf (a).y);
+    ui.click (empty);
+    CHECK (sel.ids().empty());
+
+    // Rubber band from empty space across both instrument tracks, touching a and c.
+    auto& tl = ui.timeline();
+    const auto x1 = static_cast<float> (ui.studio.view.tickToX (0.5 * bar));
+    const auto x2 = static_cast<float> (ui.studio.view.tickToX (1.5 * bar));
+    const auto top = tl.laneBounds (1).getY() + 1.0f; // track row 1 = first instrument track
+    const auto bottom = tl.laneBounds (2).getBottom() - 1.0f;
+    // Start the band where there's no region: the gap at bar 1-2 on the first instrument track is empty above c.
+    const juce::Point<float> from { x2, top }, to { x1, bottom };
+    REQUIRE (tl.regionAt (from) == nullptr);
+    tl.pointerDown (from, {});
+    tl.pointerDrag (to, {});
+    tl.pointerUp (to, {});
+    ui.settle();
+    CHECK (sel.contains (a));
+    CHECK (sel.contains (c));
+    CHECK_FALSE (sel.contains (b));
+
+    ui.key ('A', juce::ModifierKeys::commandModifier);
+    CHECK (sel.ids().size() == 3);
+}
+
+TEST_CASE ("AT-ARR-22 Z zooms to the selection or the whole project", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 8 * bar, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 11 * bar, 2 * bar);
+    const auto far = *s.createMidiRegion (tracks[0], 60 * bar, bar);
+    ui.studio.edited();
+    ui.settle();
+    const auto width = static_cast<double> (ui.timeline().getWidth());
+    REQUIRE (width > 300);
+
+    ui.studio.selection.set ({ a, b });
+    ui.key ('Z');
+    const auto x1 = ui.studio.view.tickToX (8.0 * bar), x2 = ui.studio.view.tickToX (13.0 * bar);
+    CHECK (x1 >= 0.0);
+    CHECK (x2 <= width);
+    CHECK ((x2 - x1) / width >= 0.8);
+
+    ui.studio.selection.clear();
+    ui.key ('Z');
+    CHECK (ui.studio.view.tickToX (0.0) >= -1.0);
+    CHECK (ui.studio.view.tickToX (ui.m().regionEndTick (ui.region (far))) <= width);
+}
+
+TEST_CASE ("AT-ARR-23 tool menu: pencil, scissors, glue, eraser, Esc", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    ui.studio.view.pixelsPerTick = 400.0 / bar; // zoomed in so the smart grid is finer than the region
+    auto& main = *ui.main;
+    auto& tl = ui.timeline();
+    const auto lane = tl.laneBounds (1);
+
+    // T opens the menu (through the window); the menu lists every tool.
+    std::optional<Cmd> asked;
+    ui.studio.uiCommand = [&] (Cmd c) { asked = c; };
+    ui.key ('T');
+    CHECK (asked == Cmd::toolMenu);
+    CHECK (main.toolMenu().getNumItems() == 6);
+
+    main.pickTool (static_cast<int> (Tool::pencil) + 1);
+    ui.settle();
+    REQUIRE (ui.studio.tool == Tool::pencil);
+    const auto at = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (2.0 * bar + 500.0)), lane.getCentreY());
+    ui.click (at);
+    const auto regions = ui.m().regionsOnTrack (tracks[0]);
+    REQUIRE (regions.size() == 1);
+    const auto made = regions.front()->id;
+    CHECK (ui.region (made).isMidi);
+    CHECK (ui.region (made).start == ui.studio.snapped (2 * bar + 500));
+    CHECK (ui.region (made).length == bar);
+
+    // Scissors splits at the click.
+    main.pickTool (static_cast<int> (Tool::scissors) + 1);
+    const auto start = ui.region (made).start;
+    const auto cut = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (static_cast<double> (start + bar / 2))), lane.getCentreY());
+    ui.click (cut);
+    REQUIRE (ui.m().regionsOnTrack (tracks[0]).size() == 2);
+    CHECK (ui.region (made).length == bar / 2);
+
+    // Glue joins the clicked region with the selected one.
+    const auto pieces = ui.m().regionsOnTrack (tracks[0]);
+    const auto other = pieces[0]->id == made ? pieces[1]->id : pieces[0]->id;
+    ui.studio.selection.set ({ made });
+    main.pickTool (static_cast<int> (Tool::glue) + 1);
+    ui.click (ui.centreOf (other));
+    REQUIRE (ui.m().regionsOnTrack (tracks[0]).size() == 1);
+    const auto joined = ui.m().regionsOnTrack (tracks[0]).front()->id;
+    CHECK (ui.region (joined).length == bar);
+
+    // Eraser deletes.
+    main.pickTool (static_cast<int> (Tool::eraser) + 1);
+    ui.click (ui.centreOf (joined));
+    CHECK (ui.m().regionsOnTrack (tracks[0]).empty());
+
+    ui.key (juce::KeyPress::escapeKey);
+    CHECK (ui.studio.tool == Tool::pointer);
+}
+
+TEST_CASE ("AT-ARR-21 markers in the ruler: add, rename, move snapped, delete, click to jump", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    ui.studio.locate (3 * bar);
+    ui.key (';', {}, ';');
+    REQUIRE (ui.m().markers.size() == 1);
+    const auto id = ui.m().markers.begin()->first;
+    CHECK (ui.m().markers.begin()->second->name == "Marker 1");
+    CHECK (ui.m().markers.begin()->second->pos == 3 * bar);
+
+    const float laneY = Ruler::rulerHeight + Ruler::markerLane / 2.0f;
+    // Drag it by about one and a bit bars: it lands on the grid.
+    const auto x0 = static_cast<float> (ui.studio.view.tickToX (3.0 * bar)) + 10.0f;
+    const auto x1 = static_cast<float> (ui.studio.view.tickToX (4.2 * bar)) + 10.0f;
+    ruler.pointerDown ({ x0, laneY }, {});
+    ruler.pointerDrag ({ x1, laneY });
+    ruler.pointerUp();
+    ui.settle();
+    const auto moved = ui.m().markers.begin()->second->pos;
+    CHECK (moved == ui.studio.snapped (moved));
+    CHECK (moved > 3 * bar);
+    // One undo step for the drag.
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.m().markers.begin()->second->pos == 3 * bar);
+
+    REQUIRE (ui.studio.session().renameMarker (id, "Chorus"));
+    CHECK (ui.m().markers.begin()->second->name == "Chorus");
+
+    // Clicking a marker moves the playhead to it.
+    ui.studio.locate (0);
+    ruler.pointerDown ({ x0, laneY }, {});
+    ruler.pointerUp();
+    CHECK (ui.studio.playhead() == 3 * bar);
+
+    // Double-click on an empty part of the lane adds one; right-click deletes.
+    const auto emptyX = static_cast<float> (ui.studio.view.tickToX (8.0 * bar)) + 2.0f;
+    ruler.mouseDoubleClick (mouse (ruler, { emptyX, laneY }, {}, 2));
+    ui.settle();
+    CHECK (ui.m().markers.size() == 2);
+    ruler.pointerDown ({ x0, laneY }, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().markers.size() == 1);
+    CHECK (ui.m().markers.find (id) == ui.m().markers.end());
+}
+
+TEST_CASE ("AT-ARR-27 marker keys from the keyboard", "[UI]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    for (const int b : { 5, 9, 17 })
+        REQUIRE (s.addMarker (ui.m().signatures.barStart (b - 1), ""));
+    ui.studio.edited();
+    ui.studio.locate (ui.m().signatures.barStart (9));
+    ui.key (',', juce::ModifierKeys::altModifier, ',');
+    CHECK (ui.studio.playhead() == ui.m().signatures.barStart (8));
+    ui.key ('.', juce::ModifierKeys::altModifier, '.');
+    CHECK (ui.studio.playhead() == ui.m().signatures.barStart (16));
+    ui.key ('1');
+    CHECK (ui.studio.playhead() == ui.m().signatures.barStart (4));
+    ui.key ('4');
+    CHECK (ui.studio.playhead() == ui.m().signatures.barStart (4));
+}
+
+TEST_CASE ("AT-TRK-4 New Track dialog creates numbered tracks below the selection", "[UI]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    ui.studio.selectTrack (first);
+    NewTrackDialog dialog (ui.studio);
+    dialog.kind.setSelectedItemIndex (0);
+    dialog.count.setValue (3);
+    const auto ids = dialog.create();
+    ui.settle();
+    REQUIRE (ids.size() == 3);
+    const auto& order = ui.m().trackOrder;
+    REQUIRE (order.size() == 4);
+    CHECK (order[0] == first);
+    CHECK (ui.m().track (order[1])->name == "Audio 2");
+    CHECK (ui.m().track (order[2])->name == "Audio 3");
+    CHECK (ui.m().track (order[3])->name == "Audio 4");
+    CHECK (ui.main->tracks().headers().size() == 4);
+    // One undo removes all three.
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.m().trackOrder.size() == 1);
+}
+
+TEST_CASE ("AT-TRK-6 renaming in the track header: Enter, Esc, empty", "[UI]")
+{
+    Ui ui;
+    auto& header = *ui.main->tracks().headers().front();
+    auto& label = header.name;
+    const auto id = header.trackId;
+
+    label.showEditor();
+    REQUIRE (label.getCurrentTextEditor() != nullptr);
+    label.getCurrentTextEditor()->setText ("Vox");
+    label.hideEditor (false); // Enter
+    ui.settle();
+    CHECK (ui.m().track (id)->name == "Vox");
+
+    label.showEditor();
+    label.getCurrentTextEditor()->setText ("Drums");
+    label.hideEditor (true); // Esc
+    ui.settle();
+    CHECK (ui.m().track (id)->name == "Vox");
+    CHECK (label.getText() == "Vox");
+
+    label.showEditor();
+    label.getCurrentTextEditor()->setText ("   ");
+    label.hideEditor (false);
+    ui.settle();
+    CHECK (ui.m().track (id)->name == "Vox");
+    CHECK (label.getText() == "Vox");
+}
+
+TEST_CASE ("AT-TRK-11 dragging a header's lower edge resizes; Ctrl+Shift+wheel resizes all", "[UI]")
+{
+    Ui ui;
+    ui.instrumentTracks (1);
+    auto& tracksArea = ui.main->tracks();
+    auto& header = *tracksArea.headers().front();
+    const auto id = header.trackId;
+    const auto h = header.getHeight();
+    REQUIRE (h == defaultTrackHeight);
+
+    const juce::Point<float> edge { 100.0f, static_cast<float> (h - 2) };
+    header.mouseDown (mouse (header, edge));
+    header.mouseDrag (mouse (header, edge.translated (0, 50), {}, 1, edge));
+    ui.settle();
+    CHECK (ui.studio.trackHeight (id) == h + 50);
+    CHECK (tracksArea.headers().front()->getHeight() == h + 50);
+    header.mouseDrag (mouse (header, edge.translated (0, 1000), {}, 1, edge));
+    CHECK (ui.studio.trackHeight (id) == maxTrackHeight);
+    header.mouseDrag (mouse (header, edge.translated (0, -1000), {}, 1, edge));
+    CHECK (ui.studio.trackHeight (id) == minTrackHeight);
+
+    // A press away from the edge doesn't resize.
+    ui.studio.setTrackHeight (id, 100);
+    header.mouseDown (mouse (header, { 100.0f, 10.0f }));
+    header.mouseDrag (mouse (header, { 100.0f, 60.0f }, {}, 1, juce::Point<float> { 100.0f, 10.0f }));
+    CHECK (ui.studio.trackHeight (id) == 100);
+
+    ui.timeline().wheel ({ 300.0f, 20.0f }, juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier), 0.5f);
+    ui.settle();
+    for (const auto& t : ui.m().trackOrder)
+        CHECK (ui.studio.trackHeight (t) == 120);
+}
+
+TEST_CASE ("AT-REC-13 clicking the take strip switches the active take", "[UI]")
+{
+    Ui ui;
+    const auto track = ui.m().trackOrder.front();
+    commands::RecordedAudio rec;
+    rec.trackId = track;
+    rec.media.hash = "b3:00000000000000000000000000000000000000000000000000000000000000cc";
+    rec.media.originalName = "rec.wav";
+    rec.media.lengthSamples = 48000 * 8;
+    rec.takes = { { 0, 0, 96000 }, { 0, 96000, 96000 } };
+    rec.takeFolder = true;
+    rec.folderStart = 0;
+    rec.folderEnd = bar;
+    REQUIRE (ui.studio.session().commitRecording ({ rec }, {}));
+    ui.studio.edited();
+    ui.settle();
+    const auto& folder = *ui.m().takeFolders.begin()->second;
+    const auto active = folder.activeTakeId;
+    auto& tl = ui.timeline();
+    const auto box = tl.regionBounds (ui.region (active));
+    const juce::Point<float> strip { box.getRight() - 30.0f, box.getY() + 6.0f };
+    REQUIRE (tl.zoneAt (ui.region (active), strip) == Timeline::Zone::takes);
+    ui.click (strip);
+    const auto& after = *ui.m().takeFolders.begin()->second;
+    CHECK (after.activeTakeId != active);
+    // Only the active take is hit-tested and drawn.
+    CHECK (tl.regionAt (box.getCentre())->id == after.activeTakeId);
+}
+
+TEST_CASE ("AT-REC-20 keyboard MIDI mode takes letter keys first", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    ui.studio.selectTrack (tracks[0]);
+    REQUIRE (ui.studio.session().addMarker (2 * bar, ""));
+    ui.studio.edited();
+
+    std::optional<Cmd> asked;
+    ui.studio.uiCommand = [&] (Cmd c) { asked = c; };
+
+    // Off: letters and numbers run their commands.
+    ui.studio.locate (0);
+    ui.key ('1');
+    CHECK (ui.studio.playhead() == 2 * bar);
+    ui.key ('T', {}, 't');
+    CHECK (asked == Cmd::toolMenu);
+    asked.reset();
+    ui.key ('K', juce::ModifierKeys::commandModifier);
+    REQUIRE (ui.studio.keyboardMidiOn());
+
+    // On: letters play notes instead of running commands.
+    ui.studio.locate (0);
+    CHECK (ui.key ('A', {}, 'a'));
+    CHECK (ui.key ('T', {}, 't'));
+    CHECK_FALSE (asked.has_value());
+    // Ctrl shortcuts still work with the mode on.
+    ui.key ('K', juce::ModifierKeys::commandModifier);
+    CHECK_FALSE (ui.studio.keyboardMidiOn());
+}
+
+TEST_CASE ("AT-ARR-20 a 200-event drag in the tracks area is one undo step", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    ui.studio.view.pixelsPerTick = 200.0 / bar;
+    const auto id = *ui.studio.session().createMidiRegion (tracks[0], bar, bar);
+    ui.studio.edited();
+    ui.settle();
+    auto& tl = ui.timeline();
+
+    // Move: 200 pointer moves, then release.
+    const auto from = ui.centreOf (id);
+    tl.pointerDown (from, {});
+    for (int i = 1; i <= 200; ++i)
+        tl.pointerDrag (from.translated (static_cast<float> (i), 0.0f), {});
+    tl.pointerUp (from.translated (200.0f, 0.0f), {});
+    ui.settle();
+    const auto movedTo = ui.region (id).start;
+    CHECK (movedTo > bar);
+
+    // Trim the end: 200 moves inside one gesture.
+    const auto box = tl.regionBounds (ui.region (id));
+    const juce::Point<float> corner { box.getRight() - 2.0f, box.getBottom() - 4.0f };
+    REQUIRE (tl.zoneAt (ui.region (id), corner) == Timeline::Zone::trimEnd);
+    tl.pointerDown (corner, {});
+    for (int i = 1; i <= 200; ++i)
+        tl.pointerDrag (corner.translated (static_cast<float> (i) * 0.5f, 0.0f), {});
+    tl.pointerUp (corner.translated (100.0f, 0.0f), {});
+    ui.settle();
+    CHECK (ui.region (id).length > bar);
+
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).length == bar);
+    CHECK (ui.region (id).start == movedTo);
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).start == bar);
+}

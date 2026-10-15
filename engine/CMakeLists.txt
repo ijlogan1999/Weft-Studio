@@ -1,4 +1,6 @@
 add_library(weft_engine STATIC
+    src/arrange/Import.cpp
+    src/arrange/OfflineRender.cpp
     src/devices/NullDevice.cpp
     src/dsp/WeftKeys.cpp
     src/graph/Instrument.cpp

@@ -2,6 +2,11 @@ configure_file(src/version.cpp.in "${CMAKE_CURRENT_BINARY_DIR}/version.cpp" @ONL
 
 add_library(weft_core STATIC
     "${CMAKE_CURRENT_BINARY_DIR}/version.cpp"
+    src/arrange/Grid.cpp
+    src/arrange/MediaBrowser.cpp
+    src/arrange/RegionDrag.cpp
+    src/arrange/Selection.cpp
+    src/commands/Arrange.cpp
     src/commands/Commands.cpp
     src/commands/Recording.cpp
     src/commands/Tracks.cpp
@@ -12,6 +17,10 @@ add_library(weft_core STATIC
     src/doc/Path.cpp
     src/doc/Value.cpp
     src/media/Hash.cpp
+    src/media/Decoder.cpp
+    src/media/MediaStore.cpp
+    src/media/MidiFile.cpp
+    src/media/Resample.cpp
     src/media/WavFile.cpp
     src/model/Model.cpp
     src/model/Projector.cpp
