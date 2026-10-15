@@ -142,6 +142,9 @@ public:
     /** Live MIDI input (keyboard, MIDI devices). `deviceFrame` is the device frame it arrived at,
         or -1 for the next block. Call from one thread only. */
     bool sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame = -1) noexcept;
+    /** Plays one note on a track's instrument outside the timeline (F-PRL-11): note-on now,
+        note-off after `seconds` (at most 1 s). False when the track has no instrument. */
+    bool audition (const Id& trackId, int channel, int pitch, int velocity, double seconds = 0.5);
     /** Frames processed since the device started. */
     std::int64_t deviceFrames() const noexcept { return published.frames.load (std::memory_order_acquire); }
 

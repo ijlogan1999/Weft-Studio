@@ -296,6 +296,19 @@ bool Engine::sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t dat
     return midiIn.push ({ deviceFrame, status, data1, data2 });
 }
 
+bool Engine::audition (const Id& trackId, int channel, int pitch, int velocity, double seconds)
+{
+    const auto slot = rack.find (trackId);
+    if (slot == nullptr)
+        return false;
+    InstrumentSlot::Audition a;
+    a.channel = static_cast<std::uint8_t> (std::clamp (channel, 1, 16));
+    a.pitch = static_cast<std::uint8_t> (std::clamp (pitch, 0, 127));
+    a.velocity = static_cast<std::uint8_t> (std::clamp (velocity, 1, 127));
+    a.frames = static_cast<std::int32_t> (std::clamp (seconds, 0.0, 1.0) * rate);
+    return slot->auditions.push (a);
+}
+
 std::optional<RecordingOutcome> Engine::finishRecording (commands::Session& session)
 {
     if (passes.empty() || ! passes.front().pass->finished.load (std::memory_order_acquire))
@@ -934,6 +947,39 @@ void Engine::renderInstrument (const ChannelPlan& channel, std::int64_t from, in
         slot.flushPending = false;
     }
 
+    // Audition (F-PRL-11): sounds whatever the transport does; ends after its length.
+    for (std::size_t i = 0; i < slot.numAuditioning;)
+    {
+        auto& a = slot.auditioning[i];
+        if (a.framesLeft < frames)
+        {
+            add (MidiEvent::noteOff (static_cast<int> (std::max<std::int64_t> (0, a.framesLeft)), a.channel, a.pitch));
+            a = slot.auditioning[--slot.numAuditioning];
+        }
+        else
+        {
+            a.framesLeft -= frames;
+            ++i;
+        }
+    }
+    while (auto a = slot.auditions.pop())
+    {
+        for (std::size_t i = 0; i < slot.numAuditioning; ++i)
+            if (slot.auditioning[i].channel == a->channel && slot.auditioning[i].pitch == a->pitch)
+            {
+                add (MidiEvent::noteOff (0, a->channel, a->pitch));
+                slot.auditioning[i] = slot.auditioning[--slot.numAuditioning];
+                break;
+            }
+        if (slot.numAuditioning == InstrumentSlot::maxAuditions)
+            continue;
+        add (MidiEvent::noteOn (0, a->channel, a->pitch, a->velocity));
+        if (a->frames < frames)
+            add (MidiEvent::noteOff (a->frames, a->channel, a->pitch));
+        else
+            slot.auditioning[slot.numAuditioning++] = { a->frames - frames, a->channel, a->pitch };
+    }
+
     if (timeline)
     {
         auto it = std::lower_bound (channel.notes.begin(), channel.notes.end(), from,
@@ -954,6 +1000,11 @@ void Engine::renderInstrument (const ChannelPlan& channel, std::int64_t from, in
             add (MidiEvent::noteOn (at, it->channel, it->pitch, it->velocity));
             slot.active[slot.numActive++] = { it->off, it->channel, it->pitch };
         }
+        // Controllers, pitch bend, pressure and program changes (F-PRL-12).
+        auto ev = std::lower_bound (channel.controllers.begin(), channel.controllers.end(), from,
+                                    [] (const ScheduledEvent& e, std::int64_t t) { return e.at < t; });
+        for (; ev != channel.controllers.end() && ev->at < to; ++ev)
+            add ({ static_cast<int> (ev->at - from), ev->status, ev->data1, ev->data2 });
         for (std::size_t i = 0; i < slot.numActive;)
         {
             const auto& n = slot.active[i];

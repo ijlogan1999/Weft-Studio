@@ -29,6 +29,7 @@ add_executable(weft_engine_tests
     engine/ArrangeEngineTests.cpp
     engine/ImportTests.cpp
     engine/NullDeviceTests.cpp
+    engine/PianoRollEngineTests.cpp
     engine/RecordingTests.cpp
     engine/StreamingTests.cpp
     engine/TrackEngineTests.cpp
