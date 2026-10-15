@@ -24,6 +24,7 @@ endif()
 # [E] engine tests (NullDevice)
 add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
+    engine/ArrangeEngineTests.cpp
     engine/NullDeviceTests.cpp
     engine/RecordingTests.cpp
     engine/StreamingTests.cpp

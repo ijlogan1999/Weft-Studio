@@ -162,6 +162,12 @@ public:
     EditResult toggleRegionsMuted (const std::vector<Id>& regionIds);
     /** Crossfade command (W-3h step 3): equal-power fades over the overlap of each overlapping pair. */
     EditResult crossfadeRegions (const std::vector<Id>& regionIds);
+    /**
+        Join of audio that isn't one contiguous piece of a file (D-ARR-3): the regions become one
+        region at the earliest start playing `rendered` (already rendered with their gain and
+        inner fades, and in Media/), with the outer fades given. One undo step "Join Regions".
+    */
+    EditResult joinRegionsAs (const std::vector<Id>& regionIds, const model::MediaRef& rendered, model::Fade fadeIn, model::Fade fadeOut);
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);

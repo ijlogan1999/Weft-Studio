@@ -522,4 +522,52 @@ EditResult Session::crossfadeRegions (const std::vector<Id>& regionIds)
         return wrote (good);
     });
 }
+
+EditResult Session::joinRegionsAs (const std::vector<Id>& regionIds, const model::MediaRef& rendered, model::Fade fadeIn, model::Fade fadeOut)
+{
+    std::vector<const Region*> rs;
+    for (const auto& id : regionIds)
+        if (const auto* r = projection.region (id); r != nullptr && std::find (rs.begin(), rs.end(), r) == rs.end())
+            rs.push_back (r);
+    if (rs.size() < 2)
+        return reject ("Select two or more regions to join.");
+    const auto track = projection.effectiveTrackId (*rs[0]);
+    for (const auto* r : rs)
+        if (r->isMidi || projection.effectiveTrackId (*r) != track)
+            return reject ("Only regions of one kind on one track can be joined.");
+    if (rendered.lengthSamples < model::minAudioRegionLength)
+        return reject ("The joined audio is too short.");
+    std::sort (rs.begin(), rs.end(), [] (const Region* a, const Region* b) { return std::tie (a->start, a->id) < std::tie (b->start, b->id); });
+
+    Region joined = *rs.front();
+    joined.id = newId();
+    joined.trackId = track;
+    joined.length = rendered.lengthSamples;
+    joined.loop.reset();
+    joined.muted = false;
+    joined.takeFolderId.clear();
+    joined.audio = {};
+    joined.audio.media = rendered.hash;
+    joined.audio.fadeIn = fadeIn;
+    joined.audio.fadeOut = fadeOut;
+    joined.audio.fadeIn.length = std::clamp<Samples> (fadeIn.length, 0, joined.length);
+    joined.audio.fadeOut.length = std::clamp<Samples> (fadeOut.length, 0, joined.length - joined.audio.fadeIn.length);
+    joined.z = 0;
+    for (const auto* other : projection.regionsOnTrack (track))
+        joined.z = std::max (joined.z, other->z + 1);
+    joined.createdBy = joined.modifiedBy = userId;
+    joined.modifiedAt = clock();
+    auto media = rendered;
+    media.addedBy = userId;
+    media.addedAt = clock();
+    return run ("Join Regions", [&] (TxnWriter& w) {
+        bool good = true;
+        if (projection.mediaRef (media.hash) == nullptr)
+            good = w.put (doc::path ({ keys::media, media.hash }), media.toValue());
+        for (const auto* r : rs)
+            good = good && w.remove (regionPath (r->id));
+        good = good && w.put (regionPath (joined.id), joined.toValue());
+        return wrote (good);
+    });
+}
 } // namespace weft::commands

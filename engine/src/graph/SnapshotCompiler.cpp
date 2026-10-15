@@ -194,11 +194,12 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             std::vector<Interval> pieces;
             for (const auto& [a, b] : visible)
             {
-                std::vector<std::int64_t> cuts { a, b };
+                std::vector<std::int64_t> cuts { a, b, inst.start + fadeIn, inst.end - fadeOut };
                 for (const auto& z : zones)
                     for (const auto c : { z.start, z.end })
                         if (c > a && c < b)
                             cuts.push_back (c);
+                std::erase_if (cuts, [&] (std::int64_t c) { return c < a || c > b; });
                 std::sort (cuts.begin(), cuts.end());
                 cuts.erase (std::unique (cuts.begin(), cuts.end()), cuts.end());
                 for (std::size_t i = 0; i + 1 < cuts.size(); ++i)
@@ -207,8 +208,11 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             for (const auto& [a, b] : pieces)
             {
                 AudioSegment seg;
+                // Where this region has its own fade, a higher region's fade is an explicit
+                // crossfade: the two curves already complement each other (D-ARCH-23).
+                const bool ownFade = a < inst.start + fadeIn || b > inst.end - fadeOut;
                 for (const auto& z : zones)
-                    if (z.start <= a && b <= z.end)
+                    if (! ownFade && z.start <= a && b <= z.end)
                     {
                         seg.duckFrom = z.start;
                         seg.duckLength = z.end - z.start;

@@ -16,6 +16,7 @@ add_library(weft_core STATIC
     src/doc/Path.cpp
     src/doc/Value.cpp
     src/media/Hash.cpp
+    src/media/MediaStore.cpp
     src/media/WavFile.cpp
     src/model/Model.cpp
     src/model/Projector.cpp
