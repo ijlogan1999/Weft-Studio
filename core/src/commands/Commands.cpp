@@ -227,6 +227,15 @@ EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
     return run ("Input Monitoring", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "monitor", Value (mode))); });
 }
 
+EditResult Session::setTrackAutomationMode (const Id& trackId, const std::string& mode)
+{
+    if (projection.track (trackId) == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (mode != "off" && mode != "read" && mode != "touch" && mode != "latch" && mode != "write")
+        return reject ("Automation mode is off, read, touch, latch or write.");
+    return run ("Automation Mode", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "automationMode", Value (mode))); });
+}
+
 EditResult Session::setTrackInput (const Id& trackId, const model::InputAssignment& input)
 {
     const auto* t = projection.track (trackId);

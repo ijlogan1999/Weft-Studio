@@ -33,7 +33,7 @@ void StatusBar::paint (juce::Graphics& g)
 // Main component ------------------------------------------------------------------------------
 
 MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
-    : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s)
+    : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s), plugins (s)
 {
     setTitle ("Weft Studio");
     for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status })
@@ -149,6 +149,51 @@ void MainComponent::handleUiCommand (Cmd command)
         AboutPanel::show (this);
     else if (command == Cmd::toolMenu)
         toolMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [this] (int chosen) { pickTool (chosen); });
+    else if (command == Cmd::pluginManager)
+        PluginManager::show (studio, this);
+    else if (command == Cmd::deleteTrack)
+        deleteSelectedTrack();
+}
+
+void MainComponent::deleteSelectedTrack()
+{
+    const auto id = studio.selectedTrack();
+    if (id.empty())
+    {
+        studio.setStatus ("Select a track to delete.");
+        return;
+    }
+    const auto text = studio.deleteTrackQuestion (id);
+    if (text.isEmpty())
+    {
+        studio.deleteTrack (id);
+        return;
+    }
+    questionTrack = id;
+    asked = text;
+    if (! desktopWindows())
+        return; // headless: answer() stands in for the buttons
+    question = std::make_unique<juce::AlertWindow> ("Delete Track", text, juce::MessageBoxIconType::QuestionIcon, this);
+    question->addButton ("Remove", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    question->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    question->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<MainComponent> (this)] (int result) {
+                                   if (safe != nullptr)
+                                       safe->answer (result == 1);
+                               }),
+                               false);
+}
+
+void MainComponent::answer (bool confirmed)
+{
+    const auto id = questionTrack;
+    questionTrack.clear();
+    if (question != nullptr)
+    {
+        question->exitModalState (0);
+        question.reset();
+    }
+    if (confirmed && ! id.empty())
+        studio.deleteTrack (id);
 }
 
 void MainComponent::pickTool (int menuItemId)
@@ -159,7 +204,7 @@ void MainComponent::pickTool (int menuItemId)
     studio.sendChangeMessage();
 }
 
-juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Edit", "Track", "Navigate", "View", "Help" }; }
+juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Edit", "Track", "Mix", "Navigate", "View", "Help" }; }
 
 juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 {
@@ -187,13 +232,22 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::toolMenu);
             break;
-        case 2: add (Cmd::newTrack); break;
+        case 2:
+            add (Cmd::newTrack);
+            add (Cmd::deleteTrack);
+            break;
         case 3:
+            add (Cmd::newBus);
+            add (Cmd::toggleMixer);
+            menu.addSeparator();
+            add (Cmd::pluginManager);
+            break;
+        case 4:
             for (auto c : { Cmd::playStop, Cmd::record, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch })
                 add (c);
             break;
-        case 4:
+        case 5:
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks })
                 add (c);
@@ -201,7 +255,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::keyboardMidi, Cmd::toggleTheme })
                 add (c);
             break;
-        case 5: add (Cmd::about); break;
+        case 6: add (Cmd::about); break;
         default: break;
     }
     return menu;

@@ -15,6 +15,8 @@ add_library(weft_app_lib STATIC
     src/ui/ControlBar.cpp
     src/ui/Inspector.cpp
     src/ui/MainComponent.cpp
+    src/ui/Mixer.cpp
+    src/ui/PluginWindows.cpp
     src/ui/NewTrackDialog.cpp
     src/ui/SidePanel.cpp
     src/ui/Studio.cpp
@@ -49,3 +51,9 @@ set_target_properties(weft_app_lib PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
 target_link_libraries(WeftStudio PRIVATE
     weft::app_lib juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+
+# The plug-in scanner runs next to the app (F-PLG-2): Studio looks for it beside the executable.
+add_dependencies(WeftStudio weft-plugin-scanner)
+add_custom_command(TARGET WeftStudio POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:weft-plugin-scanner>" "$<TARGET_FILE_DIR:WeftStudio>"
+    COMMENT "Copying the plug-in scanner next to the app")

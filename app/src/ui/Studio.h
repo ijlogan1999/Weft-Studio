@@ -14,6 +14,8 @@
 #include "weft/engine/arrange/OfflineRender.h"
 #include "weft/engine/devices/AudioDevice.h"
 #include "weft/engine/midi/KeyboardMidi.h"
+#include "weft/engine/plugins/PluginCatalog.h"
+#include "weft/engine/plugins/Vst3Host.h"
 #include "weft/engine/transport/Engine.h"
 #include "weft/project/ProjectFolder.h"
 
@@ -152,6 +154,8 @@ public:
 
     /** Call after any session change made directly: syncs the engine and tells the UI. */
     void edited();
+    /** Counts edited() calls: plug-in windows tell their own parameter changes from the session's. */
+    std::uint64_t edits() const noexcept { return editCount; }
     void setStatus (const juce::String& message);
     /** Applies a command result: on failure shows the session's message. */
     bool check (const commands::EditResult& result);
@@ -171,6 +175,43 @@ public:
     /** Polls the engine (recordings, garbage) and the playhead; the window calls it on a timer. */
     void tick();
 
+    // Plug-ins (M6) --------------------------------------------------------------------
+    /** The per-user settings folder (the plug-in list lives here). Set before making a Studio to move it. */
+    static std::filesystem::path& settingsFolder();
+    engine::PluginCatalog& plugins() noexcept { return *catalog; }
+    /** The out-of-process scanner (F-PLG-2); next to the app by default. */
+    std::filesystem::path scannerPath;
+    /** Where Rescan looks (the platform's VST3 folders by default). */
+    std::vector<std::filesystem::path> pluginFolders;
+    engine::PluginCatalog::ScanResult rescanPlugins (bool retryFailed = false);
+
+    /** An entry of an insert or instrument menu: built-ins first, then VST3 by vendor (W-6). */
+    struct PluginChoice
+    {
+        model::PluginInstance plugin;
+        juce::String label, group;
+    };
+    std::vector<PluginChoice> pluginChoices (bool instruments) const;
+    /** Adds an insert and opens its editor (W-6 step 2). */
+    std::optional<Id> addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index = {});
+    bool replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice);
+    bool setInstrument (const Id& trackId, const PluginChoice& choice);
+    std::shared_ptr<engine::Processor> processor (const Id& pluginId) const { return eng->processor (pluginId); }
+    /** The model's instance of a plug-in, and the track it's on. */
+    const model::PluginInstance* pluginInstance (const Id& pluginId, Id* trackId = nullptr) const;
+    /** Parameters changed in a plug-in window: written to `params` now (one undo step per gesture),
+        the state chunk after 2 s without changes or when the window closes (D-DM-5). */
+    void pluginParamsChanged (const Id& pluginId, const std::vector<std::pair<std::string, double>>& changes);
+    void writePluginState (const Id& pluginId);
+    /** Writes state for plug-ins idle for 2 s (all of them when `all`). tick() calls it. */
+    void flushPluginStates (bool all = false);
+    bool pluginStatePending (const Id& pluginId) const { return pendingState.contains (pluginId); }
+    std::function<void (const Id& pluginId)> openPluginEditor;
+
+    /** "Remove bus and N sends?" (W-7 step 6) for a bus; empty when no question is needed. */
+    juce::String deleteTrackQuestion (const Id& trackId) const;
+    bool deleteTrack (const Id& trackId);
+
 private:
     void syncEngine();
     std::optional<bool> performNotes (Cmd command);
@@ -180,6 +221,11 @@ private:
     engine::MediaPool pool;
     engine::InstrumentRack rack;
     std::unique_ptr<engine::Engine> eng;
+    std::unique_ptr<engine::PluginCatalog> catalog;
+    std::unique_ptr<engine::Vst3Host> host;
+    std::map<Id, double> pendingState; // plug-in id -> when its parameters last changed (ms)
+    double lastParamChange = 0;
+    void endPluginGesture();
     std::unique_ptr<project::ProjectFolder> folder;
     std::unique_ptr<commands::Session> sess;
     commands::LocalView local;
@@ -190,5 +236,6 @@ private:
     std::int64_t locatedFrame = -1;
     bool audioOk = false;
     bool unsaved = false;
+    std::uint64_t editCount = 0;
 };
 } // namespace weft::ui

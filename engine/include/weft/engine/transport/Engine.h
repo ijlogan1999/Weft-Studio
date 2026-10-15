@@ -104,6 +104,10 @@ public:
 
     /** The processor in a plug-in slot (an insert by plug-in id, or a track's instrument). Message thread. */
     std::shared_ptr<Processor> processor (const Id& pluginId) const;
+    /** The plug-in's own editor changed it: these values are already in the processor, so the
+        engine doesn't apply them again when they reach the model. */
+    void adoptPluginParams (const Id& pluginId, const std::vector<std::pair<std::string, double>>& values);
+    void adoptPluginState (const Id& pluginId, std::vector<std::uint8_t> state);
     /** A built-in, hosted or placeholder processor for a plug-in instance. */
     static std::shared_ptr<Processor> makeProcessor (const model::PluginInstance& plugin, bool instrument, const PluginFactory& hosted);
 
@@ -263,6 +267,7 @@ private:
     PluginFactory pluginFactory;
     void syncPlugins();
     void applyPlugin (Processor& processor, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin);
+    InstrumentSlot::Applied* appliedFor (const Id& pluginId);
     double recordSeconds = 10;
     std::filesystem::path projectFolder;
     int recordDelay = 0;

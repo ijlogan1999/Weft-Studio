@@ -99,6 +99,31 @@ std::shared_ptr<Processor> Engine::processor (const Id& pluginId) const
     return nullptr;
 }
 
+InstrumentSlot::Applied* Engine::appliedFor (const Id& pluginId)
+{
+    if (const auto slot = effects.find (pluginId))
+        return &slot->applied;
+    if (lastModel)
+        for (const auto& [id, track] : lastModel->tracks)
+            if (track->strip.instrument && track->strip.instrument->id == pluginId)
+                if (const auto slot = rack.find (id))
+                    return &slot->applied;
+    return nullptr;
+}
+
+void Engine::adoptPluginParams (const Id& pluginId, const std::vector<std::pair<std::string, double>>& values)
+{
+    if (auto* applied = appliedFor (pluginId))
+        for (const auto& [id, v] : values)
+            applied->params[id] = v;
+}
+
+void Engine::adoptPluginState (const Id& pluginId, std::vector<std::uint8_t> state)
+{
+    if (auto* applied = appliedFor (pluginId))
+        applied->state = std::move (state);
+}
+
 void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin)
 {
     if (p.isPlaceholder())
@@ -112,9 +137,29 @@ void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const 
         applied.state = std::move (bytes);
         applied.params.clear();
     }
+    std::vector<ParameterInfo> infos;
+    // A parameter that left the model (undoing its first change) goes back to what the state
+    // chunk says, or to its default when there is none.
+    std::vector<std::string> removed;
+    for (const auto& [paramId, value] : applied.params)
+        if (! plugin.params.contains (paramId))
+            removed.push_back (paramId);
+    if (! removed.empty())
+    {
+        if (applied.state)
+            p.setState (*applied.state);
+        else
+        {
+            infos = p.parameters();
+            for (const auto& paramId : removed)
+                for (std::size_t i = 0; i < infos.size(); ++i)
+                    if (infos[i].id == paramId)
+                        p.setParameter (static_cast<int> (i), infos[i].defaultValue);
+        }
+        applied.params.clear();
+    }
     if (plugin.params.empty())
         return;
-    std::vector<ParameterInfo> infos;
     for (const auto& [paramId, value] : plugin.params)
     {
         const auto it = applied.params.find (paramId);

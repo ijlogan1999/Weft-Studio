@@ -119,6 +119,8 @@ public:
     EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
     /** Input monitoring: "auto", "on" or "off" (F-REC-4). */
     EditResult setTrackMonitor (const Id& trackId, const std::string& mode);
+    /** off, read, touch, latch or write (F-AUT-5; the strip's selector, spec 04 §8). */
+    EditResult setTrackAutomationMode (const Id& trackId, const std::string& mode);
     /** Audio input channel(s) or MIDI filter (F-TRK-17). */
     EditResult setTrackInput (const Id& trackId, const model::InputAssignment& input);
     /** Writes the Recovered tracks the projection synthesized for orphan regions (D-DM-17). */
@@ -270,6 +272,10 @@ public:
     EditResult renameMarker (const Id& markerId, const std::string& name);
     EditResult deleteMarker (const Id& markerId);
 
+    /** Would a new edge fromTrack -> toTrack close a loop (W-6)? ignoreEdgeKey: the edge it replaces
+        (a send being retargeted, or the track's output). The mixer disables such menu items. */
+    bool wouldCycle (const Id& fromTrack, const Id& toTrack, const std::string& ignoreEdgeKey = {}) const;
+
     /** Message of the last rejected command (for the status bar). */
     const std::string& lastError() const noexcept { return error; }
 
@@ -285,7 +291,6 @@ private:
     void finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo);
     void refreshFor (const Txn& txn);
     UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
-    bool wouldCycle (const Id& fromTrack, const Id& toTrack, const std::string& ignoreEdgeKey) const;
     void stamp (TxnWriter& w, const Id& regionId);
     /** Writes a move or copy plan. nextZ tracks the next z per track across calls in one edit. */
     bool writePlacement (TxnWriter& w, const RegionClipboard& clip, const MovePlan& plan, bool copy, std::vector<Id>& newTrackIds,
