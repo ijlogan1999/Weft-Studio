@@ -490,7 +490,10 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
     auto label = juce::String (r.name);
     if (r.muted)
         label = "(muted) " + label;
-    g.drawText (label, box.withHeight (nameBar).reduced (6, 0), juce::Justification::centredLeft, true);
+    // Keep the name readable when the region starts left of the view.
+    auto nameArea = box.withHeight (nameBar).reduced (6, 0);
+    nameArea.setLeft (std::max (nameArea.getX(), 6.0f));
+    g.drawText (label, nameArea, juce::Justification::centredLeft, true);
     if (! r.takeFolderId.empty())
         if (const auto f = m.takeFolders.find (r.takeFolderId); f != m.takeFolders.end())
         {

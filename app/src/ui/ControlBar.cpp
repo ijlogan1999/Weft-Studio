@@ -159,32 +159,68 @@ void ControlBar::paint (juce::Graphics& g)
 
 void ControlBar::resized()
 {
-    auto r = getLocalBounds().reduced (8, 8);
-    auto place = [&] (juce::Component& c, int w) {
-        c.setBounds (r.removeFromLeft (w));
-        r.removeFromLeft (4);
+    // Natural widths; gaps are entries with no component. On narrow windows the time display,
+    // CPU meter and count-in drop out first, then everything shrinks together.
+    struct Item
+    {
+        juce::Component* c;
+        int width;
+        int dropOrder = 0; // 0 = always shown; 1 drops first
     };
+    std::vector<Item> items;
+    auto gap = [&] (int w) { items.push_back ({ nullptr, w }); };
     for (auto* b : { &inspector, &side, &mixer, &editor, &global })
-        place (*b, 66);
-    r.removeFromLeft (12);
+        items.push_back ({ b, b == &inspector ? 70 : 58 });
+    gap (10);
     for (auto* b : { &start, &rewind, &forward })
-        place (*b, 36);
+        items.push_back ({ b, 34 });
     for (auto* b : { &stop, &play, &record, &cycle })
-        place (*b, 52);
-    r.removeFromLeft (16);
-    place (position, 128);
-    place (time, 92);
-    place (tempo, 96);
-    place (signature, 44);
-    r.removeFromLeft (16);
-    place (metronome, 52);
-    place (countIn, 110);
-    place (punch, 54);
-    place (snap, 50);
-    place (snapBox, 76);
-    place (follow, 56);
-    place (keyboard, 50);
-    place (theme, 58);
-    cpu.setBounds (r.removeFromRight (std::min (r.getWidth(), 90)));
+        items.push_back ({ b, 50 });
+    gap (12);
+    items.push_back ({ &position, 112 });
+    items.push_back ({ &time, 86, 1 });
+    items.push_back ({ &tempo, 86 });
+    items.push_back ({ &signature, 42 });
+    gap (12);
+    items.push_back ({ &metronome, 48 });
+    items.push_back ({ &countIn, 104, 3 });
+    items.push_back ({ &punch, 52 });
+    items.push_back ({ &snap, 48 });
+    items.push_back ({ &snapBox, 72 });
+    items.push_back ({ &follow, 56 });
+    items.push_back ({ &keyboard, 46 });
+    items.push_back ({ &theme, 56 });
+    items.push_back ({ &cpu, 80, 2 });
+
+    const auto area = getLocalBounds().reduced (8, 8);
+    constexpr int spacing = 4;
+    auto total = [&] {
+        int t = 0;
+        for (const auto& it : items)
+            if (it.c == nullptr || it.c->isVisible())
+                t += it.width + (it.c != nullptr ? spacing : 0);
+        return t;
+    };
+    for (auto& it : items)
+        if (it.c != nullptr)
+            it.c->setVisible (true);
+    for (int order = 1; order <= 3 && total() > area.getWidth(); ++order)
+        for (auto& it : items)
+            if (it.dropOrder == order)
+                it.c->setVisible (false);
+    const auto scale = std::clamp (static_cast<double> (area.getWidth()) / std::max (1, total()), 0.7, 1.0);
+
+    auto r = area;
+    for (const auto& it : items)
+    {
+        const auto w = juce::roundToInt (it.width * scale);
+        if (it.c == nullptr)
+            r.removeFromLeft (w);
+        else if (it.c->isVisible())
+        {
+            it.c->setBounds (r.removeFromLeft (w));
+            r.removeFromLeft (spacing);
+        }
+    }
 }
 } // namespace weft::ui

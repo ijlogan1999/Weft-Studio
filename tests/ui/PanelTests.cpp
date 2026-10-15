@@ -2,6 +2,9 @@
 
 #include "UiFixture.h"
 
+#include <cstdlib>
+#include <tuple>
+
 using namespace weft;
 using namespace weft::ui;
 using namespace weft::ui::test;
@@ -184,4 +187,49 @@ TEST_CASE ("AT-UI-7 every control has a name and a tooltip with its shortcut", "
             if (auto* h = b->getAccessibilityHandler())
                 CHECK (h->getTitle().isNotEmpty());
     });
+}
+
+// Not an acceptance test: renders the window with some content to a PNG for reports.
+// Run with: weft_ui_tests "[.screenshot]" (writes WEFT_SCREENSHOT or ./arrange.png).
+TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto audio = ui.m().trackOrder.front();
+    const auto file = writeSine (ui.folder.path / "Guitar.wav", 6.0);
+    engine::DropTarget target;
+    target.at = bar;
+    target.trackId = audio;
+    REQUIRE (ui.studio.importFiles ({ file }, target).regions.size() == 1);
+    const auto keys = ui.instrumentTracks (2);
+    s.renameTrack (keys[0], "Keys");
+    s.renameTrack (keys[1], "Bass");
+    for (const auto& [track, startBar, pitch] : std::vector<std::tuple<Id, int, int>> { { keys[0], 0, 60 }, { keys[0], 4, 64 }, { keys[1], 2, 36 } })
+    {
+        const auto r = *s.createMidiRegion (track, startBar * bar, 2 * bar);
+        for (int i = 0; i < 8; ++i)
+        {
+            model::Note n;
+            n.pos = static_cast<Ticks> (i) * bar / 4;
+            n.length = bar / 4;
+            n.pitch = pitch + (i * 5) % 12;
+            s.addNote (r, n);
+        }
+    }
+    s.addMarker (0, "Intro");
+    s.addMarker (4 * bar, "Verse");
+    ui.studio.layout.sidePanel = true;
+    ui.studio.selection.clear();
+    ui.studio.edited();
+    ui.settle();
+    ui.main->run (Cmd::zoomToFit);
+    ui.studio.selection.set ({ ui.m().regionsOnTrack (audio).front()->id });
+    ui.studio.edited();
+    ui.settle();
+    const auto image = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
+    const auto* env = std::getenv ("WEFT_SCREENSHOT");
+    juce::File out (env != nullptr ? juce::String (env) : juce::File::getCurrentWorkingDirectory().getChildFile ("arrange.png").getFullPathName());
+    out.deleteFile();
+    juce::FileOutputStream stream (out);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
 }
