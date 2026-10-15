@@ -3,6 +3,7 @@ configure_file(src/version.cpp.in "${CMAKE_CURRENT_BINARY_DIR}/version.cpp" @ONL
 add_library(weft_core STATIC
     "${CMAKE_CURRENT_BINARY_DIR}/version.cpp"
     src/arrange/Grid.cpp
+    src/arrange/MediaBrowser.cpp
     src/arrange/RegionDrag.cpp
     src/arrange/Selection.cpp
     src/commands/Arrange.cpp

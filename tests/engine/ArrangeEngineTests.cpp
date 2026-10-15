@@ -301,3 +301,23 @@ TEST_CASE ("AT-ARR-11: joining MIDI, contiguous audio, and rendered audio", "[E]
         CHECK (rig.regionsOn (track).size() == 2);
     }
 }
+
+TEST_CASE ("AT-LIB-1 (engine part): a file preview plays once on the outputs, at the device rate", "[E][arrange][AT-LIB-1]")
+{
+    Rig rig;
+    auto audio = std::make_shared<media::AudioData> (constantMedia (24000, 0.25f));
+    audio->sampleRate = 24000; // resampled to the device's 48 kHz
+    rig.engine.preview (audio);
+    auto out = rig.run (60000);
+    CHECK (rig.engine.previewing() == false);
+    CHECK (out[1000] == Catch::Approx (0.25f).margin (1e-3));
+    CHECK (out[47000] == Catch::Approx (0.25f).margin (1e-3));
+    CHECK (std::abs (out[49000]) < 1e-3f);
+    // Stopping mid-way silences it.
+    rig.engine.preview (audio);
+    rig.run (256);
+    CHECK (rig.engine.previewing());
+    rig.engine.stopPreview();
+    out = rig.run (512);
+    CHECK (firstNonSilent (out) == -1);
+}

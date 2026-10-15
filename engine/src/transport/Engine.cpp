@@ -2,6 +2,7 @@
 
 #include "weft/commands/Session.h"
 #include "weft/engine/dsp/WeftKeys.h"
+#include "weft/media/Resample.h"
 #include "weft/engine/record/RecordLayout.h"
 #include "weft/media/Hash.h"
 
@@ -103,8 +104,25 @@ void Engine::publish (std::unique_ptr<EngineSnapshot> snapshot)
     collectGarbage();
 }
 
+void Engine::preview (std::shared_ptr<const media::AudioData> audio)
+{
+    std::shared_ptr<const media::AudioData> playable = audio;
+    if (audio && audio->sampleRate != rate)
+        playable = std::make_shared<const media::AudioData> (media::resample (*audio, rate));
+    const auto serial = previewSerial.load() + 1;
+    previews.push_back ({ serial, playable });
+    previewNext.store (playable.get(), std::memory_order_release);
+    previewSerial.store (serial, std::memory_order_release);
+    collectGarbage();
+}
+
 void Engine::collectGarbage()
 {
+    {
+        // Previews older than the one the audio thread last picked up are no longer read.
+        const auto acked = running ? previewAcked.load (std::memory_order_acquire) : previewSerial.load();
+        std::erase_if (previews, [acked] (const Preview& p) { return p.serial < acked; });
+    }
     if (! running)
     {
         retired.clear();
@@ -652,6 +670,30 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         if (masterPeak > snap->masterMeter.output.load (std::memory_order_relaxed))
             snap->masterMeter.output.store (masterPeak, std::memory_order_relaxed);
     }
+
+    // File preview, after the master fader.
+    if (const auto serial = previewSerial.load (std::memory_order_acquire); serial != previewSeen)
+    {
+        previewSeen = serial;
+        previewAudio = previewNext.load (std::memory_order_acquire);
+        previewPos = 0;
+        previewAcked.store (serial, std::memory_order_release);
+    }
+    if (previewAudio != nullptr)
+    {
+        const auto& chans = previewAudio->channels;
+        const auto n = static_cast<int> (std::clamp<std::int64_t> (previewAudio->numFrames() - previewPos, 0, numFrames));
+        for (int ch = 0; ch < std::min (numOutputs, 2); ++ch)
+        {
+            const auto& src = chans[std::min<std::size_t> (static_cast<std::size_t> (ch), chans.size() - 1)];
+            for (int i = 0; i < n; ++i)
+                outputs[ch][i] += src[static_cast<std::size_t> (previewPos + i)];
+        }
+        previewPos += n;
+        if (previewPos >= previewAudio->numFrames())
+            previewAudio = nullptr;
+    }
+    published.previewing.store (previewAudio != nullptr, std::memory_order_relaxed);
 
     frameCounter += numFrames;
     published.state.store (static_cast<int> (transport), std::memory_order_release);

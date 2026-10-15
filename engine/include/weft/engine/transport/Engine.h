@@ -173,6 +173,12 @@ public:
 
     /** Frees snapshots the audio thread has moved past. Called by setProject; call it periodically too. */
     void collectGarbage();
+
+    // File preview (F-LIB-1) ---------------------------------------------------------------
+    /** Plays decoded audio once on the outputs, after the master fader; replaces any preview. Null stops. */
+    void preview (std::shared_ptr<const media::AudioData> audio);
+    void stopPreview() { preview (nullptr); }
+    bool previewing() const noexcept { return published.previewing.load (std::memory_order_relaxed); }
     std::size_t pendingRetired() const noexcept { return retired.size(); }
 
     // AudioCallback --------------------------------------------------------------------
@@ -261,7 +267,16 @@ private:
         std::atomic<std::int64_t> dropouts { 0 };
         std::atomic<std::int64_t> frames { 0 };
         std::atomic<std::int64_t> underruns { 0 };
+        std::atomic<bool> previewing { false };
     } published;
+    struct Preview
+    {
+        std::uint64_t serial = 0;
+        std::shared_ptr<const media::AudioData> audio;
+    };
+    std::vector<Preview> previews; // message thread: kept alive until the audio thread moves past them
+    std::atomic<const media::AudioData*> previewNext { nullptr };
+    std::atomic<std::uint64_t> previewSerial { 0 }, previewAcked { 0 };
     MediaStreamer streamer;
     bool diskThread = true;
     struct LiveMidiIn
@@ -283,6 +298,9 @@ private:
     bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
     float clickGain = 1;
     double loadAverage = 0;
+    const media::AudioData* previewAudio = nullptr;
+    std::uint64_t previewSeen = 0;
+    std::int64_t previewPos = 0;
     std::vector<std::vector<float>> mix;
     std::vector<float*> mixPtrs;
     std::vector<MidiEvent> events;

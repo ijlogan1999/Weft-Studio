@@ -4,6 +4,7 @@
 #include "Fixtures.h"
 
 #include "weft/arrange/Grid.h"
+#include "weft/arrange/MediaBrowser.h"
 #include "weft/arrange/RegionDrag.h"
 #include "weft/arrange/Selection.h"
 
@@ -551,4 +552,22 @@ TEST_CASE ("Zoom keeps the tick under the pointer and Z fits the selection", "[U
     CHECK (v.tickToX (6 * bar) - v.tickToX (4 * bar) >= 800.0);
     CHECK (v.tickToX (4 * bar) >= 0.0);
     CHECK (v.tickToX (6 * bar) <= 1000.0);
+}
+
+TEST_CASE ("AT-LIB-2: the media browser lists each file with its duration and usage count", "[U][arrange][AT-LIB-2]")
+{
+    Arrange a;
+    const auto r1 = a.audio (a.a1, 0);
+    a.audio (a.a2, bar);
+    auto list = arrange::mediaUsage (a.s.model());
+    REQUIRE (list.size() == 1);
+    CHECK (list[0].hash == media);
+    CHECK (list[0].name == "loop.wav");
+    CHECK (list[0].seconds == Catch::Approx (20.0));
+    CHECK (list[0].regions == 2);
+    REQUIRE (a.s.deleteRegions ({ r1 }));
+    REQUIRE (a.s.deleteRegions ({ a.s.model().regions.begin()->first }));
+    list = arrange::mediaUsage (a.s.model());
+    REQUIRE (list.size() == 1);
+    CHECK (list[0].regions == 0);
 }
