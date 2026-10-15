@@ -3,6 +3,7 @@
 // The editing session: owns the document and its projection, runs commands as
 // CRDT changes, and keeps this user's undo/redo stacks (spec 05 §6).
 
+#include "weft/commands/Arrange.h"
 #include "weft/commands/Recording.h"
 #include "weft/commands/Txn.h"
 #include "weft/core/Id.h"
@@ -142,6 +143,26 @@ public:
     EditResult setRegionColor (const Id& regionId, std::optional<model::Color> color);
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
 
+    // Several regions (arrange view) ---------------------------------------------
+    /** Drag move (W-3b): one undo step; the plan is planMove's. Moved regions go on top (D-W3-2). */
+    EditResult moveRegions (const std::vector<Id>& regionIds, Ticks deltaTicks, int deltaTracks);
+    /** Ctrl+drag copy (W-3c): new ids, MIDI regions get their own sequence copy. Returns the copies. */
+    std::vector<Id> copyRegions (const std::vector<Id>& regionIds, Ticks deltaTicks, int deltaTracks);
+    /** Ctrl+V (W-3c): the clipboard's leftmost region lands at `at` on targetTrackId, the rest keep their offsets. */
+    std::vector<Id> pasteRegions (const RegionClipboard& clip, Ticks at, const Id& targetTrackId);
+    /** Ctrl+R (F-ARR-29): `times` copies of the selection, each after the previous, as a block. */
+    std::vector<Id> repeatRegions (const std::vector<Id>& regionIds, int times = 1);
+    /** Alt+Left/Right (F-ARR-23): moves by deltaTicks, clamped so nothing starts before 0. */
+    EditResult nudgeRegions (const std::vector<Id>& regionIds, Ticks deltaTicks);
+    /** Ctrl+T (W-3e): splits every listed region the position crosses, one undo step. Returns the new right-hand pieces. */
+    std::vector<Id> splitRegionsAt (const std::vector<Id>& regionIds, Ticks at);
+    /** Loop handle (W-3i): repeats the region up to loopEnd (absolute ticks); nullopt turns looping off. */
+    EditResult setRegionLoop (const Id& regionId, std::optional<Ticks> loopEnd);
+    /** M (F-ARR-14): mutes all listed regions, or unmutes them all when every one is already muted. */
+    EditResult toggleRegionsMuted (const std::vector<Id>& regionIds);
+    /** Crossfade command (W-3h step 3): equal-power fades over the overlap of each overlapping pair. */
+    EditResult crossfadeRegions (const std::vector<Id>& regionIds);
+
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);
 
@@ -208,6 +229,10 @@ private:
     UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
     bool wouldCycle (const Id& fromTrack, const Id& toTrack, const std::string& ignoreEdgeKey) const;
     void stamp (TxnWriter& w, const Id& regionId);
+    /** Writes a move or copy plan. nextZ tracks the next z per track across calls in one edit. */
+    bool writePlacement (TxnWriter& w, const RegionClipboard& clip, const MovePlan& plan, bool copy, std::vector<Id>& newTrackIds,
+                         std::map<Id, std::int64_t>& nextZ, std::vector<Id>* created);
+    std::vector<Id> placeCopies (std::string_view name, const RegionClipboard& clip, const std::vector<std::pair<Ticks, int>>& shifts, int fallbackRow);
     EditResult reject (std::string why)
     {
         error = why;

@@ -4,6 +4,7 @@ add_executable(weft_unit_tests
     unit/DocumentTests.cpp
     unit/ProjectTests.cpp
     unit/RepairTests.cpp
+    unit/ArrangeTests.cpp
     unit/TimeTests.cpp
     unit/TrackTests.cpp
     unit/TransportTests.cpp

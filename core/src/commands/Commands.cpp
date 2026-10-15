@@ -394,12 +394,19 @@ EditResult Session::trimRegionStart (const Id& regionId, Ticks newStart)
             return wrote (good);
         });
     }
-    const auto delta = static_cast<Samples> (
+    auto delta = static_cast<Samples> (
         std::llround (projection.tempo.tickToSample (static_cast<double> (newStart)) - projection.tempo.tickToSample (static_cast<double> (r->start))));
+    // Dragging past the start of the file stops there (W-3d step 3).
+    if (r->audio.sourceOffset + delta < 0)
+    {
+        delta = -r->audio.sourceOffset;
+        newStart = static_cast<Ticks> (std::llround (
+            projection.tempo.sampleToTick (projection.tempo.tickToSample (static_cast<double> (r->start)) + static_cast<double> (delta))));
+        if (newStart < 0)
+            return reject ("Regions can't start before the project start.");
+    }
     const auto newOffset = r->audio.sourceOffset + delta;
     const auto newLength = r->length - delta;
-    if (newOffset < 0)
-        return reject ("The audio file doesn't start that early.");
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
     const auto [fadeIn, fadeOut] = fitFades (r->audio.fadeIn, r->audio.fadeOut, newLength);
@@ -431,8 +438,9 @@ EditResult Session::trimRegionLength (const Id& regionId, std::int64_t newLength
     }
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
+    // Extending past the end of the file stops at its end (W-3d step 3, AT-ARR-8).
     if (const auto* m = projection.mediaRef (r->audio.media); m != nullptr && r->audio.sourceOffset + newLength > m->lengthSamples)
-        return reject ("The audio file ends before that.");
+        newLength = std::max<std::int64_t> (m->lengthSamples - r->audio.sourceOffset, model::minAudioRegionLength);
     const auto [fadeIn, fadeOut] = fitFades (r->audio.fadeIn, r->audio.fadeOut, newLength);
     return run ("Trim Region", [&] (TxnWriter& w) {
         bool good = w.put (base / "length", Value (newLength));

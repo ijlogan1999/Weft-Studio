@@ -36,6 +36,19 @@ std::vector<NamedEdit> everyEditType()
               return right && s.session.joinRegions ({ s.midiRegion, *right }).ok;
           } },
         { "delete region", [] (Scene& s) { return s.session.deleteRegions ({ s.midiRegion }).ok; } },
+        { "move regions to another track", [] (Scene& s) { return s.session.moveRegions ({ s.audioRegion }, 960, 0).ok; } },
+        { "move region below the last track", [] (Scene& s) { return s.session.moveRegions ({ s.midiRegion }, 0, 5).ok; } },
+        { "copy regions", [] (Scene& s) { return ! s.session.copyRegions ({ s.audioRegion, s.midiRegion }, 3840, 0).empty(); } },
+        { "paste",
+          [] (Scene& s) {
+              const auto clip = commands::RegionClipboard::of (s.session.model(), { s.midiRegion });
+              return ! s.session.pasteRegions (clip, 30720, s.instTrack).empty();
+          } },
+        { "repeat", [] (Scene& s) { return s.session.repeatRegions ({ s.midiRegion }, 3).size() == 3; } },
+        { "nudge", [] (Scene& s) { return s.session.nudgeRegions ({ s.audioRegion }, -240).ok; } },
+        { "split at playhead", [] (Scene& s) { return s.session.splitRegionsAt ({ s.audioRegion, s.midiRegion }, 5760).size() == 2; } },
+        { "loop region", [] (Scene& s) { return s.session.setRegionLoop (s.midiRegion, 30720).ok; } },
+        { "toggle mute", [] (Scene& s) { return s.session.toggleRegionsMuted ({ s.audioRegion, s.midiRegion }).ok; } },
         { "fade", [] (Scene& s) { return s.session.setRegionFades (s.audioRegion, model::Fade { 4800, "linear" }, std::nullopt).ok; } },
         { "region gain", [] (Scene& s) { return s.session.setRegionGain (s.audioRegion, -6.0).ok; } },
         { "mute region", [] (Scene& s) { return s.session.setRegionMuted (s.audioRegion, true).ok; } },
