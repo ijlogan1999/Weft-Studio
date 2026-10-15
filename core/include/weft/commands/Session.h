@@ -232,6 +232,22 @@ public:
     EditResult setSendLevel (const Id& trackId, const Id& sendId, double levelDb);
     EditResult setSendTarget (const Id& trackId, const Id& sendId, const Id& busId);
     EditResult removeSend (const Id& trackId, const Id& sendId);
+    EditResult setSendPre (const Id& trackId, const Id& sendId, bool pre);
+    EditResult setSendMuted (const Id& trackId, const Id& sendId, bool muted);
+    /** New Bus (W-7): a bus "Bus N" outputting to the master at 0 dB, plus a 0 dB send to it from the
+        track (asSend) or the track's output routed to it. One undo step. Returns the bus id. */
+    std::optional<Id> newBus (const Id& trackId, bool asSend);
+    std::string nextBusName() const;
+    /** How many sends point at a bus (the "Remove bus and N sends?" question, W-7 step 6). */
+    std::size_t sendsTo (const Id& busId) const;
+    /** Reorders an insert (drag, F-MIX-6). */
+    EditResult moveInsert (const Id& trackId, const Id& pluginId, std::size_t newIndex);
+    /** The slot menu's Replace: a new plug-in in the same position. */
+    std::optional<Id> replaceInsert (const Id& trackId, const Id& pluginId, model::PluginInstance plugin);
+    /** Puts a plug-in in an instrument track's instrument slot (F-MIX-7). */
+    std::optional<Id> setInstrument (const Id& trackId, model::PluginInstance plugin);
+    /** Writes a plug-in's state chunk: bytes, or a blob hash over 64 KB (D-DM-5: on editor close or after 2 s idle). */
+    EditResult setPluginState (const Id& trackId, const Id& pluginId, const Value& state);
 
     // Automation ----------------------------------------------------------------
     std::optional<Id> addAutomationPoint (const Id& trackId, const model::AutomationTarget& target, Ticks pos, double value, double curve = 0.0);

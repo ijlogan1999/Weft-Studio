@@ -28,6 +28,7 @@ add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
     engine/ArrangeEngineTests.cpp
     engine/ImportTests.cpp
+    engine/MixerEngineTests.cpp
     engine/NullDeviceTests.cpp
     engine/PianoRollEngineTests.cpp
     engine/RecordingTests.cpp

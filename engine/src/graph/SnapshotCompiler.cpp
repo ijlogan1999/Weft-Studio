@@ -325,9 +325,30 @@ MonitorMode monitorFromString (const std::string& s)
 }
 } // namespace
 
-std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& model, double deviceRate, int maxBlock, const MediaPool& mediaPool,
-                                                 const InstrumentRack& instruments, const LocalMixState& local)
+namespace
 {
+/** The processing inserts of a strip, and their total latency. */
+std::vector<InsertPlan> planInserts (const model::ChannelStrip& strip, const EffectRack& effects, int& latency)
+{
+    std::vector<InsertPlan> out;
+    for (const auto& p : strip.inserts)
+    {
+        if (p.bypass)
+            continue;
+        if (auto slot = effects.find (p.id))
+        {
+            latency += std::max (0, slot->processor->latencySamples());
+            out.push_back ({ std::move (slot) });
+        }
+    }
+    return out;
+}
+} // namespace
+
+std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& model, double deviceRate, int maxBlock, const MediaPool& mediaPool,
+                                                 MixerRacks racks, const LocalMixState& local)
+{
+    const auto& instruments = racks.instruments;
     auto snap = std::make_unique<EngineSnapshot>();
     snap->sampleRate = deviceRate;
     snap->maxBlock = std::max (1, maxBlock);
@@ -341,8 +362,14 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
     snap->punchEnabled = punch.enabled && punch.end > punch.start;
     snap->punchStart = snap->tickToSample (punch.start);
     snap->punchEnd = snap->tickToSample (punch.end);
+    snap->fadeFrames = std::max (1, static_cast<int> (std::lround (0.010 * deviceRate)));
+    snap->masterState = racks.mixer.channel (model.info.masterTrackId);
     if (const auto* master = model.track (model.info.masterTrackId))
+    {
         snap->masterGain = master->mute ? 0.0f : dbToGain (master->strip.volumeDb);
+        int unused = 0;
+        snap->masterInserts = planInserts (master->strip, racks.effects, unused);
+    }
 
     const double projectRate = model.info.sampleRate > 0 ? model.info.sampleRate : 48000.0;
 
@@ -437,6 +464,10 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         }
         if (track->kind != model::TrackKind::bus)
             planRegions (plan, model, *track, *snap, mediaPool, projectRate);
+        plan.inserts = planInserts (track->strip, racks.effects, plan.latency);
+        if (plan.instrument)
+            plan.latency += std::max (0, plan.instrument->instrument().latencySamples());
+        plan.state = racks.mixer.channel (track->id);
         snap->channels.push_back (std::move (plan));
     }
 
@@ -450,12 +481,47 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
             {
                 const auto target = snap->channelIndex (busId);
                 if (target >= 0 && ! send->muted)
-                    plan.sends.push_back ({ target, dbToGain (send->levelDb), send->pre });
+                    plan.sends.push_back ({ target, dbToGain (send->levelDb), send->pre, nullptr, 0 });
             }
     }
 
+    // Delay compensation (F-MIX-13). Channels come before the buses they feed, so a bus's input
+    // latency (the latest of its feeders) is known when the bus is reached; every edge into a
+    // bus or the master is then delayed up to the latest path arriving there.
+    std::vector<int> inputLatency (snap->channels.size(), 0);
+    for (std::size_t i = 0; i < snap->channels.size(); ++i)
+    {
+        auto& plan = snap->channels[i];
+        plan.latency += inputLatency[i];
+        const auto arrive = [&] (int target) {
+            if (target >= 0)
+                inputLatency[static_cast<std::size_t> (target)] = std::max (inputLatency[static_cast<std::size_t> (target)], plan.latency);
+        };
+        arrive (plan.output);
+        for (const auto& send : plan.sends)
+            arrive (send.target);
+        if (plan.output < 0)
+            snap->masterLatency = std::max (snap->masterLatency, plan.latency);
+    }
+    for (auto& plan : snap->channels)
+    {
+        const auto required = [&] (int target) { return target >= 0 ? inputLatency[static_cast<std::size_t> (target)] : snap->masterLatency; };
+        plan.outputDelay = std::max (0, required (plan.output) - plan.latency);
+        plan.outputDelayLine = plan.state->delayFor ("out", plan.outputDelay);
+        const auto* track = model.track (plan.trackId);
+        for (auto& send : plan.sends)
+        {
+            send.delay = std::max (0, required (send.target) - plan.latency);
+            std::string sendId;
+            if (track != nullptr)
+                for (const auto& s : track->strip.sends)
+                    if (snap->channelIndex (s.targetBusId) == send.target)
+                        sendId = s.id;
+            send.delayLine = plan.state->delayFor ("send:" + sendId, send.delay);
+        }
+    }
+
     snap->buffers.assign (snap->channels.size() * 2, std::vector<float> (static_cast<std::size_t> (snap->maxBlock)));
-    snap->meters = std::make_unique<ChannelMeters[]> (snap->channels.size());
     return snap;
 }
 } // namespace weft::engine

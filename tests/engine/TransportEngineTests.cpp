@@ -2,6 +2,8 @@
 
 #include "EngineFixtures.h"
 
+#include "weft/engine/dsp/BuiltinEffects.h"
+
 #include "weft/rt/AudioThread.h"
 
 #include <catch2/catch_approx.hpp>
@@ -450,6 +452,26 @@ TEST_CASE ("AT-RT-1: no allocation or blocking calls on the audio thread", "[E][
         rig.sync();
         REQUIRE (rig.device.render (3000, 128));
     }
+    // Mixer edits during playback: inserts of every built-in, a bus with a send, bypass, removal.
+    const auto bus = rig.session.newBus (track, true).value();
+    std::vector<Id> inserts;
+    for (const auto& info : builtinPlugins())
+        if (! info.instrument)
+        {
+            model::PluginInstance p;
+            p.pluginUid = info.uid;
+            inserts.push_back (rig.session.addInsert (track, p).value());
+            REQUIRE (rig.session.addInsert (bus, p));
+            rig.sync();
+            REQUIRE (rig.device.render (3000, 256));
+        }
+    REQUIRE (rig.session.setInsertBypass (track, inserts.front(), true));
+    REQUIRE (rig.session.setTrackVolume (track, -3.0));
+    rig.sync();
+    REQUIRE (rig.device.render (5000));
+    REQUIRE (rig.session.removeInsert (track, inserts.back()));
+    rig.sync();
+    REQUIRE (rig.device.render (5000));
     // Instruments added and removed during playback.
     rig.rack.set (keys, nullptr);
     rig.sync();

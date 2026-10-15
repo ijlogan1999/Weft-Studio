@@ -6,6 +6,7 @@
 
 #include "weft/commands/LocalView.h"
 #include "weft/engine/graph/Instrument.h"
+#include "weft/engine/graph/Mixer.h"
 #include "weft/engine/media/MediaPool.h"
 #include "weft/model/ProjectModel.h"
 #include "weft/time/SignatureMap.h"
@@ -75,12 +76,20 @@ struct SendPlan
     int target = -1; // channel index of the bus
     float gain = 1;
     bool pre = false;
+    std::shared_ptr<DelayLine> delayLine; // delay compensation for this edge (F-MIX-13)
+    int delay = 0;
+};
+
+/** An insert that processes (bypassed inserts aren't planned, so bypass is bit-exact). */
+struct InsertPlan
+{
+    std::shared_ptr<EffectSlot> slot;
 };
 
 /**
-    One mixer channel (W-6 signal flow): source, pre-fader sends, fader, pan,
-    mute/solo, post-fader sends, meter, output. Inserts arrive with plug-in
-    hosting (M6).
+    One mixer channel (W-6 signal flow): source, inserts, pre-fader sends, fader, pan,
+    mute/solo, post-fader sends, meter, output, each path delayed so all paths reach
+    the master equally late (F-MIX-13).
 */
 struct ChannelPlan
 {
@@ -92,6 +101,11 @@ struct ChannelPlan
     bool audible = true;       // false when muted, or silenced by another channel's solo (D-W6-1, D-W6-2)
     int output = -1;           // channel index of the destination bus, or -1 for the master
     std::vector<SendPlan> sends;
+    std::vector<InsertPlan> inserts;
+    int latency = 0;           // samples from timeline to this channel's output: inputs, instrument, inserts
+    std::shared_ptr<DelayLine> outputDelayLine;
+    int outputDelay = 0;
+    std::shared_ptr<ChannelState> state; // fader ramp and meter
 
     std::vector<AudioSegment> segments; // sorted by start; overlapping only where regions crossfade
     std::int64_t longestSegment = 0;
@@ -107,13 +121,6 @@ struct ChannelPlan
     bool liveMidi = false;     // receives live MIDI (selected or armed, D-W2-1)
 };
 
-/** Per-channel peaks since the last read, written by the audio thread. */
-struct ChannelMeters
-{
-    std::atomic<float> output { 0 }; // post-fader, both sides
-    std::atomic<float> input { 0 };  // raw input of an armed track
-};
-
 struct EngineSnapshot
 {
     std::uint64_t serial = 0; // set when published
@@ -126,13 +133,15 @@ struct EngineSnapshot
     bool punchEnabled = false;
     std::int64_t punchStart = 0, punchEnd = 0;
     float masterGain = 1;
+    std::vector<InsertPlan> masterInserts; // the master's inserts process the whole mix (F-MIX-11)
+    std::shared_ptr<ChannelState> masterState;
+    int masterLatency = 0;     // the longest path to the master, compensated on every other path
+    int fadeFrames = 480;      // delay-compensation crossfade, 10 ms
     std::vector<ChannelPlan> channels; // processing order: every channel before the buses it feeds
     std::vector<MediaPool::Audio> media; // keeps the media sources alive while this snapshot exists
 
     // Audio-thread scratch, sized at compile time.
     mutable std::vector<std::vector<float>> buffers; // two per channel
-    std::unique_ptr<ChannelMeters[]> meters;
-    mutable ChannelMeters masterMeter;
 
     std::int64_t tickToSample (Ticks t) const noexcept;
     int channelIndex (const Id& trackId) const noexcept;
@@ -141,9 +150,20 @@ struct EngineSnapshot
 /** Local (per-user) mixer and input state that shapes the snapshot but never enters the document. */
 using LocalMixState = commands::LocalView;
 
-/** Builds a snapshot of the projected model at the device sample rate. Missing media plays as silence. */
+/** The stateful things a snapshot points at: instruments, inserts and per-channel mixer state. */
+struct MixerRacks
+{
+    const InstrumentRack& instruments;
+    const EffectRack& effects;
+    MixerState& mixer;
+};
+
+/**
+    Builds a snapshot of the projected model at the device sample rate. Missing media plays
+    as silence; an insert with no slot in the rack is skipped.
+*/
 std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& model, double deviceRate, int maxBlock, const MediaPool& media,
-                                                 const InstrumentRack& instruments, const LocalMixState& local = {});
+                                                 MixerRacks racks, const LocalMixState& local = {});
 
 /** Constant-power pan gains for a mono source at pan -1..+1 (centre = -3 dB each side). */
 std::pair<float, float> panGains (double pan) noexcept;
