@@ -8,6 +8,7 @@ add_library(weft_core STATIC
     src/arrange/Selection.cpp
     src/commands/Arrange.cpp
     src/commands/Commands.cpp
+    src/commands/Notes.cpp
     src/commands/Recording.cpp
     src/commands/Tracks.cpp
     src/commands/Session.cpp

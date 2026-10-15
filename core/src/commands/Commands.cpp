@@ -863,7 +863,8 @@ EditResult Session::quantizeNotes (const Id& regionId, const std::vector<Id>& no
             continue;
         // Quantize on the timeline grid, then map back to sequence ticks.
         const auto timeline = r->start + (n.pos - r->midi.sequenceOffset);
-        const auto newPos = quantizeTick (timeline, grid, strength, swingPercent) - r->start + r->midi.sequenceOffset;
+        // A note never moves before the region start (W-5 step 3).
+        const auto newPos = std::max (quantizeTick (timeline, grid, strength, swingPercent), r->start) - r->start + r->midi.sequenceOffset;
         if (newPos != n.pos && newPos >= 0)
             moves.emplace_back (id, newPos);
     }

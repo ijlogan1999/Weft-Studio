@@ -10,6 +10,7 @@ add_executable(weft_unit_tests
     unit/TrackTests.cpp
     unit/TransportTests.cpp
     unit/UndoTests.cpp
+    unit/PianoRollTests.cpp
     unit/ValueTests.cpp
 )
 target_link_libraries(weft_unit_tests PRIVATE weft::core Catch2::Catch2WithMain)
