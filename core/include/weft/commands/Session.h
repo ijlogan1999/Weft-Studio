@@ -131,6 +131,8 @@ public:
     EditResult trimRegionStart (const Id& regionId, Ticks newStart);
     /** Sets the region length (ticks for MIDI, samples for audio), keeping the start fixed. */
     EditResult trimRegionLength (const Id& regionId, std::int64_t newLength);
+    /** Audio editor trim (D-UI-5): sets the source offset exactly, keeping the region's end; the start moves to the nearest tick. */
+    EditResult trimAudioStartSamples (const Id& regionId, Samples newSourceOffset);
     std::optional<Id> splitRegion (const Id& regionId, Ticks at);
     /** Joins regions on one track into the earliest one (MIDI, or contiguous audio from one file). */
     EditResult joinRegions (const std::vector<Id>& regionIds);
