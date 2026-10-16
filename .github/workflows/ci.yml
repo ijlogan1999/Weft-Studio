@@ -106,6 +106,9 @@ jobs:
           path: build/_deps/*-src
           key: deps-windows-release-${{ hashFiles('third_party/cpp-deps.json') }}
 
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
       - name: Configure
         run: cmake -S . -B build -DWEFT_BUILD_TESTS=OFF
 

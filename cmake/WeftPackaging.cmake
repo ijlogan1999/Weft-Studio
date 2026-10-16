@@ -39,7 +39,7 @@ set(CPACK_STRIP_FILES TRUE)
 
 set(weft_generators ZIP)
 if(WIN32)
-    find_program(WEFT_MAKENSIS makensis PATHS "$ENV{ProgramFiles\(x86\)}/NSIS" "$ENV{ProgramFiles}/NSIS")
+    find_program(WEFT_MAKENSIS makensis PATHS "C:/Program Files (x86)/NSIS" "C:/Program Files/NSIS")
     if(WEFT_MAKENSIS)
         list(APPEND weft_generators NSIS)
     endif()
