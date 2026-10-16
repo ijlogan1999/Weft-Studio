@@ -1,0 +1,16 @@
+[package]
+name = "weft-sync"
+version = "0.1.0"
+description = "Weft Studio client transport: relay HTTP calls and the sync WebSocket, behind a C API"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = "1"
+tungstenite = { version = "0.27", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+ureq = "3"
+weft-crdt = { path = "../weft-crdt" }
+weft-proto = { path = "../weft-proto" }

@@ -8,11 +8,22 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+argon2 = "0.5"
 automerge.workspace = true
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+hmac = "0.12"
+rand = "0.8"
+rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+weft-crdt = { path = "../crates/weft-crdt" }
+weft-proto = { path = "../crates/weft-proto" }
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+weft-sync = { path = "../crates/weft-sync" }

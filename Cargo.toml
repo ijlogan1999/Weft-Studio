@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/weft-crdt", "crates/weft-codec", "crates/weft-ffi", "relay"]
+members = ["crates/weft-crdt", "crates/weft-codec", "crates/weft-proto", "crates/weft-sync", "crates/weft-ffi", "relay"]
 
 [workspace.package]
 edition = "2021"

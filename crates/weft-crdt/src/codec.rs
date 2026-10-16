@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn deep_nesting_is_rejected() {
-        let mut data = vec![TAG_LIST, 1, 0, 0, 0].repeat(MAX_DEPTH + 2);
+        let mut data = [TAG_LIST, 1, 0, 0, 0].repeat(MAX_DEPTH + 2);
         data.push(TAG_NULL);
         assert!(decode_value(&data).is_err());
     }

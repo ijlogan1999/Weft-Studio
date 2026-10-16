@@ -1,0 +1,13 @@
+[package]
+name = "weft-proto"
+version = "0.1.0"
+description = "Weft Studio sync protocol messages (spec 05 §3.3), shared by the relay and the client"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ciborium = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"

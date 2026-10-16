@@ -55,6 +55,17 @@ WeftStatus weft_doc_merge(WeftDoc* doc, WeftDoc* other);
 
 void weft_bytes_free(WeftBytes bytes);
 
+/* Sync (spec 05 §3.3): Automerge's sync protocol, one state per connection */
+typedef struct WeftSyncState WeftSyncState;
+WeftSyncState* weft_sync_state_new(void);
+void weft_sync_state_free(WeftSyncState* state);
+/* WEFT_NOT_FOUND when there is nothing to send. */
+WeftStatus weft_doc_sync_generate(WeftDoc* doc, WeftSyncState* state, WeftBytes* out);
+WeftStatus weft_doc_sync_receive(WeftDoc* doc, WeftSyncState* state, const uint8_t* data, size_t len);
+/* Codec list of {hash, actor, message, time} for the changes since heads (all for empty heads). */
+WeftStatus weft_doc_changes_info(WeftDoc* doc, const uint8_t* heads, size_t heads_len, WeftBytes* out);
+WeftStatus weft_change_hash(const uint8_t* data, size_t len, uint8_t* out32);
+
 /* BLAKE3 content hashing (media blobs) */
 typedef struct WeftHasher WeftHasher;
 WeftHasher* weft_hasher_new(void);
