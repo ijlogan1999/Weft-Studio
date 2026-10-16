@@ -10,6 +10,7 @@ add_executable(weft_unit_tests
     unit/TrackTests.cpp
     unit/TransportTests.cpp
     unit/UndoTests.cpp
+    unit/AutomationTests.cpp
     unit/PianoRollTests.cpp
     unit/ValueTests.cpp
 )

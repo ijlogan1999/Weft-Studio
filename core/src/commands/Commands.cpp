@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <map>
 
 namespace weft::commands
 {
@@ -1216,6 +1217,107 @@ EditResult Session::deleteAutomationPoint (const Id& laneId, const Id& pointId)
         return reject ("That automation point no longer exists.");
     return run ("Delete Automation Point",
                 [&] (TxnWriter& w) { return wrote (w.remove (doc::path ({ keys::automationLanes, lane->id, "points", pointId }))); });
+}
+
+EditResult Session::setAutomationCurve (const Id& laneId, const Id& pointId, double curve)
+{
+    const auto* lane = storedLaneFor (projection, laneId, pointId);
+    if (lane == nullptr)
+        return reject ("That automation point no longer exists.");
+    const auto base = doc::path ({ keys::automationLanes, lane->id, "points", pointId });
+    return run ("Bend Automation", [&] (TxnWriter& w) { return wrote (w.put (base / "curve", Value (std::clamp (curve, -1.0, 1.0)))); });
+}
+
+EditResult Session::deleteAutomationPoints (const Id& laneId, const std::vector<Id>& pointIds)
+{
+    std::vector<Path> paths;
+    for (const auto& pointId : pointIds)
+        if (const auto* lane = storedLaneFor (projection, laneId, pointId))
+            paths.push_back (doc::path ({ keys::automationLanes, lane->id, "points", pointId }));
+    if (paths.empty())
+        return reject ("Those automation points no longer exist.");
+    return run (paths.size() == 1 ? "Delete Automation Point" : "Delete Automation Points", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& path : paths)
+            good = w.remove (path) && good;
+        return wrote (good);
+    });
+}
+
+EditResult Session::moveAutomationPoints (const Id& laneId, const std::vector<PointMove>& moves)
+{
+    std::vector<std::pair<Path, PointMove>> targets;
+    for (const auto& move : moves)
+    {
+        const auto* lane = storedLaneFor (projection, laneId, move.pointId);
+        if (lane == nullptr)
+            return reject ("That automation point no longer exists.");
+        if (move.pos < 0)
+            return reject ("Automation can't start before the project start.");
+        targets.emplace_back (doc::path ({ keys::automationLanes, lane->id, "points", move.pointId }), move);
+    }
+    if (targets.empty())
+        return reject ("Select automation points to move.");
+    return run (targets.size() == 1 ? "Move Automation Point" : "Move Automation Points", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& [base, move] : targets)
+            good = w.put (base / "pos", Value (move.pos)) && w.put (base / "value", Value (std::clamp (move.value, 0.0, 1.0))) && good;
+        return wrote (good);
+    });
+}
+
+EditResult Session::writeAutomation (const std::vector<AutomationWrite>& writes, const std::vector<Id>& toLatch)
+{
+    for (const auto& write : writes)
+        if (projection.track (write.trackId) == nullptr)
+            return reject ("That track no longer exists.");
+    if (writes.empty() && toLatch.empty())
+        return reject ("Nothing was written.");
+    // New lanes created by this pass, by (track, target key), so two writes to one new lane share it.
+    std::map<std::string, Id> newLanes;
+    return run ("Write Automation", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& write : writes)
+        {
+            const auto from = std::min (write.from, write.to), to = std::max (write.from, write.to);
+            auto pointValue = [] (Ticks pos, double value) {
+                return Value::map().set ("pos", std::max<Ticks> (pos, 0)).set ("value", std::clamp (value, 0.0, 1.0)).set ("curve", 0.0);
+            };
+            Id laneId;
+            if (const auto* lane = projection.lane (write.trackId, write.target))
+            {
+                laneId = lane->id;
+                // Erase what the pass covered, in the canonical lane and any merged duplicates.
+                std::vector<Id> stored { lane->id };
+                stored.insert (stored.end(), lane->mergedLaneIds.begin(), lane->mergedLaneIds.end());
+                for (const auto& storedId : stored)
+                    if (auto it = projection.storedLanes.find (storedId); it != projection.storedLanes.end())
+                        for (const auto& [pointId, point] : it->second->points)
+                            if (point.pos >= from && point.pos <= to)
+                                good = w.remove (doc::path ({ keys::automationLanes, storedId, "points", pointId })) && good;
+            }
+            else if (auto it = newLanes.find (write.trackId + "|" + write.target.key()); it != newLanes.end())
+                laneId = it->second;
+            else
+            {
+                model::AutomationLane created;
+                created.id = newId();
+                created.trackId = write.trackId;
+                created.target = write.target;
+                auto laneValue = created.toValue();
+                laneValue.mapRef()["points"] = Value::map();
+                good = w.put (doc::path ({ keys::automationLanes, created.id }), laneValue) && good;
+                laneId = created.id;
+                newLanes.emplace (write.trackId + "|" + write.target.key(), created.id);
+            }
+            for (const auto& [pos, value] : write.points)
+                good = w.put (doc::path ({ keys::automationLanes, laneId, "points", newId() }), pointValue (pos, value)) && good;
+        }
+        for (const auto& trackId : toLatch)
+            if (projection.track (trackId) != nullptr)
+                good = w.put (trackPath (trackId) / "automationMode", Value (std::string ("latch"))) && good;
+        return wrote (good);
+    });
 }
 
 // Tempo, signature, markers -----------------------------------------------------------
