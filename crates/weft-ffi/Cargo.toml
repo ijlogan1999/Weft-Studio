@@ -1,7 +1,7 @@
 [package]
 name = "weft-ffi"
 version = "0.1.0"
-description = "The one static library the Weft Studio client links: weft-crdt and weft-codec together"
+description = "The one static library the Weft Studio client links: weft-crdt, weft-codec and weft-sync together"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -13,3 +13,4 @@ crate-type = ["staticlib"]
 [dependencies]
 weft-crdt = { path = "../weft-crdt" }
 weft-codec = { path = "../weft-codec" }
+weft-sync = { path = "../weft-sync" }

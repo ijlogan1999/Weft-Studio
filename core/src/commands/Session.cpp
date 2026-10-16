@@ -137,6 +137,46 @@ doc::Status Session::applyChanges (std::span<const std::uint8_t> changes)
 
 void Session::reproject() { projection = model::Projector::project (doc); }
 
+doc::Status Session::receiveSyncMessage (doc::SyncState& state, std::span<const std::uint8_t> message)
+{
+    const auto before = doc.heads();
+    const auto status = doc.receiveSyncMessage (state, message);
+    if (status == Status::ok && doc.heads() != before)
+        model::Projector::refresh (projection, doc, doc.changedPaths (before, 2));
+    return status;
+}
+
+int Session::addLocalChangeListener (std::function<void (const doc::Bytes&)> fn)
+{
+    const auto handle = nextListener++;
+    changeListeners[handle] = std::move (fn);
+    return handle;
+}
+
+void Session::removeLocalChangeListener (int handle) { changeListeners.erase (handle); }
+
+void Session::setAccess (Access a, std::string reason)
+{
+    accessLevel = a;
+    accessReason = std::move (reason);
+}
+
+bool Session::allowed (const Txn& txn) const
+{
+    switch (accessLevel)
+    {
+        case Access::full: return true;
+        case Access::none: return false;
+        case Access::commentsOnly:
+            return std::all_of (txn.records.begin(), txn.records.end(), [] (const TxnRecord& r) {
+                const auto& p = r.path;
+                return p.size() >= 2 && p[0].kind == PathSegment::Kind::key && p[0].key == model::keys::collab
+                    && p[1].kind == PathSegment::Kind::key && (p[1].key == "comments" || p[1].key == "chat");
+            });
+    }
+    return false;
+}
+
 void Session::refreshFor (const Txn& txn)
 {
     std::vector<Path> paths;
@@ -151,17 +191,24 @@ void Session::refreshFor (const Txn& txn)
         model::Projector::refresh (projection, doc, paths);
 }
 
-void Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
+bool Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
 {
     if (txn.empty())
     {
         doc.rollback();
-        return;
+        return true;
+    }
+    if (! allowed (txn))
+    {
+        doc.rollback();
+        refreshFor (txn);
+        error = accessReason.empty() ? std::string ("You can't change this project.") : accessReason;
+        return false;
     }
     const auto now = clock();
     const auto label = isUndoRedo ? (pushTo == &redoStack ? "Undo " : "Redo ") + txn.name : txn.name;
     if (! doc.commit (commitMessage (userId, label), now))
-        return;
+        return true;
     for (auto& r : txn.records)
         if (r.kind == TxnRecord::Kind::set && r.after && r.after->isContainer())
         {
@@ -169,12 +216,18 @@ void Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
             if (! r.restoresOpId.empty() && ! r.afterOpId.empty())
                 opIdAliases[r.restoresOpId] = r.afterOpId;
         }
-    if (onLocalChange)
+    if (onLocalChange || ! changeListeners.empty())
         if (auto change = doc.lastLocalChange())
-            onLocalChange (*change, now);
+        {
+            if (onLocalChange)
+                onLocalChange (*change, now);
+            for (const auto& [handle, fn] : changeListeners)
+                fn (*change);
+        }
     refreshFor (txn);
     if (pushTo != nullptr)
         pushTo->push_back (std::move (txn));
+    return true;
 }
 
 EditResult Session::run (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn)
@@ -201,10 +254,33 @@ EditResult Session::run (std::string_view name, const std::function<EditResult (
         error = r.error;
         return r;
     }
-    if (! txn.empty())
+    const bool changed = ! txn.empty();
+    if (! finish (std::move (txn), false, &undoStack))
+        return EditResult::fail (error);
+    if (changed)
         redoStack.clear();
-    finish (std::move (txn), false, &undoStack);
     return r;
+}
+
+EditResult Session::setRelayUrl (const std::string& url)
+{
+    error.clear();
+    Txn txn { "Share Project", {} };
+    TxnWriter writer (doc, txn);
+    if (! writer.put (doc::path ({ "collab", "relayUrl" }), url.empty() ? Value() : Value (url)))
+    {
+        doc.rollback();
+        return EditResult::fail ("Couldn't write the relay address.");
+    }
+    if (! finish (std::move (txn), false, nullptr))
+        return EditResult::fail (error);
+    return {};
+}
+
+std::string Session::relayUrl() const
+{
+    const auto v = doc.get (doc::path ({ "collab", "relayUrl" }));
+    return v && v->isString() ? v->asString() : std::string();
 }
 
 EditResult Session::edit (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn) { return run (name, fn); }
@@ -231,9 +307,9 @@ void Session::endGesture()
         return;
     Txn txn = std::move (gesture->txn);
     gesture.reset();
-    if (! txn.empty())
+    const bool changed = ! txn.empty();
+    if (finish (std::move (txn), false, &undoStack) && changed)
         redoStack.clear();
-    finish (std::move (txn), false, &undoStack);
 }
 
 void Session::cancelGesture()
@@ -330,7 +406,11 @@ UndoResult Session::invert (std::vector<Txn>& from, std::vector<Txn>& to, std::s
         result.message = "Nothing to " + std::string (label == "Undo" ? "undo" : "redo") + " for \"" + src.name + "\": it was changed by someone else.";
 
     result.done = ! out.empty();
-    finish (std::move (out), true, &to);
+    if (! finish (std::move (out), true, &to))
+    {
+        from.push_back (std::move (src));
+        return { false, error };
+    }
     error = result.message;
     return result;
 }

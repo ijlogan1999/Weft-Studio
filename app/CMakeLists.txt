@@ -21,6 +21,7 @@ add_library(weft_app_lib STATIC
     src/ui/PluginWindows.cpp
     src/ui/ProjectDialogs.cpp
     src/ui/NewTrackDialog.cpp
+    src/ui/ShareDialogs.cpp
     src/ui/SidePanel.cpp
     src/ui/Studio.cpp
     src/ui/Theme.cpp
@@ -48,7 +49,7 @@ target_compile_definitions(weft_app_lib PUBLIC
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:WeftStudio,JUCE_VERSION>"
     WEFT_DONATE_URL="${WEFT_DONATE_URL}")
 target_link_libraries(weft_app_lib
-    PUBLIC WeftStudioData weft::engine_juce weft::juce_modules
+    PUBLIC WeftStudioData weft::engine_juce weft::collab weft::juce_modules
     PRIVATE juce::juce_recommended_warning_flags)
 set_target_properties(weft_app_lib PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 

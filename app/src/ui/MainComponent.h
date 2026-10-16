@@ -26,14 +26,29 @@ public:
     static constexpr int height = 34;
 };
 
-/** H · Status bar: the last message, the tool, snap and the project name. */
+/** The read-only banner (05 §13): a Viewer, or removed from the project. */
+class ReadOnlyBanner final : public juce::Component
+{
+public:
+    ReadOnlyBanner();
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    juce::Label message;
+    static constexpr int height = 30;
+};
+
+/** H · Status bar: the last message, the sync state (04 §10), the tool, snap and the project name. */
 class StatusBar final : public juce::Component, private juce::ChangeListener
 {
 public:
     explicit StatusBar (Studio& studio);
     ~StatusBar() override;
     void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     static constexpr int height = 24;
+    /** Where the sync state is drawn; clicking it calls onSyncClicked. */
+    juce::Rectangle<int> syncArea() const;
+    std::function<void()> onSyncClicked;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
@@ -98,6 +113,8 @@ public:
     /** The last notice shown in an alert (missing plug-ins, open errors). */
     const juce::String& lastAlert() const noexcept { return alertText; }
     bool noAudioBannerShown() const { return banner.isVisible(); }
+    bool readOnlyBannerShown() const { return readOnly.isVisible(); }
+    const ReadOnlyBanner& readOnlyBanner() const noexcept { return readOnly; }
     static constexpr int recentMenuBase = 10000;
 
 private:
@@ -109,6 +126,8 @@ private:
     void alert (const juce::String& title, const juce::String& text);
     void opened (const Studio::OpenResult& result);
     void chooseProjectToOpen();
+    /** Runs `next` once signed in, asking first when signed out. */
+    void whenSignedIn (std::function<void()> next);
 
     Studio& studio;
     ControlBar control;
@@ -119,6 +138,7 @@ private:
     StatusBar status;
     PluginWindows plugins;
     NoAudioBanner banner;
+    ReadOnlyBanner readOnly;
     std::unique_ptr<juce::AlertWindow> question, projectAlert;
     std::function<void (int)> projectAnswer;
     juce::String projectAsked, alertText;

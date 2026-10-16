@@ -11,6 +11,7 @@
 #include <vector>
 
 struct WeftDoc;
+struct WeftSyncState;
 
 namespace weft::doc
 {
@@ -25,6 +26,35 @@ enum class Status
 };
 
 using Bytes = std::vector<std::uint8_t>;
+
+/** Automerge sync-protocol state for one peer (spec 05 §3.3). Reset it for each new connection. */
+class SyncState
+{
+public:
+    SyncState();
+    SyncState (SyncState&& other) noexcept;
+    SyncState& operator= (SyncState&& other) noexcept;
+    SyncState (const SyncState&) = delete;
+    SyncState& operator= (const SyncState&) = delete;
+    ~SyncState();
+
+    WeftSyncState* handle() const noexcept { return state; }
+
+private:
+    WeftSyncState* state = nullptr;
+};
+
+/** Who made a change and when, read from the change itself. */
+struct ChangeInfo
+{
+    Bytes hash;
+    std::string actor;   // hex
+    std::string message; // the commit message ("weft1|<user>|<command>")
+    std::int64_t timeMs = 0;
+};
+
+/** The 32-byte hash of one encoded change. */
+std::optional<Bytes> changeHash (std::span<const std::uint8_t> change);
 
 /**
     Owning C++ handle for the CRDT document (Automerge, via the weft-crdt shim).
@@ -81,6 +111,13 @@ public:
     /** Paths touched since `since` heads, truncated to depth segments. */
     std::vector<Path> changedPaths (std::span<const std::uint8_t> since, std::size_t depth) const;
     Status merge (Document& other);
+
+    // Sync protocol ------------------------------------------------------------
+    /** The next sync message for the peer, or nullopt when there is nothing to send. */
+    std::optional<Bytes> generateSyncMessage (SyncState& state);
+    Status receiveSyncMessage (SyncState& state, std::span<const std::uint8_t> message);
+    /** The changes since `since` heads (all for empty), oldest first. */
+    std::vector<ChangeInfo> changesSince (std::span<const std::uint8_t> since) const;
 
 private:
     explicit Document (WeftDoc* handle) noexcept : doc (handle) {}

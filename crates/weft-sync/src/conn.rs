@@ -60,6 +60,10 @@ struct Inner {
     tokens: Tokens,
     /// Bumped when the caller supplies new tokens, so a rejected client retries.
     token_generation: u64,
+    /// Bumped on every online/offline switch: a session from an earlier epoch ends,
+    /// and what it received is dropped, even if the switch was undone before the
+    /// worker noticed it.
+    epoch: u64,
 }
 
 struct Shared {
@@ -98,6 +102,7 @@ impl Connection {
                 heads: Vec::new(),
                 tokens: config.tokens.clone(),
                 token_generation: 0,
+                epoch: 0,
             }),
             wake: Condvar::new(),
         });
@@ -131,7 +136,10 @@ impl Connection {
         let mut g = self.lock();
         if g.online != online {
             g.online = online;
+            g.epoch += 1;
             g.outgoing.clear();
+            // Messages from the session being left behind belong to its exchange.
+            g.events.retain(|(_, e)| !matches!(e, Event::Message(_)));
         }
         self.shared.wake.notify_all();
     }
@@ -195,6 +203,15 @@ impl Worker {
                 Duration::ZERO
             };
         self.lock().events.push_back((due, e));
+    }
+
+    /// Like emit, for what a session received: dropped once that session's epoch is over.
+    fn emit_from(&self, epoch: u64, e: Event) {
+        let due = Instant::now() + self.config.one_way_delay;
+        let mut g = self.lock();
+        if g.epoch == epoch {
+            g.events.push_back((due, e));
+        }
     }
 
     /// Waits up to `d` or until woken; returns false if stopping.
@@ -414,16 +431,19 @@ impl Worker {
 
     /// Runs one connected session; returns why it ended and whether it was welcomed.
     fn session(&self, mut ws: Socket) -> (Ended, bool) {
-        let hello = {
+        let (hello, epoch) = {
             let g = self.lock();
-            Message::Hello(Hello {
-                token: g.tokens.access_token.clone(),
-                project_id: self.config.project_id.clone(),
-                client_id: self.config.client_id.clone(),
-                client_version: self.config.client_version.clone(),
-                schema_version: self.config.schema_version,
-                heads: g.heads.clone(),
-            })
+            (
+                Message::Hello(Hello {
+                    token: g.tokens.access_token.clone(),
+                    project_id: self.config.project_id.clone(),
+                    client_id: self.config.client_id.clone(),
+                    client_version: self.config.client_version.clone(),
+                    schema_version: self.config.schema_version,
+                    heads: g.heads.clone(),
+                }),
+                g.epoch,
+            )
         };
         if let Err(e) = Self::write(&mut ws, hello.encode()) {
             return (Ended::Closed(e), false);
@@ -442,7 +462,7 @@ impl Worker {
                 while g.outgoing.front().is_some_and(|(t, _)| *t <= now) {
                     due.push(g.outgoing.pop_front().unwrap().1);
                 }
-                (g.stop, g.online, due)
+                (g.stop, g.online && g.epoch == epoch, due)
             };
             if stop || !online {
                 let _ = ws.close(None);
@@ -482,13 +502,13 @@ impl Worker {
                         Message::Welcome(_) => welcomed = true,
                         Message::Reject(r) => {
                             let code = r.code.clone();
-                            self.emit(Event::Message(m), true);
+                            self.emit_from(epoch, Event::Message(m));
                             return (Ended::Rejected(code), welcomed);
                         }
                         Message::Pong(_) => continue,
                         _ => {}
                     }
-                    self.emit(Event::Message(m), true);
+                    self.emit_from(epoch, Event::Message(m));
                 }
                 Ok(tungstenite::Message::Close(_)) => {
                     return (

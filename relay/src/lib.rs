@@ -956,6 +956,7 @@ async fn connection(st: Arc<AppState>, project_id: String, socket: WebSocket) {
             ))
             .await;
         let _ = sink.close().await;
+        drop(room_arc);
         st.release_room_if_idle(&project_id);
         return;
     }
@@ -1005,16 +1006,21 @@ async fn connection(st: Arc<AppState>, project_id: String, socket: WebSocket) {
     }
     drop(tx);
     let _ = writer.await;
+    drop(room_arc);
     st.release_room_if_idle(&project_id);
 }
 
 impl AppState {
     /// Unloads a room nobody is connected to.
+    /// Unloads a room nobody is in. A connection holding the room (one that is joining,
+    /// or a request working on it) keeps it loaded: unloading it then would leave that
+    /// connection in a room the next joiner can't see, and their changes would stop
+    /// reaching each other. Callers drop their own reference first.
     fn release_room_if_idle(&self, project_id: &str) {
         let mut rooms = self.rooms.lock().unwrap();
         let idle = rooms
             .get(project_id)
-            .is_some_and(|r| r.lock().unwrap().clients.is_empty());
+            .is_some_and(|r| Arc::strong_count(r) == 1 && r.lock().unwrap().clients.is_empty());
         if idle {
             rooms.remove(project_id);
         }
@@ -1124,6 +1130,20 @@ impl AppState {
                             let already_acked = a.new_changes.iter().any(|n| n.hash() == c.hash());
                             if !already_acked && room.doc.get_change_by_hash(&c.hash()).is_some() {
                                 hashes.extend_from_slice(&c.hash().0);
+                            }
+                        }
+                        if let Some(c) = &single {
+                            if room.doc.get_change_by_hash(&c.hash()).is_none() {
+                                let missing: Vec<_> = c
+                                    .deps()
+                                    .iter()
+                                    .filter(|d| room.doc.get_change_by_hash(d).is_none())
+                                    .collect();
+                                eprintln!(
+                                    "weft-relay: change {} from {conn_id} not applied; missing deps {:?}",
+                                    c.hash(),
+                                    missing
+                                );
                             }
                         }
                         send(Message::Ack(Ack {

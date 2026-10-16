@@ -29,51 +29,87 @@ original or redistributable and be listed here.
 
 | Crate | Version | License |
 |---|---|---|
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 |
 | automerge | 0.12.0 | MIT |
+| base64 | 0.23.1 | MIT OR Apache-2.0 |
 | bitflags | 1.3.2 | MIT/Apache-2.0 |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception |
+| block-buffer | 0.10.4 | MIT OR Apache-2.0 |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 |
 | borsh | 1.8.1 | MIT OR Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | bytes | 1.12.1 | MIT |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
+| ciborium | 0.2.2 | Apache-2.0 |
+| ciborium-io | 0.2.2 | Apache-2.0 |
+| ciborium-ll | 0.2.2 | Apache-2.0 |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
 | constant_time_eq | 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | core_detect | 1.0.0 | MIT/Apache-2.0 |
+| cpufeatures | 0.2.17 | MIT OR Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.2 | MIT OR Apache-2.0 |
+| crunchy | 0.2.4 | MIT |
+| crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
+| data-encoding | 2.11.1 | MIT |
+| digest | 0.10.7 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |
 | either | 1.19.0 | MIT OR Apache-2.0 |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 |
+| generic-array | 0.14.7 | MIT |
+| getrandom | 0.2.17 | MIT OR Apache-2.0 |
+| getrandom | 0.3.4 | MIT OR Apache-2.0 |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 |
+| half | 2.7.1 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hexane | 1.0.0-alpha.5 | MIT |
+| http | 1.5.0 | MIT OR Apache-2.0 |
+| httparse | 1.10.1 | MIT OR Apache-2.0 |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
+| itoa | 1.0.18 | MIT OR Apache-2.0 |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 |
 | leb128 | 0.2.7 | MIT OR Apache-2.0 |
 | libc | 0.2.190 | MIT OR Apache-2.0 |
 | log | 0.4.34 | MIT OR Apache-2.0 |
+| memchr | 2.8.3 | Unlicense OR MIT |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
 | mp3lame-sys | 0.1.11 | LGPL-3.0 |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
+| ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
+| r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | rand | 0.10.3 | MIT OR Apache-2.0 |
+| rand | 0.9.5 | MIT OR Apache-2.0 |
+| rand_chacha | 0.9.0 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
+| rand_core | 0.9.5 | MIT OR Apache-2.0 |
+| ring | 0.17.14 | Apache-2.0 AND ISC |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
+| rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
+| rustls-webpki | 0.103.15 | ISC |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 |
 | serde | 1.0.229 | MIT OR Apache-2.0 |
+| serde_bytes | 0.11.19 | MIT OR Apache-2.0 |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 |
+| sha1 | 0.10.7 | MIT OR Apache-2.0 |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |
+| simd-adler32 | 0.3.10 | MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | smol_str | 0.3.6 | MIT OR Apache-2.0 |
+| subtle | 2.6.1 | BSD-3-Clause |
 | symphonia | 0.5.5 | MPL-2.0 |
 | symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 |
 | symphonia-core | 0.5.5 | MPL-2.0 |
@@ -86,38 +122,93 @@ original or redistributable and be listed here.
 | tracing | 0.1.44 | MIT |
 | tracing-attributes | 0.1.31 | MIT |
 | tracing-core | 0.1.36 | MIT |
+| tungstenite | 0.27.0 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
+| untrusted | 0.9.0 | ISC |
+| ureq | 3.4.2 | MIT OR Apache-2.0 |
+| ureq-proto | 0.6.4 | MIT OR Apache-2.0 |
+| utf-8 | 0.7.6 | MIT OR Apache-2.0 |
+| utf8-zero | 0.8.1 | MIT OR Apache-2.0 |
+| wasi | 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| wasip2 | 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| webpki-roots | 0.26.11 | CDLA-Permissive-2.0 |
+| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 |
+| windows-sys | 0.52.0 | MIT OR Apache-2.0 |
+| windows-targets | 0.52.6 | MIT OR Apache-2.0 |
+| windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 |
+| windows_aarch64_msvc | 0.52.6 | MIT OR Apache-2.0 |
+| windows_i686_gnu | 0.52.6 | MIT OR Apache-2.0 |
+| windows_i686_gnullvm | 0.52.6 | MIT OR Apache-2.0 |
+| windows_i686_msvc | 0.52.6 | MIT OR Apache-2.0 |
+| windows_x86_64_gnu | 0.52.6 | MIT OR Apache-2.0 |
+| windows_x86_64_gnullvm | 0.52.6 | MIT OR Apache-2.0 |
+| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 |
+| wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy-derive | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zeroize | 1.9.1 | Apache-2.0 OR MIT |
 | zlib-rs | 0.6.8 | Zlib |
+| zmij | 1.0.23 | MIT |
 
 ## Rust crates in the relay server
 
 | Crate | Version | License |
 |---|---|---|
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
+| argon2 | 0.5.3 | MIT OR Apache-2.0 |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
 | automerge | 0.12.0 | MIT |
 | axum | 0.8.9 | MIT |
 | axum-core | 0.5.6 | MIT |
+| base64 | 0.22.1 | MIT OR Apache-2.0 |
+| base64ct | 1.8.3 | Apache-2.0 OR MIT |
+| bitflags | 2.13.2 | MIT OR Apache-2.0 |
+| blake2 | 0.10.6 | MIT OR Apache-2.0 |
+| blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception |
+| block-buffer | 0.10.4 | MIT OR Apache-2.0 |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 |
 | borsh | 1.8.1 | MIT OR Apache-2.0 |
 | bytes | 1.12.1 | MIT |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
+| ciborium | 0.2.2 | Apache-2.0 |
+| ciborium-io | 0.2.2 | Apache-2.0 |
+| ciborium-ll | 0.2.2 | Apache-2.0 |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
+| constant_time_eq | 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
+| cpufeatures | 0.2.17 | MIT OR Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.2 | MIT OR Apache-2.0 |
+| crunchy | 0.2.4 | MIT |
+| crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
+| data-encoding | 2.11.1 | MIT |
+| digest | 0.10.7 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |
 | either | 1.19.0 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
+| fallible-iterator | 0.3.0 | MIT/Apache-2.0 |
+| fallible-streaming-iterator | 0.1.9 | MIT/Apache-2.0 |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 |
+| foldhash | 0.1.5 | Zlib |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 |
+| futures-sink | 0.3.34 | MIT OR Apache-2.0 |
 | futures-task | 0.3.34 | MIT OR Apache-2.0 |
 | futures-util | 0.3.34 | MIT OR Apache-2.0 |
+| generic-array | 0.14.7 | MIT |
+| getrandom | 0.2.17 | MIT OR Apache-2.0 |
+| getrandom | 0.3.4 | MIT OR Apache-2.0 |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 |
+| half | 2.7.1 | MIT OR Apache-2.0 |
+| hashbrown | 0.15.5 | MIT OR Apache-2.0 |
+| hashlink | 0.10.0 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hexane | 1.0.0-alpha.5 | MIT |
+| hmac | 0.12.1 | MIT OR Apache-2.0 |
 | http | 1.5.0 | MIT OR Apache-2.0 |
 | http-body | 1.1.0 | MIT |
 | http-body-util | 0.1.5 | MIT |
@@ -130,33 +221,50 @@ original or redistributable and be listed here.
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
 | leb128 | 0.2.7 | MIT OR Apache-2.0 |
 | libc | 0.2.190 | MIT OR Apache-2.0 |
+| libsqlite3-sys | 0.35.0 | MIT |
 | log | 0.4.34 | MIT OR Apache-2.0 |
 | matchit | 0.8.4 | MIT AND BSD-3-Clause |
 | memchr | 2.8.3 | Unlicense OR MIT |
 | mime | 0.3.17 | MIT OR Apache-2.0 |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
 | mio | 1.2.4 | MIT |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
+| password-hash | 0.5.0 | MIT OR Apache-2.0 |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
+| ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
+| r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | rand | 0.10.3 | MIT OR Apache-2.0 |
+| rand | 0.8.8 | MIT OR Apache-2.0 |
+| rand | 0.9.5 | MIT OR Apache-2.0 |
+| rand_chacha | 0.3.1 | MIT OR Apache-2.0 |
+| rand_chacha | 0.9.0 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
+| rand_core | 0.6.4 | MIT OR Apache-2.0 |
+| rand_core | 0.9.5 | MIT OR Apache-2.0 |
+| rusqlite | 0.37.0 | MIT |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 |
 | serde | 1.0.229 | MIT OR Apache-2.0 |
+| serde_bytes | 0.11.19 | MIT OR Apache-2.0 |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 |
 | serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 |
+| sha1 | 0.10.7 | MIT OR Apache-2.0 |
+| sha2 | 0.10.9 | MIT OR Apache-2.0 |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 |
+| simd-adler32 | 0.3.10 | MIT |
 | slab | 0.4.12 | MIT |
 | smallvec | 1.16.3 | MIT OR Apache-2.0 |
 | smol_str | 0.3.6 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
+| subtle | 2.6.1 | BSD-3-Clause |
 | syn | 2.0.119 | MIT OR Apache-2.0 |
 | syn | 3.0.9 | MIT OR Apache-2.0 |
 | sync_wrapper | 1.0.2 | Apache-2.0 |
@@ -165,17 +273,23 @@ original or redistributable and be listed here.
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tokio | 1.53.3 | MIT |
 | tokio-macros | 2.7.2 | MIT |
+| tokio-tungstenite | 0.29.0 | MIT |
 | tower | 0.5.3 | MIT |
 | tower-layer | 0.3.3 | MIT |
 | tower-service | 0.3.3 | MIT |
 | tracing | 0.1.44 | MIT |
 | tracing-attributes | 0.1.31 | MIT |
 | tracing-core | 0.1.36 | MIT |
+| tungstenite | 0.29.0 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
 | wasi | 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| wasip2 | 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 |
+| wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy-derive | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |

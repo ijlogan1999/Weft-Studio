@@ -7,6 +7,8 @@
 #include "weft/media/Decoder.h"
 
 #include <cmath>
+#include <fstream>
+#include <iterator>
 
 namespace weft::ui
 {
@@ -84,6 +86,7 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     projectParent = projectParent_;
     recent = project::RecentProjects (settingsFolder() / "recent-projects.txt");
     recent.load();
+    loadAccount();
     std::string error;
     const auto made = newProject (projectParent, {}, &error, true);
     jassert (made);
@@ -322,6 +325,8 @@ void Studio::tick()
             silentClockMs += 1000.0 * static_cast<double> (frames) / silentClock->config().sampleRate;
         }
     }
+    if (syncClient != nullptr)
+        syncClient->poll();
     stepBounce();
     flushPluginStates();
     if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
@@ -588,7 +593,8 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
-        case Cmd::projectSettings: case Cmd::audioSettings:
+        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::joinProject: case Cmd::signIn:
+        case Cmd::signOut: case Cmd::goOffline:
             break;
     }
     return std::nullopt;
@@ -796,8 +802,18 @@ bool Studio::perform (Cmd command)
         case Cmd::saveAs:
         case Cmd::projectSettings:
         case Cmd::audioSettings:
+        case Cmd::shareProject:
+        case Cmd::joinProject:
+        case Cmd::signIn:
             if (uiCommand)
                 uiCommand (command);
+            break;
+        case Cmd::signOut:
+            signOut();
+            break;
+        case Cmd::goOffline:
+            setOnline (! wantOnline);
+            setStatus (wantOnline ? "Back online." : "Working offline. Your edits are sent when you go back online.");
             break;
         case Cmd::newBus:
         {
@@ -1080,6 +1096,8 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     scratch = isScratch;
     everEdited = false;
     unsaved = false;
+    if (signedIn())
+        sess->setUser (relayAccount.userId);
     sess->onLocalChange = [this] (const doc::Bytes& change, std::int64_t time) {
         folder->log().append (change, time);
         unsaved = true;
@@ -1092,6 +1110,7 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     loadProjectMedia();
     syncEngine();
     loadViewState();
+    startSync();
     ++editCount;
     sendChangeMessage();
 }
@@ -1100,6 +1119,7 @@ void Studio::releaseProject()
 {
     if (sess == nullptr)
         return;
+    syncClient.reset();
     if (bounceJob != nullptr)
         cancelBounce();
     eng->stop();
@@ -1446,5 +1466,234 @@ bool Studio::deleteTrack (const Id& trackId)
     if (local.selectedTrack == trackId)
         local.selectedTrack.clear();
     return check (sess->deleteTrack (trackId));
+}
+// Collaboration (M10) ---------------------------------------------------------------------------
+
+namespace
+{
+bool sameRelay (const std::string& a, const std::string& b) { return collab::normalizeRelayUrl (a) == collab::normalizeRelayUrl (b); }
+} // namespace
+
+void Studio::loadAccount()
+{
+    std::ifstream f (accountFile(), std::ios::binary);
+    const doc::Bytes bytes ((std::istreambuf_iterator<char> (f)), std::istreambuf_iterator<char>());
+    if (bytes.empty())
+        return;
+    if (const auto v = doc::decode (bytes))
+        relayAccount = collab::Account::fromValue (*v);
+}
+
+void Studio::saveAccount()
+{
+    std::error_code ec;
+    fs::create_directories (accountFile().parent_path(), ec);
+    if (! relayAccount.signedIn())
+    {
+        fs::remove (accountFile(), ec);
+        return;
+    }
+    const auto bytes = doc::encode (relayAccount.toValue());
+    const auto tmp = accountFile().string() + ".tmp";
+    {
+        std::ofstream f (tmp, std::ios::binary | std::ios::trunc);
+        f.write (reinterpret_cast<const char*> (bytes.data()), static_cast<std::streamsize> (bytes.size()));
+    }
+    fs::rename (tmp, accountFile(), ec);
+}
+
+void Studio::signedInAs (const collab::Account& account)
+{
+    relayAccount = account;
+    saveAccount();
+    userDisplayName = account.displayName;
+    sess->setUser (account.userId);
+    startSync();
+    sendChangeMessage();
+}
+
+void Studio::signOut()
+{
+    syncClient.reset();
+    relayAccount = {};
+    saveAccount();
+    sess->setUser ("local");
+    sess->setAccess (commands::Session::Access::full);
+    status = "Signed out. The project keeps working on this computer.";
+    sendChangeMessage();
+}
+
+bool Studio::shared() const { return ! sess->relayUrl().empty(); }
+
+void Studio::startSync()
+{
+    syncClient.reset();
+    if (! shared() || ! signedIn() || ! sameRelay (sess->relayUrl(), relayAccount.relayUrl))
+        return;
+    collab::SyncOptions o;
+    o.account = relayAccount;
+    o.projectId = model().info.id;
+    o.clientId = "c" + juce::Uuid().toDashedString().removeCharacters ("-").toStdString();
+    o.pendingFile = folder->root() / "Cache" / "sync-pending.txt";
+    o.startOnline = wantOnline;
+    syncClient = std::make_unique<collab::SyncClient> (*sess, std::move (o));
+    syncClient->onRemoteChange = [this] { remoteChanged(); };
+    syncClient->onMessage = [this] (const std::string& m) { setStatus (m); };
+    syncClient->onStatusChange = [this] { sendChangeMessage(); };
+    syncClient->onAccountChange = [this] (const collab::Account& a) {
+        if (a.userId != relayAccount.userId)
+            return;
+        relayAccount = a;
+        saveAccount();
+    };
+}
+
+void Studio::remoteChanged()
+{
+    // Collaborators' changes: they're in the document now, so it needs saving, but they
+    // aren't this user's to undo or to recover (the relay keeps them).
+    selection.prune (model());
+    if (! editorRegion.empty() && model().region (editorRegion) == nullptr)
+        editorRegion.clear();
+    unsaved = true;
+    everEdited = true;
+    edited();
+}
+
+bool Studio::shareProject (std::string* error)
+{
+    auto fail = [error] (const std::string& m) {
+        if (error != nullptr)
+            *error = m;
+        return false;
+    };
+    if (! signedIn())
+        return fail ("Sign in to share this project.");
+    if (shared() && ! sameRelay (sess->relayUrl(), relayAccount.relayUrl))
+        return fail ("This project is shared on " + sess->relayUrl() + ". Sign in to that relay to sync it.");
+    const auto info = withRelay ([&] (collab::RelayApi& api) {
+        auto r = api.shareProject (model().info.id, model().info.name);
+        if (! r && error != nullptr)
+            *error = api.error();
+        return r;
+    });
+    if (! info)
+        return false;
+    if (! shared() && ! check (sess->setRelayUrl (relayAccount.relayUrl)))
+        return fail (sess->lastError());
+    save();
+    startSync();
+    status = "Shared on " + juce::String (relayAccount.relayUrl) + ".";
+    sendChangeMessage();
+    return true;
+}
+
+bool Studio::joinProject (const std::string& inviteLink, std::string* error, fs::path parent)
+{
+    auto fail = [error] (const std::string& m) {
+        if (error != nullptr)
+            *error = m;
+        return false;
+    };
+    const auto parsed = collab::parseInviteLink (inviteLink);
+    if (! parsed)
+        return fail ("That isn't a Weft invite link.");
+    if (! signedIn())
+        return fail ("Sign in to join a project.");
+    if (! sameRelay (parsed->first, relayAccount.relayUrl))
+        return fail ("This invite is for " + parsed->first + ". Sign in to that relay first.");
+    std::string problem;
+    const auto bytes = withRelay ([&] (collab::RelayApi& api) -> std::optional<doc::Bytes> {
+        const auto joined = api.acceptInvite (parsed->second);
+        if (! joined)
+        {
+            problem = api.error();
+            return std::nullopt;
+        }
+        auto b = api.fetchDocument (joined->projectId);
+        if (! b)
+            problem = api.error();
+        return b;
+    });
+    if (! bytes)
+        return fail (problem.empty() ? "Couldn't download the project." : problem);
+    auto document = doc::Document::load (*bytes);
+    if (! document)
+        return fail ("The project from the relay couldn't be read.");
+    if (const auto newer = project::checkSchemaVersion (*document))
+        return fail (*newer);
+    if (parent.empty())
+        parent = projectParent;
+    auto name = model::Projector::project (*document).info.name;
+    if (name.empty())
+        name = "Shared Project";
+    const auto projectId = model::Projector::project (*document).info.id;
+    fs::path dir;
+    for (int n = 1;; ++n)
+    {
+        dir = project::ProjectFolder::folderFor (parent, n == 1 ? name : name + " " + std::to_string (n));
+        if (! fs::exists (dir))
+            break;
+        // Joined before: open that copy; the sync brings it up to date.
+        project::ProjectFolder existing (dir);
+        if (auto opened = existing.open(); opened.document && model::Projector::project (*opened.document).info.id == projectId)
+        {
+            const auto result = openProject (dir, Recovery::recover);
+            return result.ok || fail (result.error);
+        }
+    }
+    project::ProjectFolder created (dir);
+    if (! created.create (error) || ! created.save (*document, {}, error))
+        return false;
+    const auto result = openProject (dir, Recovery::discard);
+    if (! result.ok)
+        return fail (result.error);
+    status = "Joined \"" + juce::String (name) + "\".";
+    sendChangeMessage();
+    return true;
+}
+
+juce::String Studio::syncStatus() const
+{
+    if (! shared())
+        return "Local only";
+    if (! signedIn())
+        return "Signed out \xe2\x80\x93 sign in to sync";
+    if (syncClient == nullptr)
+        return "On another relay";
+    return juce::String::fromUTF8 (syncClient->statusText().c_str());
+}
+
+juce::String Studio::syncDetails() const
+{
+    if (! shared())
+        return "This project is only on this computer. Share it to work on it with others.";
+    juce::String text = "Relay: " + juce::String (sess->relayUrl());
+    if (syncClient != nullptr)
+    {
+        const auto at = syncClient->lastSyncedAt();
+        text << "\nLast synced: " << (at > 0 ? juce::Time (at).toString (true, true) : juce::String ("not yet"));
+        text << "\nChanges pending: " << static_cast<int> (syncClient->pendingCount());
+        if (! syncClient->role().empty())
+            text << "\nYour role: " << collab::roleLabel (syncClient->role());
+    }
+    if (signedIn())
+        text << "\nSigned in as " << relayAccount.displayName << " (" << relayAccount.email << ")";
+    return text;
+}
+
+void Studio::setOnline (bool online)
+{
+    wantOnline = online;
+    if (syncClient != nullptr)
+        syncClient->setOnline (online);
+    sendChangeMessage();
+}
+
+juce::String Studio::readOnlyReason() const
+{
+    if (sess->access() == commands::Session::Access::full)
+        return {};
+    return sess->accessMessage().empty() ? juce::String ("This project is read-only here.") : juce::String (sess->accessMessage());
 }
 } // namespace weft::ui
