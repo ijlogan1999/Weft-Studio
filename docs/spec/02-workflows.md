@@ -350,6 +350,10 @@ A live write pass is local until stop; then the points arrive as one CRDT change
 - Clipping: if any sample exceeds 0 dBFS in the float mix, the completion notice says "Bounce clipped (peak +X.X dBFS)". Float WAVs keep the overs; integer formats clip.
 - Missing media during bounce (collaborator blob not downloaded yet): the dialog warns "N regions have media not yet downloaded. Wait / Bounce anyway". **Decision D-W9-1.**
 - Offline bounce output must be bit-identical between two runs with the same project and settings, provided all plugins are deterministic (built-in ones are). Dither uses a fixed seed per bounce for this reason. **Decision D-W9-2.**
+- **Decision D-W9-3 (tail end):** the tail is rendered until the output (both channels) has stayed below −90 dBFS for 200 ms, or 10 s past the range end. The file ends where that quiet stretch starts, never before the range end; the 200 ms only confirms the tail is over. So a project with nothing ringing past the range bounces to exactly the range even with Include tail on.
+- **Decision D-W9-4 (dither):** dither is TPDF of ±1 LSB at the target bit depth (the difference of two uniform values from a fixed-seed xorshift generator), added to the float mix after sample-rate conversion. The writer then rounds to the nearest step and clips integer formats at full scale. "Truncation" in AT-EXP-8 means this rounding without dither. In digital silence the dithered 16-bit output has an RMS of 0.5 LSB, about −96.3 dB relative to full scale; AT-EXP-8 checks −96.3 ± 2 dB (its "~−101 dBFS" was an estimate).
+- **Decision D-W9-5 (dialog details):** Range is typed as bar.beat.division.tick. Artist defaults to the computer user's full name until accounts arrive (M10). For D-W9-1 the warning sits in the dialog, the Bounce button reads "Bounce Anyway", and Cancel is the "Wait" choice. Add to project imports the first file written at the range start on a new audio track below the last one, and mutes that track. The cycle never loops a bounce: offline and real-time renders play the range straight through.
+- **Decision D-W9-6 (real-time-only plug-ins):** a VST3 plug-in reports that it can't render offline through the "OnlyRT" sub-category. Weft reads it from the plug-in list, and a bounce with such a plug-in on any track switches to real time and says which plug-in caused it.
 
 ---
 
@@ -449,6 +453,10 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W8-5 | Master pan is balance; master volume, pan, mute and inserts are automatable. |
 | D-W9-1 | Warn when bouncing with undownloaded media. |
 | D-W9-2 | Offline bounce is deterministic (fixed dither seed). |
+| D-W9-3 | Where the bounce tail ends. |
+| D-W9-4 | Dither: TPDF ±1 LSB, then rounding; noise level in AT-EXP-8. |
+| D-W9-5 | Bounce dialog details: range format, default Artist, missing-media choice, Add to project, no cycling. |
+| D-W9-6 | Real-time-only plug-ins are VST3 "OnlyRT". |
 | D-W10-1 | Media stored by content hash. |
 | D-W10-2 | Project is a folder. |
 | D-W10-3 | Plain Save doesn't create a history version. |

@@ -79,6 +79,7 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
                       .getSiblingFile (juce::String ("weft-plugin-scanner") + (juce::SystemStats::getOperatingSystemType() & juce::SystemStats::Windows ? ".exe" : ""))
                       .getFullPathName()
                       .toStdString();
+    userDisplayName = juce::SystemStats::getFullUserName().toStdString();
     fs::path dir;
     for (int n = 1;; ++n)
     {
@@ -318,6 +319,7 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 
 void Studio::tick()
 {
+    stepBounce();
     flushPluginStates();
     if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
         endPluginGesture();
@@ -336,6 +338,104 @@ void Studio::tick()
                 status = outcome->message;
             edited();
         }
+}
+
+// Bounce (M8) ------------------------------------------------------------------------
+
+engine::BounceSettings Studio::defaultBounceSettings() const
+{
+    engine::BounceSettings s;
+    s.range = engine::defaultBounceRange (model());
+    s.folder = projectRoot() / "Bounces";
+    s.name = model().info.name.empty() ? "Bounce" : model().info.name;
+    s.mp3 = std::nullopt; // WAV only until MP3 is ticked
+    return s;
+}
+
+engine::Mp3Format Studio::defaultMp3Format() const
+{
+    engine::Mp3Format mp3;
+    mp3.title = model().info.name;
+    mp3.artist = userDisplayName;
+    return mp3;
+}
+
+bool Studio::startBounce (const engine::BounceSettings& settings)
+{
+    if (bounceJob != nullptr)
+        return false;
+    if (settings.range.to <= settings.range.from)
+    {
+        setStatus ("The bounce range is empty.");
+        return false;
+    }
+    if (! settings.wav && ! settings.mp3)
+    {
+        setStatus ("Choose WAV, MP3 or both.");
+        return false;
+    }
+    eng->stop();
+    lastBounce.reset();
+    engine::BounceJob::Context ctx;
+    ctx.media = &pool;
+    ctx.plugins = [this] (const model::PluginInstance& p, bool instrument) { return host->create (p, instrument); };
+    ctx.projectFolder = projectRoot();
+    ctx.live = eng.get();
+    ctx.realtimeOnly = [this] (const model::PluginInstance& p) {
+        if (p.format != "vst3")
+            return false;
+        const auto* info = catalog->find (p.pluginUid);
+        return info != nullptr && engine::isRealtimeOnlyCategory (info->category);
+    };
+    bounceFrom = settings.range.from;
+    bounceJob = std::make_unique<engine::BounceJob> (model(), settings, std::move (ctx));
+    setStatus (bounceJob->notice().empty() ? juce::String ("Bouncing...") : juce::String (bounceJob->notice()));
+    return true;
+}
+
+void Studio::stepBounce()
+{
+    if (bounceJob == nullptr)
+        return;
+    // Offline: render for up to ~40 ms per tick so the window stays responsive.
+    const auto until = juce::Time::getMillisecondCounterHiRes() + 40.0;
+    bool more = bounceJob->step();
+    while (more && ! bounceJob->realtime() && juce::Time::getMillisecondCounterHiRes() < until)
+        more = bounceJob->step();
+    if (more)
+        return;
+    lastBounce = bounceJob->finish();
+    bounceJob.reset();
+    if (lastBounce->ok)
+        setStatus (juce::String (lastBounce->message));
+    else
+        setStatus (juce::String (lastBounce->error));
+    if (onBounceDone)
+        onBounceDone();
+}
+
+void Studio::cancelBounce()
+{
+    if (bounceJob == nullptr)
+        return;
+    bounceJob->cancel();
+    stepBounce();
+}
+
+bool Studio::addBounceToProject (const fs::path& file)
+{
+    auto outcome = engine::importFiles (*sess, pool, mediaDir(), decoders, { file }, { bounceFrom, {} });
+    if (outcome.regions.empty())
+    {
+        setStatus (juce::String (outcome.message));
+        return false;
+    }
+    if (const auto* r = model().region (outcome.regions.front()))
+        sess->setTrackMute (r->trackId, true);
+    selection.set (outcome.regions);
+    setStatus ("Added the bounce as a muted track.");
+    edited();
+    return true;
 }
 
 // Commands ---------------------------------------------------------------------------
@@ -484,7 +584,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::nextMarker: case Cmd::marker1: case Cmd::marker2: case Cmd::marker3: case Cmd::marker4: case Cmd::marker5: case Cmd::marker6:
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
-        case Cmd::toggleAutomation:
+        case Cmd::toggleAutomation: case Cmd::bounce:
             break;
     }
     return std::nullopt;
@@ -681,6 +781,7 @@ bool Studio::perform (Cmd command)
         case Cmd::about:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
+        case Cmd::bounce:
             if (uiCommand)
                 uiCommand (command);
             break;

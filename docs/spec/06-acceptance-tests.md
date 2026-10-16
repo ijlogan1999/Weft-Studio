@@ -364,6 +364,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-EXP-2** [E] · F-EXP-1 · WAV 16-bit, 24-bit, 32-float and sample rates 44.1/48/96 kHz each produce valid files readable by a reference decoder (libsndfile) with the right header; 44.1 kHz output from a 48 kHz project has duration equal within 1 sample.
 
+**Decision D-AT-2 (reference decoders):** libsndfile isn't one of Weft's dependencies, so AT-EXP-2 reads WAVs back with JUCE's WAV reader and AT-EXP-3/4 decode MP3s with Symphonia (a Rust decoder that honours the LAME gapless header). Neither shares code with Weft's writers.
+
 **AT-EXP-3** [E] · F-EXP-2 · MP3 320 kbps CBR of a 10 s sine is decodable by a reference decoder, duration 10 s ± 1 frame (after encoder delay compensation/LAME gapless header), spectral peak at the sine frequency, and ID3 Title/Artist tags match the dialog.
 
 **AT-EXP-4** [E] · F-EXP-2 · VBR quality 2 produces a valid MP3 with a Xing/LAME header.
@@ -575,3 +577,4 @@ These protect non-functional requirements stated in the brief and apply to all a
 | ID | Decision |
 |---|---|
 | D-AT-1 | Dropping a MIDI file into an empty project adopts its tempo map; otherwise the project tempo is kept. |
+| D-AT-2 | Reference decoders for bounce tests: JUCE (WAV) and Symphonia (MP3). |

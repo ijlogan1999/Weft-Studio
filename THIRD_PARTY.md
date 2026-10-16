@@ -25,33 +25,40 @@ original or redistributable and be listed here.
 | ↳ SheenBidi (inside JUCE) | | Apache-2.0 | yes | |
 | ↳ pslextensions (inside JUCE) | | LicenseRef-Public-Domain | yes | |
 
-## Rust crates linked into the app (via weft-crdt)
+## Rust crates linked into the app (via weft-ffi)
 
 | Crate | Version | License |
 |---|---|---|
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 |
 | automerge | 0.12.0 | MIT |
+| bitflags | 1.3.2 | MIT/Apache-2.0 |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 |
 | borsh | 1.8.1 | MIT OR Apache-2.0 |
+| bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | bytes | 1.12.1 | MIT |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
 | constant_time_eq | 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
+| core_detect | 1.0.0 | MIT/Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |
 | either | 1.19.0 | MIT OR Apache-2.0 |
+| encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hexane | 1.0.0-alpha.5 | MIT |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
+| lazy_static | 1.5.1 | MIT OR Apache-2.0 |
 | leb128 | 0.2.7 | MIT OR Apache-2.0 |
 | libc | 0.2.190 | MIT OR Apache-2.0 |
 | log | 0.4.34 | MIT OR Apache-2.0 |
+| mp3lame-sys | 0.1.11 | LGPL-3.0 |
+| multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
@@ -60,11 +67,17 @@ original or redistributable and be listed here.
 | rand | 0.10.3 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
+| scopeguard | 1.2.0 | MIT OR Apache-2.0 |
 | serde | 1.0.229 | MIT OR Apache-2.0 |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |
+| simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | smol_str | 0.3.6 | MIT OR Apache-2.0 |
+| symphonia | 0.5.5 | MPL-2.0 |
+| symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 |
+| symphonia-core | 0.5.5 | MPL-2.0 |
+| symphonia-metadata | 0.5.5 | MPL-2.0 |
 | syn | 2.0.119 | MIT OR Apache-2.0 |
 | syn | 3.0.9 | MIT OR Apache-2.0 |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 |

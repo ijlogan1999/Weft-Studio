@@ -1,0 +1,15 @@
+[package]
+name = "weft-ffi"
+version = "0.1.0"
+description = "The one static library the Weft Studio client links: weft-crdt and weft-codec together"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+weft-crdt = { path = "../weft-crdt" }
+weft-codec = { path = "../weft-codec" }

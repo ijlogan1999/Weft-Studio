@@ -6,9 +6,9 @@ online or offline, and every change merges.
 
 A weft is the thread woven across a loom; Weft weaves many people's ideas into one song.
 
-> **Status:** early development. Milestones 0 to 7 are done: recording, arranging, the
-> piano roll, a mixer with buses, built-in effects and VST3 plug-ins, and automation.
-> Bouncing and collaboration come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
+> **Status:** early development. Milestones 0 to 8 are done: recording, arranging, the
+> piano roll, a mixer with buses, built-in effects and VST3 plug-ins, automation, and
+> bouncing to WAV and MP3. Save/load dialogs and collaboration come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
 > and [the milestone reports](docs/reports).
 
 ## Support Weft
@@ -64,7 +64,9 @@ The `headless` preset skips JUCE and builds only the core, engine and CLI.
 | `engine/` | Real-time audio engine and device layer, including the `NullDevice` used in tests |
 | `app/` | The JUCE desktop application |
 | `cli/` | `weft-cli`, a headless driver for engine and sync tests |
-| `crates/weft-crdt/` | C API over the Automerge CRDT, linked into the app |
+| `crates/weft-crdt/` | C API over the Automerge CRDT |
+| `crates/weft-codec/` | C API over the LAME MP3 encoder, plus an MP3 decoder for tests |
+| `crates/weft-ffi/` | Bundles the two crates above into the one static library the app links |
 | `relay/` | Collaboration relay server (Rust) |
 | `tests/` | Unit, engine and plugin tests, plus the fixture VST3 plugins |
 | `docs/` | Spec, architecture and milestone reports |
