@@ -13,6 +13,13 @@ namespace weft::collab
 namespace
 {
 constexpr std::uint8_t frameSync = 4;
+constexpr std::uint8_t framePresence = 7;
+/** 05 §5 update rates. */
+constexpr std::int64_t presenceMinGapMs = 50;   // 20 Hz
+constexpr std::int64_t presenceDebounceMs = 100;
+constexpr std::int64_t playheadEveryMs = 2000;
+constexpr std::int64_t idleAfterMs = 2 * 60 * 1000;
+constexpr std::int64_t presenceGoneMs = 45 * 1000;
 /** Local changes go out at most every 50 ms (05 §3.3). */
 constexpr auto batchInterval = std::chrono::milliseconds (50);
 /** A region counts as "mine" for conflict messages while I edited it this recently. */
@@ -73,6 +80,9 @@ commands::Session::Access accessFor (const std::string& role)
 
 SyncClient::SyncClient (commands::Session& s, SyncOptions o) : session (s), options (std::move (o)), wantOnline (options.startOnline)
 {
+    if (! options.clock)
+        options.clock = commands::systemClockMs;
+    lastInput = options.clock();
     loadPending();
     listener = session.addLocalChangeListener ([this] (const doc::Bytes& change) {
         if (auto h = doc::changeHash (change))
@@ -244,6 +254,14 @@ void SyncClient::poll()
             handle (*event);
     }
     flushOutbox (false);
+    flushPresence (false);
+    // Offline for 45 s: collaborators' presence is cleared (05 §5).
+    if (! welcomed && disconnectedAt != 0 && ! others.empty() && options.clock() - disconnectedAt >= presenceGoneMs)
+    {
+        others.clear();
+        if (onPresenceChange)
+            onPresenceChange();
+    }
 }
 
 void SyncClient::handle (const doc::Value& e)
@@ -267,6 +285,28 @@ void SyncClient::handle (const doc::Value& e)
         outbox.clear();
         sendSync();
         updateState();
+        disconnectedAt = 0;
+        others.clear();
+        for (const auto& p : e["presence"].asList())
+            addCollaborator (p["clientId"].asString(), p["userId"].asString(), &p["state"].asBytes());
+        // Everyone else learns where we are at once.
+        presenceEverSent = false;
+        flushPresence (true);
+        if (onPresenceChange)
+            onPresenceChange();
+        if (onJoined)
+            onJoined();
+    }
+    else if (kind == "presence")
+    {
+        addCollaborator (e["clientId"].asString(), e["userId"].asString(), &e["state"].asBytes());
+        if (onPresenceChange)
+            onPresenceChange();
+    }
+    else if (kind == "blob")
+    {
+        if (onBlobAvailable)
+            onBlobAvailable (e["hash"].asString(), e["size"].asInt());
     }
     else if (kind == "sync" || kind == "change")
         applyRemote (e);
@@ -337,7 +377,26 @@ void SyncClient::handle (const doc::Value& e)
                 onMessage (member["displayName"].asString() + " joined the project.");
         }
         else if (notice == "member_removed")
+        {
             std::erase_if (memberList, [&] (const Collaborator& m) { return m.userId == user; });
+            std::erase_if (others, [&] (const auto& kv) { return kv.second.userId == user; });
+            if (onPresenceChange)
+                onPresenceChange();
+        }
+        else if (notice == "client_joined")
+        {
+            const auto client = e["clientId"].asString();
+            if (client != options.clientId)
+                addCollaborator (client, user, nullptr);
+            if (onPresenceChange)
+                onPresenceChange();
+        }
+        else if (notice == "client_left")
+        {
+            others.erase (e["clientId"].asString());
+            if (onPresenceChange)
+                onPresenceChange();
+        }
         else if (notice == "forbidden")
         {
             if (onMessage)
@@ -358,6 +417,8 @@ void SyncClient::handle (const doc::Value& e)
     {
         const bool wasWelcomed = welcomed;
         welcomed = false;
+        if (disconnectedAt == 0)
+            disconnectedAt = options.clock();
         if (! wantOnline)
             setState (SyncState::offline);
         else if (syncState == SyncState::removed || syncState == SyncState::signedOut || syncState == SyncState::updateRequired
@@ -485,5 +546,89 @@ void SyncClient::loadPending()
     while (std::getline (f, line))
         if (auto h = unhex (line); h && h->size() == 32)
             pending.insert (*h);
+}
+int SyncClient::colorOf (const std::string& userId) const
+{
+    for (const auto& m : memberList)
+        if (m.userId == userId)
+            return m.color;
+    return -1;
+}
+
+void SyncClient::addCollaborator (const std::string& clientId, const std::string& userId, const doc::Bytes* state)
+{
+    if (clientId.empty() || clientId == options.clientId)
+        return;
+    auto& r = others[clientId];
+    const auto now = options.clock();
+    r.clientId = clientId;
+    r.userId = userId;
+    r.displayName = displayName (userId);
+    r.color = std::max (0, colorOf (userId));
+    if (state != nullptr && ! state->empty())
+        if (const auto v = doc::decode (*state))
+        {
+            auto next = Presence::fromValue (*v);
+            if (! r.hasState || next.pointer != r.state.pointer)
+                r.pointerMovedAt = now;
+            r.state = std::move (next);
+            r.hasState = true;
+        }
+    r.receivedAt = now;
+}
+
+void SyncClient::noteInput()
+{
+    lastInput = options.clock();
+}
+
+void SyncClient::setPresence (const Presence& local)
+{
+    localPresence = local;
+    flushPresence (false);
+}
+
+void SyncClient::flushPresence (bool force)
+{
+    if (conn == nullptr || ! welcomed)
+        return;
+    const auto now = options.clock();
+    auto next = localPresence;
+    if (next.status == Presence::Status::active && now - lastInput >= idleAfterMs)
+        next.status = Presence::Status::idle;
+    if (! next.playhead.playing)
+        next.playhead.at = 0;
+    // A running playhead is extrapolated by viewers: its movement alone isn't a change.
+    auto unchanged = next;
+    unchanged.pointer = sentPresence.pointer;
+    if (next.playhead.playing && sentPresence.playhead.playing)
+        unchanged.playhead = sentPresence.playhead;
+    const bool otherChanged = ! (unchanged == sentPresence);
+    const bool pointerMoved = next.pointer != sentPresence.pointer;
+    const bool startedOrStopped = next.playhead.playing != sentPresence.playhead.playing;
+    const bool playheadDue = next.playhead.playing && now - lastPlayheadSend >= playheadEveryMs;
+    if (! otherChanged)
+        dirtySince = 0;
+    else if (dirtySince == 0)
+        dirtySince = now;
+    const bool gapOk = now - lastPresenceSend >= presenceMinGapMs;
+    const bool send = force || ! presenceEverSent || startedOrStopped || playheadDue || (pointerMoved && gapOk)
+                   || (otherChanged && gapOk && now - dirtySince >= presenceDebounceMs);
+    if (! send)
+        return;
+    if (next.playhead.playing)
+        lastPlayheadSend = now;
+    sentPresence = next;
+    presenceEverSent = true;
+    lastPresenceSend = now;
+    dirtySince = 0;
+    sendPresence();
+}
+
+void SyncClient::sendPresence()
+{
+    const auto bytes = doc::encode (sentPresence.toValue());
+    weft_conn_send (conn, framePresence, bytes.data(), bytes.size());
+    ++sentCount;
 }
 } // namespace weft::collab

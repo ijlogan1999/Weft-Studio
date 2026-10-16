@@ -9,6 +9,7 @@
 // Everything here runs on the caller's thread: call poll() regularly (the app does
 // it from a 30 Hz timer). The connection itself lives on a background thread.
 
+#include "weft/collab/Presence.h"
 #include "weft/collab/Relay.h"
 #include "weft/commands/Session.h"
 
@@ -55,6 +56,8 @@ struct SyncOptions
     bool startOnline = true;
     /** Test hook: delay added to each direction of the connection. */
     int oneWayDelayMs = 0;
+    /** Unix ms for presence (timestamps, rate limits, idle). Tests move it by hand. */
+    std::function<std::int64_t()> clock;
 };
 
 class SyncClient
@@ -95,6 +98,27 @@ public:
     std::function<void()> onStatusChange;
     /** New tokens to save (the access token was refreshed transparently). */
     std::function<void (const Account&)> onAccountChange;
+    /** BLOB_AVAILABLE: a blob finished uploading (05 §8.2). */
+    std::function<void (const std::string& hash, std::int64_t size)> onBlobAvailable;
+    /** Joined: the relay sent the role and the members (media sync starts here). */
+    std::function<void()> onJoined;
+
+    // Presence (05 §5) -----------------------------------------------------------------
+    /** This client's presence, as often as convenient: what's sent, and when, follows the
+        update rates of 05 §5 (pointer at most 20 Hz, playhead on start and every 2 s while
+        playing, the rest debounced 100 ms). The status turns idle after 2 minutes without noteInput(). */
+    void setPresence (const Presence& local);
+    /** Mouse or keyboard input: the user isn't idle. */
+    void noteInput();
+    /** Who else is connected, by client id. */
+    const std::map<std::string, RemotePresence>& collaborators() const noexcept { return others; }
+    std::function<void()> onPresenceChange;
+    /** Presence messages sent so far (tests check the rate). */
+    std::size_t presenceSent() const noexcept { return sentCount; }
+    std::int64_t now() const { return options.clock(); }
+    const std::string& clientId() const noexcept { return options.clientId; }
+    /** The collaborator color index of a member (05 §5), or -1. */
+    int colorOf (const std::string& userId) const;
 
 private:
     void handle (const doc::Value& event);
@@ -106,6 +130,9 @@ private:
     void setRole (const std::string& role);
     void savePending();
     void loadPending();
+    void sendPresence();
+    void flushPresence (bool force);
+    void addCollaborator (const std::string& clientId, const std::string& userId, const doc::Bytes* state);
     struct RegionMark
     {
         Ticks start = 0;
@@ -135,5 +162,12 @@ private:
     bool caughtUp = false;
     std::chrono::steady_clock::time_point lastFlush {};
     std::int64_t lastSynced = 0;
+
+    Presence localPresence, sentPresence;
+    bool presenceEverSent = false;
+    std::int64_t lastPresenceSend = 0, lastPlayheadSend = 0, dirtySince = 0, lastInput = 0;
+    std::size_t sentCount = 0;
+    std::map<std::string, RemotePresence> others;
+    std::int64_t disconnectedAt = 0; // our clock; collaborators are cleared 45 s after
 };
 } // namespace weft::collab

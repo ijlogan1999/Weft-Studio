@@ -29,6 +29,14 @@ public:
     explicit MediaSource (const media::AudioData& audio);
     /** Opens a WAV file. Files up to `residentFrames` long are read whole now. */
     static std::shared_ptr<MediaSource> open (const std::filesystem::path& file, std::int64_t residentFrames, std::string* error = nullptr);
+    /**
+        A WAV still downloading (05 §8.3, D-COL-11): `totalFrames` long, of which the
+        blocks already in the file are loaded. extend() loads more as they arrive. What
+        isn't here yet plays as silence without counting as an underrun.
+    */
+    static std::shared_ptr<MediaSource> openPartial (const std::filesystem::path& file, std::int64_t totalFrames, std::string* error = nullptr);
+    /** Loads the blocks that have arrived since (message thread). */
+    void extend();
     ~MediaSource();
     MediaSource (const MediaSource&) = delete;
     MediaSource& operator= (const MediaSource&) = delete;
@@ -38,6 +46,9 @@ public:
     std::int64_t numFrames() const noexcept { return frames; }
     std::int64_t numBlocks() const noexcept { return blocks; }
     bool resident() const noexcept { return isResident; }
+    bool partial() const noexcept { return isPartial; }
+    /** Frames from the start that can play: all of them, except while downloading. */
+    std::int64_t playableFrames() const noexcept { return playable.load (std::memory_order_acquire); }
 
     // Audio thread ---------------------------------------------------------------
     /** The block's samples for one channel, or null when the block isn't loaded. */
@@ -64,6 +75,9 @@ private:
     int channels = 0;
     std::int64_t frames = 0, blocks = 0;
     bool isResident = true;
+    bool isPartial = false;
+    std::atomic<std::int64_t> playable { 0 };
+    std::filesystem::path path;
     std::unique_ptr<std::atomic<Block*>[]> slots;
     std::mutex fileLock;
     media::WavReader reader;

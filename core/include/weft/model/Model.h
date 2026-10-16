@@ -80,6 +80,7 @@ struct PluginInstance
     bool bypass = false;
     Value state;                         // bytes, or a blob hash string when over 64 KB
     std::map<std::string, double> params; // ParamId -> normalized 0..1
+    UserId addedBy;                       // who inserted it (the Missing Plug-ins notice, F-COL-20)
 
     static PluginInstance fromValue (const Value& v);
     Value toValue() const;

@@ -8,6 +8,7 @@ namespace weft::engine
 void MediaSource::allocateSlots()
 {
     blocks = (frames + blockFrames - 1) / blockFrames;
+    playable.store (frames);
     slots = std::make_unique<std::atomic<Block*>[]> (static_cast<std::size_t> (std::max<std::int64_t> (1, blocks)));
     for (std::int64_t i = 0; i < std::max<std::int64_t> (1, blocks); ++i)
         slots[static_cast<std::size_t> (i)].store (nullptr);
@@ -58,6 +59,48 @@ std::shared_ptr<MediaSource> MediaSource::open (const std::filesystem::path& fil
     return source;
 }
 
+std::shared_ptr<MediaSource> MediaSource::openPartial (const std::filesystem::path& file, std::int64_t totalFrames, std::string* error)
+{
+    std::shared_ptr<MediaSource> source (new MediaSource());
+    if (! source->reader.open (file, error))
+        return nullptr;
+    const auto& info = source->reader.info();
+    source->rate = info.sampleRate;
+    source->channels = info.channels;
+    source->frames = std::max (totalFrames, info.frames);
+    if (source->channels <= 0)
+    {
+        if (error != nullptr)
+            *error = "The file has no audio channels.";
+        return nullptr;
+    }
+    source->path = file;
+    source->isPartial = true;
+    source->allocateSlots();
+    source->playable.store (0);
+    source->extend();
+    return source;
+}
+
+void MediaSource::extend()
+{
+    if (! isPartial)
+        return;
+    std::int64_t available = 0;
+    {
+        const std::scoped_lock lock (fileLock);
+        if (! reader.open (path))
+            return;
+        available = std::min (reader.info().frames, frames);
+    }
+    // Whole blocks only (and the last one once the file is complete): a loaded block never changes.
+    const auto ready = available >= frames ? blocks : available / blockFrames;
+    std::int64_t b = 0;
+    while (b < ready && (isLoaded (b) || load (b)))
+        ++b;
+    playable.store (b >= blocks ? frames : b * blockFrames, std::memory_order_release);
+}
+
 MediaSource::~MediaSource()
 {
     if (! slots)
@@ -73,7 +116,9 @@ float MediaSource::sample (int channel, std::int64_t frame, bool& missing) const
     const auto* b = block (std::min (channel, channels - 1), frame / blockFrames);
     if (b == nullptr)
     {
-        missing = true;
+        // Not downloaded yet is silence, not a disk that can't keep up (D-COL-11).
+        if (frame < playableFrames())
+            missing = true;
         return 0.0f;
     }
     return b[frame % blockFrames];

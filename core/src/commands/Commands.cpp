@@ -928,6 +928,7 @@ std::optional<Id> Session::addInsert (const Id& trackId, model::PluginInstance p
     {
         if (plugin.id.empty())
             plugin.id = newId();
+        plugin.addedBy = userId;
         const auto at = index.value_or (t->strip.inserts.size());
         return runCreate ("Add Plug-in", plugin.id, [&] (TxnWriter& w) { return wrote (w.listInsert (insertsPath (trackId), at, plugin.toValue(), plugin.id)); });
     }
@@ -1135,6 +1136,7 @@ std::optional<Id> Session::replaceInsert (const Id& trackId, const Id& pluginId,
     }
     if (plugin.id.empty())
         plugin.id = newId();
+    plugin.addedBy = userId;
     const auto at = static_cast<std::size_t> (it - t->strip.inserts.begin());
     return runCreate ("Replace Plug-in", plugin.id, [&] (TxnWriter& w) {
         return wrote (w.listRemove (insertsPath (trackId), pluginId) && w.listInsert (insertsPath (trackId), at, plugin.toValue(), plugin.id));
@@ -1156,6 +1158,7 @@ std::optional<Id> Session::setInstrument (const Id& trackId, model::PluginInstan
     }
     if (plugin.id.empty())
         plugin.id = newId();
+    plugin.addedBy = userId;
     // Replacing the instrument keeps the track's regions, inserts and sends (F-MIX-7).
     return runCreate ("Set Instrument", plugin.id, [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "strip" / "instrument", plugin.toValue())); });
 }

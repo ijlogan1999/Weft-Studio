@@ -1110,7 +1110,8 @@ void Engine::mixSegments (const ChannelPlan& channel, std::int64_t from, int fra
                 const float* p0 = source.block (0, blockIndex);
                 if (p0 == nullptr)
                 {
-                    underrun = true;
+                    if (k < source.playableFrames())
+                        underrun = true; // past the playable part: still downloading (D-COL-11)
                     t += run;
                     continue;
                 }

@@ -2,8 +2,11 @@
 # client that keeps a Session in step with the relay. No JUCE, so weft-cli and the
 # [S] tests use it too.
 add_library(weft_collab STATIC
+    src/MediaSync.cpp
+    src/Presence.cpp
     src/Relay.cpp
     src/SyncClient.cpp
+    src/Transfers.cpp
 )
 add_library(weft::collab ALIAS weft_collab)
 target_include_directories(weft_collab PUBLIC include)
