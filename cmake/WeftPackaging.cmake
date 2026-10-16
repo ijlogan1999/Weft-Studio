@@ -16,7 +16,8 @@ install(TARGETS WeftStudio weft-plugin-scanner RUNTIME DESTINATION "${weft_bin_d
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/THIRD_PARTY.md"
               "${PROJECT_BINARY_DIR}/app/ThirdPartyNotices.txt"
         DESTINATION "${weft_doc_dir}" COMPONENT app)
-get_target_property(weft_exe WeftStudio OUTPUT_NAME) # "Weft Studio"
+# The plain name: OUTPUT_NAME holds a generator expression, which CPack variables never expand.
+get_target_property(weft_exe WeftStudio JUCE_PRODUCT_NAME) # "Weft Studio"
 
 # The Visual C++ runtime goes beside the app, so a fresh Windows install needs nothing else.
 if(MSVC)
@@ -43,6 +44,8 @@ if(WIN32)
     if(WEFT_MAKENSIS)
         list(APPEND weft_generators NSIS)
     endif()
+    set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64") # a 64-bit app: Program Files, not Program Files (x86)
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".") # shortcuts default to bin/, but the app sits at the top
     set(CPACK_NSIS_PACKAGE_NAME "Weft Studio")
     set(CPACK_NSIS_DISPLAY_NAME "Weft Studio")
     set(CPACK_NSIS_INSTALLED_ICON_NAME "${weft_exe}.exe")
