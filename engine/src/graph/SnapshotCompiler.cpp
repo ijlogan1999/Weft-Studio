@@ -1,5 +1,6 @@
 #include "weft/engine/graph/EngineSnapshot.h"
 
+#include "weft/model/Automation.h"
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
@@ -338,15 +339,141 @@ std::vector<InsertPlan> planInserts (const model::ChannelStrip& strip, const Eff
         if (auto slot = effects.find (p.id))
         {
             latency += std::max (0, slot->processor->latencySamples());
-            out.push_back ({ std::move (slot) });
+            out.push_back ({ std::move (slot), p.id });
         }
     }
     return out;
 }
 } // namespace
 
+bool followsAutomation (const model::Track& track) noexcept { return track.automationMode != "off"; }
+
+double AutomationPlan::laneValue (std::int64_t at) const noexcept
+{
+    if (nodes.empty())
+        return staticValue;
+    if (at <= nodes.front().at)
+        return nodes.front().value;
+    if (at >= nodes.back().at)
+        return nodes.back().value;
+    const auto next = std::upper_bound (nodes.begin(), nodes.end(), at, [] (std::int64_t t, const AutomationNode& n) { return t < n.at; });
+    const auto& b = *next;
+    const auto& a = *std::prev (next);
+    if (b.at <= a.at)
+        return b.value;
+    const auto t = static_cast<double> (at - a.at) / static_cast<double> (b.at - a.at);
+    return a.value + (b.value - a.value) * automation::shape (t, a.curve);
+}
+
+double AutomationPlan::valueAt (std::int64_t at, int frames) const noexcept
+{
+    auto& s = *slot;
+    double v = s.touched.load (std::memory_order_acquire);
+    if (std::isnan (v))
+    {
+        v = laneValue (at);
+        if (s.glide.exchange (false, std::memory_order_acq_rel))
+        {
+            const auto from = s.applied.load (std::memory_order_relaxed);
+            if (! std::isnan (from))
+            {
+                s.glideFrom = from;
+                s.glideLength = s.glideLeft = std::max<std::int64_t> (1, glideFrames);
+            }
+        }
+        if (s.glideLeft > 0)
+        {
+            const auto x = static_cast<double> (s.glideLeft) / static_cast<double> (s.glideLength);
+            v += (s.glideFrom - v) * x;
+            s.glideLeft = std::max<std::int64_t> (0, s.glideLeft - frames);
+        }
+    }
+    else
+        s.glideLeft = 0;
+    s.applied.store (v, std::memory_order_relaxed);
+    return v;
+}
+
+namespace
+{
+/**
+    The automation plans of a channel (W-8): every lane the track's mode follows, plus targets a
+    control is touching. Targets that no longer exist (a removed send or plug-in) are skipped.
+*/
+std::vector<AutomationPlan> planAutomation (const model::ProjectModel& model, const model::Track& track, const EngineSnapshot& snap, MixerState& mixer,
+                                            const std::set<std::string>& touched, const std::vector<SendPlan>& sends,
+                                            const std::vector<InsertPlan>& inserts, const InstrumentSlot* instrument)
+{
+    std::map<std::string, std::pair<model::AutomationTarget, const model::AutomationLane*>> targets;
+    if (followsAutomation (track))
+        for (const auto& [laneId, lane] : model.automationLanes)
+            if (lane->trackId == track.id && ! lane->points.empty())
+                targets[lane->target.key()] = { lane->target, lane.get() };
+    const auto prefix = track.id + "|";
+    for (auto it = touched.lower_bound (prefix); it != touched.end() && it->starts_with (prefix); ++it)
+    {
+        const auto key = it->substr (prefix.size());
+        if (! targets.contains (key))
+            if (auto target = model::AutomationTarget::fromKey (key))
+                targets[key] = { *target, nullptr };
+    }
+
+    std::vector<AutomationPlan> out;
+    for (const auto& [key, entry] : targets)
+    {
+        const auto& [target, lane] = entry;
+        AutomationPlan plan;
+        double fallback = 0;
+        if (target.kind == "volume")
+            plan.kind = AutomationKind::volume;
+        else if (target.kind == "pan")
+            plan.kind = AutomationKind::pan;
+        else if (target.kind == "mute")
+            plan.kind = AutomationKind::mute;
+        else if (target.kind == "sendLevel")
+        {
+            plan.kind = AutomationKind::send;
+            for (std::size_t i = 0; i < sends.size(); ++i)
+                if (sends[i].sendId == target.sendId)
+                    plan.index = static_cast<int> (i);
+            if (plan.index < 0)
+                continue; // removed, muted or looping: nothing to automate
+        }
+        else if (target.kind == "pluginParam")
+        {
+            plan.kind = AutomationKind::param;
+            const Processor* processor = nullptr;
+            if (instrument != nullptr && track.strip.instrument && track.strip.instrument->id == target.pluginId)
+                processor = &instrument->instrument();
+            for (std::size_t i = 0; i < inserts.size(); ++i)
+                if (inserts[i].pluginId == target.pluginId)
+                {
+                    plan.index = static_cast<int> (i);
+                    processor = inserts[i].slot->processor.get();
+                }
+            if (processor == nullptr)
+                continue; // removed or bypassed
+            plan.param = processor->parameterIndex (target.paramId);
+            if (plan.param < 0)
+                continue;
+            fallback = processor->parameter (plan.param);
+        }
+        else
+            continue;
+        plan.staticValue = automation::staticValue (track, target, fallback);
+        if (lane != nullptr)
+            for (const auto& p : automation::sortedPoints (*lane))
+                plan.nodes.push_back ({ snap.tickToSample (p.pos), p.value, p.curve });
+        plan.glideFrames = std::max<std::int64_t> (1, std::llround (AutomationSlot::glideSeconds * snap.sampleRate));
+        plan.slot = mixer.automation (track.id, key);
+        out.push_back (std::move (plan));
+    }
+    return out;
+}
+} // namespace
+
 std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& model, double deviceRate, int maxBlock, const MediaPool& mediaPool,
-                                                 MixerRacks racks, const LocalMixState& local)
+                                                 MixerRacks racks, const LocalMixState& local, const std::set<std::string>& touchedTargets)
 {
     const auto& instruments = racks.instruments;
     auto snap = std::make_unique<EngineSnapshot>();
@@ -366,7 +493,11 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
     snap->masterState = racks.mixer.channel (model.info.masterTrackId);
     if (const auto* master = model.track (model.info.masterTrackId))
     {
-        snap->masterGain = master->mute ? 0.0f : dbToGain (master->strip.volumeDb);
+        snap->masterGain = dbToGain (master->strip.volumeDb);
+        snap->masterAudible = ! master->mute;
+        const auto [ml, mr] = balanceGains (master->strip.pan);
+        snap->masterPanLeft = ml;
+        snap->masterPanRight = mr;
         int unused = 0;
         snap->masterInserts = planInserts (master->strip, racks.effects, unused);
     }
@@ -451,7 +582,8 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         const auto [l, r] = plan.sourceChannels == 1 ? panGains (track->strip.pan) : balanceGains (track->strip.pan);
         plan.panLeft = l;
         plan.panRight = r;
-        plan.audible = ! track->mute && (local.soloed.empty() || audibleBySolo.contains (track->id));
+        plan.soloAudible = local.soloed.empty() || audibleBySolo.contains (track->id);
+        plan.audible = ! track->mute && plan.soloAudible;
         plan.instrument = track->kind == model::TrackKind::instrument ? instruments.find (track->id) : nullptr;
         plan.armed = local.armed.contains (track->id) && track->kind != model::TrackKind::bus;
         plan.monitor = monitorFromString (track->monitor);
@@ -481,7 +613,7 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
             {
                 const auto target = snap->channelIndex (busId);
                 if (target >= 0 && ! send->muted)
-                    plan.sends.push_back ({ target, dbToGain (send->levelDb), send->pre, nullptr, 0 });
+                    plan.sends.push_back ({ target, dbToGain (send->levelDb), send->pre, nullptr, 0, send->id });
             }
     }
 
@@ -512,14 +644,15 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         for (auto& send : plan.sends)
         {
             send.delay = std::max (0, required (send.target) - plan.latency);
-            std::string sendId;
-            if (track != nullptr)
-                for (const auto& s : track->strip.sends)
-                    if (snap->channelIndex (s.targetBusId) == send.target)
-                        sendId = s.id;
-            send.delayLine = plan.state->delayFor ("send:" + sendId, send.delay);
+            send.delayLine = plan.state->delayFor ("send:" + send.sendId, send.delay);
         }
+        if (track != nullptr)
+            plan.automation = planAutomation (model, *track, *snap, racks.mixer, touchedTargets, plan.sends, plan.inserts, plan.instrument.get());
+        plan.automatesInserts = std::any_of (plan.automation.begin(), plan.automation.end(),
+                                             [] (const AutomationPlan& a) { return a.kind == AutomationKind::param && a.index >= 0; });
     }
+    if (const auto* master = model.track (model.info.masterTrackId))
+        snap->masterAutomation = planAutomation (model, *master, *snap, racks.mixer, touchedTargets, {}, snap->masterInserts, nullptr);
 
     snap->buffers.assign (snap->channels.size() * 2, std::vector<float> (static_cast<std::size_t> (snap->maxBlock)));
     return snap;

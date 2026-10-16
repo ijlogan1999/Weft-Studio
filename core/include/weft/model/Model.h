@@ -285,6 +285,8 @@ struct AutomationTarget
 
     /** Identity of the target, for "one lane per (track, target)" (D-DM-11). */
     std::string key() const;
+    /** The target a key() came from, if it parses. */
+    static std::optional<AutomationTarget> fromKey (const std::string& key);
     static AutomationTarget fromValue (const Value& v);
     Value toValue() const;
 };

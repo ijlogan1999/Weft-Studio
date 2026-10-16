@@ -377,3 +377,38 @@ TEST_CASE ("AT-PRL-13 with TestSynth: audition sounds at its velocity for at mos
     CHECK (peak (out, 2000, 40000) == Catch::Approx (90.0 / 127.0).epsilon (0.01));
     CHECK (peak (out, 49000, 23000) < 1e-4f); // off after 1 s
 }
+
+TEST_CASE ("AT-PLG-10 AT-AUT-6 with TestGain: an automation lane changes the hosted plug-in's output at the right sample", "[E][automation][vst3][AT-PLG-10]")
+{
+    Hosting hosting;
+    Rig rig (256);
+    rig.engine.setPluginFactory (hosting.factory());
+    addMedia (rig, "b3:dc", std::vector<float> (static_cast<std::size_t> (2 * barSamples), 0.25f));
+    const auto t = rig.session.createTrack (TrackKind::audio, "A", 2).value();
+    REQUIRE (rig.session.createAudioRegion (t, 0, "b3:dc", 0, 2 * barSamples));
+    auto gain = hosting.instance ("TestGain");
+    std::string paramId;
+    {
+        auto probe = hosting.host.create (gain, false);
+        REQUIRE (probe);
+        paramId = probe->parameters()[static_cast<std::size_t> (paramNamed (*probe, "Gain"))].id;
+    }
+    const auto plugin = rig.session.addInsert (t, gain).value();
+    model::AutomationTarget target;
+    target.kind = "pluginParam";
+    target.pluginId = plugin;
+    target.paramId = paramId;
+    const auto normalized = [] (double db) { return (db + 60.0) / 72.0; };
+    // 0 dB, then +6 dB from tick 3,845 (sample 96,125, inside a 256-frame block).
+    REQUIRE (rig.session.addAutomationPoint (t, target, 0, normalized (0.0)));
+    REQUIRE (rig.session.addAutomationPoint (t, target, barTicks + 4, normalized (0.0)));
+    REQUIRE (rig.session.addAutomationPoint (t, target, barTicks + 5, normalized (6.0)));
+    rig.sync();
+    rig.engine.play (0);
+    const auto out = rig.run (barSamples + 2000, 256);
+    const auto plusSix = 0.25 * std::pow (10.0, 6.0 / 20.0);
+    CHECK (out[1000] == Catch::Approx (0.25).margin (1e-4));
+    CHECK (out[96124] == Catch::Approx (0.25).margin (1e-4));
+    CHECK (out[96125] == Catch::Approx (plusSix).margin (1e-3));
+    CHECK (out[97000] == Catch::Approx (plusSix).margin (1e-3));
+}
