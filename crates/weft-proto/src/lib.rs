@@ -240,7 +240,7 @@ impl Message {
 
 /// Splits concatenated 32-byte hashes.
 pub fn split_hashes(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
-    bytes.chunks_exact(32)
+    bytes.as_chunks::<32>().0.iter().map(|c| c.as_slice())
 }
 
 #[cfg(test)]
