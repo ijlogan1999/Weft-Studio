@@ -22,13 +22,25 @@ class JuceAudioDevice final : public AudioDevice
 public:
     /** Driver types available on this machine, e.g. "Windows Audio", "ASIO". */
     static std::vector<std::string> driverTypes();
-    /** Output device names for a driver type. */
-    static std::vector<std::string> deviceNames (const std::string& driverType);
+    /** Output (or input) device names for a driver type. */
+    static std::vector<std::string> deviceNames (const std::string& driverType, bool inputs = false);
     /** The default driver type: WASAPI shared on Windows, the platform default elsewhere. */
     static std::string defaultDriverType();
+    /** The device a driver type picks when none is named. */
+    static std::string defaultDeviceName (const std::string& driverType, bool input = false);
 
-    /** Empty strings pick the default driver type and its default device. */
-    explicit JuceAudioDevice (std::string driverType = {}, std::string deviceName = {});
+    /** What a device can run at (Audio Setup, W-0 step 3-4). */
+    struct Capabilities
+    {
+        std::vector<double> sampleRates;
+        std::vector<int> bufferSizes;
+        double currentRate = 0;
+        int defaultBufferSize = 0;
+    };
+    static Capabilities capabilities (const std::string& driverType, const std::string& output, const std::string& input = {});
+
+    /** Empty strings pick the default driver type and its default devices; an empty input uses the output's name. */
+    explicit JuceAudioDevice (std::string driverType = {}, std::string deviceName = {}, std::string inputName = {});
     ~JuceAudioDevice() override;
 
     std::string name() const override;

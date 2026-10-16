@@ -24,7 +24,7 @@ juce::OwnedArray<juce::AudioIODeviceType> createTypes()
 
 struct JuceAudioDevice::Impl final : juce::AudioIODeviceCallback
 {
-    std::string typeName, deviceName;
+    std::string typeName, deviceName, inputName;
     juce::OwnedArray<juce::AudioIODeviceType> types;
     std::unique_ptr<juce::AudioIODevice> device;
     DeviceConfig cfg;
@@ -90,14 +90,47 @@ std::vector<std::string> JuceAudioDevice::driverTypes()
     return names;
 }
 
-std::vector<std::string> JuceAudioDevice::deviceNames (const std::string& driverType)
+std::vector<std::string> JuceAudioDevice::deviceNames (const std::string& driverType, bool inputs)
 {
     std::vector<std::string> names;
     for (auto* t : createTypes())
         if (t->getTypeName().toStdString() == driverType)
-            for (const auto& n : t->getDeviceNames (false))
+            for (const auto& n : t->getDeviceNames (inputs))
                 names.push_back (n.toStdString());
     return names;
+}
+
+std::string JuceAudioDevice::defaultDeviceName (const std::string& driverType, bool input)
+{
+    for (auto* t : createTypes())
+        if (t->getTypeName().toStdString() == driverType)
+        {
+            const auto names = t->getDeviceNames (input);
+            const auto index = t->getDefaultDeviceIndex (input);
+            return index >= 0 && index < names.size() ? names[index].toStdString() : std::string();
+        }
+    return {};
+}
+
+JuceAudioDevice::Capabilities JuceAudioDevice::capabilities (const std::string& driverType, const std::string& output, const std::string& input)
+{
+    Capabilities caps;
+    for (auto* t : createTypes())
+    {
+        if (t->getTypeName().toStdString() != driverType)
+            continue;
+        const auto in = t->hasSeparateInputsAndOutputs() ? juce::String (input.empty() ? output : input) : juce::String (output);
+        std::unique_ptr<juce::AudioIODevice> d (t->createDevice (output, in));
+        if (d == nullptr)
+            break;
+        for (const auto r : d->getAvailableSampleRates())
+            caps.sampleRates.push_back (r);
+        for (const auto b : d->getAvailableBufferSizes())
+            caps.bufferSizes.push_back (b);
+        caps.currentRate = d->getCurrentSampleRate();
+        caps.defaultBufferSize = d->getDefaultBufferSize();
+    }
+    return caps;
 }
 
 std::string JuceAudioDevice::defaultDriverType()
@@ -110,10 +143,11 @@ std::string JuceAudioDevice::defaultDriverType()
     return types.empty() ? std::string() : types.front();
 }
 
-JuceAudioDevice::JuceAudioDevice (std::string driverType, std::string device) : impl (std::make_unique<Impl>())
+JuceAudioDevice::JuceAudioDevice (std::string driverType, std::string device, std::string input) : impl (std::make_unique<Impl>())
 {
     impl->typeName = driverType.empty() ? defaultDriverType() : std::move (driverType);
     impl->deviceName = std::move (device);
+    impl->inputName = std::move (input);
 }
 
 JuceAudioDevice::~JuceAudioDevice() { close(); }
@@ -140,7 +174,8 @@ bool JuceAudioDevice::open (const DeviceConfig& config)
     const auto outputs = type->getDeviceNames (false);
     const auto inputs = type->getDeviceNames (true);
     auto outName = impl->deviceName.empty() ? outputs[type->getDefaultDeviceIndex (false)] : juce::String (impl->deviceName);
-    auto inName = impl->deviceName.empty() ? inputs[type->getDefaultDeviceIndex (true)] : juce::String (impl->deviceName);
+    auto inName = ! impl->inputName.empty() ? juce::String (impl->inputName)
+                  : impl->deviceName.empty() ? inputs[type->getDefaultDeviceIndex (true)] : juce::String (impl->deviceName);
     if (! type->hasSeparateInputsAndOutputs())
         inName = outName;
     impl->device.reset (type->createDevice (outName, inName));

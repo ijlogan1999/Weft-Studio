@@ -732,6 +732,7 @@ void Engine::setRecordCapacitySeconds (double seconds) { recordSeconds = std::ma
 void Engine::prepare (const DeviceConfig& config)
 {
     const double oldRate = rate;
+    const int oldBlock = maxBlock;
     rate = config.sampleRate;
     maxBlock = config.maxBlockSize;
     numInputs = config.numInputChannels;
@@ -760,7 +761,8 @@ void Engine::prepare (const DeviceConfig& config)
         published.position.store (position);
     }
     running = true;
-    if (lastModel && (! live || live->sampleRate != rate))
+    // Snapshot buffers are sized for the block: a new device with bigger blocks needs new ones.
+    if (lastModel && (! live || live->sampleRate != rate || maxBlock != oldBlock))
         refresh();
     if (diskThread)
         streamer.startThread();

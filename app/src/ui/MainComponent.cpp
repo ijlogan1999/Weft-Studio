@@ -1,8 +1,10 @@
 #include "MainComponent.h"
 
 #include "AboutPanel.h"
+#include "AudioSetup.h"
 #include "BounceDialog.h"
 #include "NewTrackDialog.h"
+#include "ProjectDialogs.h"
 
 namespace weft::ui
 {
@@ -31,14 +33,35 @@ void StatusBar::paint (juce::Graphics& g)
     g.drawText (studio.status, r, juce::Justification::centredLeft, true);
 }
 
+// No-audio banner -------------------------------------------------------------------------------
+
+NoAudioBanner::NoAudioBanner()
+{
+    setTitle ("No audio device");
+    message.setText ("No audio device: playback is silent and recording is off.", juce::dontSendNotification);
+    describe (setup, "Audio Setup...", "Choose an audio device");
+    addAndMakeVisible (message);
+    addAndMakeVisible (setup);
+}
+
+void NoAudioBanner::paint (juce::Graphics& g) { g.fillAll (colour (Token::warning).withAlpha (0.25f)); }
+
+void NoAudioBanner::resized()
+{
+    auto r = getLocalBounds().reduced (10, 3);
+    setup.setBounds (r.removeFromRight (120));
+    message.setBounds (r);
+}
+
 // Main component ------------------------------------------------------------------------------
 
 MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s), plugins (s)
 {
     setTitle ("Weft Studio");
-    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status })
+    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner })
         addChildComponent (c);
+    banner.setup.onClick = [this] { run (Cmd::audioSettings); };
     control.setVisible (true);
     tracksArea.setVisible (true);
     status.setVisible (true);
@@ -59,6 +82,18 @@ MainComponent::~MainComponent()
 
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    const auto title = studio.windowTitle();
+    if (getName() != title)
+    {
+        setName (title);
+        if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+            window->setName (title);
+    }
+    if (banner.isVisible() == studio.audioRunning())
+    {
+        banner.setVisible (! studio.audioRunning());
+        resized();
+    }
     inspectorPanel.setVisible (studio.layout.inspector);
     sidePanel.setVisible (studio.layout.sidePanel);
     bottomArea.setVisible (studio.layout.bottom != BottomTab::none);
@@ -81,6 +116,8 @@ void MainComponent::resized()
     auto r = getLocalBounds();
     control.setBounds (r.removeFromTop (52));
     status.setBounds (r.removeFromBottom (StatusBar::height));
+    if (banner.isVisible())
+        banner.setBounds (r.removeFromTop (NoAudioBanner::height));
     const auto& l = studio.layout;
     if (l.inspector)
         inspectorPanel.setBounds (r.removeFromLeft (std::clamp (l.inspectorWidth, 180, 420)));
@@ -156,6 +193,158 @@ void MainComponent::handleUiCommand (Cmd command)
         deleteSelectedTrack();
     else if (command == Cmd::bounce)
         BounceDialog::show (studio, this);
+    else if (command == Cmd::newProject)
+        whenSaved ([this] {
+            if (desktopWindows())
+                launchDialog (std::make_unique<NewProjectDialog> (studio), "New Project", this);
+        });
+    else if (command == Cmd::openProject)
+        whenSaved ([this] { chooseProjectToOpen(); });
+    else if (command == Cmd::saveAs)
+    {
+        if (desktopWindows())
+            launchDialog (std::make_unique<SaveAsDialog> (studio), "Save As", this);
+    }
+    else if (command == Cmd::projectSettings)
+    {
+        if (desktopWindows())
+            launchDialog (std::make_unique<ProjectSettingsDialog> (studio), "Project Settings", this);
+    }
+    else if (command == Cmd::audioSettings && devices != nullptr && desktopWindows())
+        launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
+}
+
+// Projects ------------------------------------------------------------------------------------
+
+void MainComponent::ask (const juce::String& title, const juce::String& text, const juce::String& first, const juce::String& second,
+                         std::function<void (int)> answer)
+{
+    projectAsked = text;
+    projectAnswer = std::move (answer);
+    if (! desktopWindows())
+        return; // headless: answerProject() stands in for the buttons
+    projectAlert = std::make_unique<juce::AlertWindow> (title, text, juce::MessageBoxIconType::QuestionIcon, this);
+    projectAlert->addButton (first, 1, juce::KeyPress (juce::KeyPress::returnKey));
+    projectAlert->addButton (second, 2);
+    projectAlert->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    projectAlert->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<MainComponent> (this)] (int result) {
+                                       if (safe != nullptr)
+                                           safe->answerProject (result);
+                                   }),
+                                   false);
+}
+
+void MainComponent::answerProject (int choice)
+{
+    auto answer = std::move (projectAnswer);
+    projectAnswer = nullptr;
+    projectAsked.clear();
+    if (projectAlert != nullptr)
+    {
+        projectAlert->exitModalState (0);
+        projectAlert.reset();
+    }
+    if (answer)
+        answer (choice);
+}
+
+void MainComponent::alert (const juce::String& title, const juce::String& text)
+{
+    alertText = text;
+    if (desktopWindows())
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, title, text, "OK", this);
+}
+
+void MainComponent::whenSaved (std::function<void()> next)
+{
+    if (! studio.dirty() || studio.untouched())
+    {
+        next();
+        return;
+    }
+    const auto name = juce::String::fromUTF8 (studio.model().info.name.c_str());
+    ask ("Unsaved Changes", "Save changes to \"" + name + "\"?", "Save", "Don't Save", [this, next] (int choice) {
+        if (choice == 1 && ! studio.save())
+            return;
+        if (choice == 2)
+            studio.discardUnsavedChanges();
+        if (choice != 0)
+            next();
+    });
+}
+
+void MainComponent::chooseProjectToOpen()
+{
+    if (! desktopWindows())
+        return;
+    openChooser = std::make_unique<juce::FileChooser> ("Open a Weft project", juce::File (pathText (studio.projectsFolder())), "project.automerge");
+    openChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::canSelectDirectories,
+                              [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                  if (safe != nullptr && fc.getResult() != juce::File())
+                                  {
+                                      // The question about unsaved changes was already answered.
+                                      safe->opened (safe->studio.openProject (textPath (fc.getResult().getFullPathName())));
+                                  }
+                              });
+}
+
+void MainComponent::openProject (const std::filesystem::path& picked)
+{
+    whenSaved ([this, picked] { opened (studio.openProject (picked)); });
+}
+
+void MainComponent::opened (const Studio::OpenResult& result)
+{
+    if (result.needsRecoveryChoice)
+    {
+        const auto when = juce::Time (result.recoveryTimeMs).toString (true, true, false);
+        ask ("Recover Unsaved Changes", "Recover unsaved changes from " + when + "?", "Recover", "Discard",
+             [this, path = result.root] (int choice) {
+                 if (choice != 0)
+                     opened (studio.openProject (path, choice == 1 ? Studio::Recovery::recover : Studio::Recovery::discard));
+             });
+        return;
+    }
+    if (! result.ok)
+    {
+        alert ("Couldn't Open the Project", juce::String::fromUTF8 (result.error.c_str()));
+        return;
+    }
+    if (! result.missingPlugins.empty())
+    {
+        juce::StringArray names;
+        for (const auto& n : result.missingPlugins)
+            names.add (juce::String::fromUTF8 (n.c_str()));
+        alert ("Missing Plug-ins", "These plug-ins aren't installed. Their slots keep their settings and pass audio through:\n\n"
+                                       + names.joinIntoString ("\n"));
+    }
+    if (! result.missingMedia.empty() && desktopWindows())
+        launchDialog (std::make_unique<MissingMediaDialog> (studio), "Missing Media", this);
+}
+
+void MainComponent::openRecent (int index)
+{
+    const auto& items = studio.recentProjects().items();
+    if (index < 0 || index >= static_cast<int> (items.size()))
+        return;
+    const auto root = items[static_cast<std::size_t> (index)];
+    if (! project::RecentProjects::available (root))
+    {
+        studio.recentProjects().remove (root);
+        studio.setStatus (pathText (root.filename()) + " isn't there any more; removed it from Open Recent.");
+        return;
+    }
+    openProject (root);
+}
+
+void MainComponent::showWelcome()
+{
+    if (! desktopWindows())
+        return;
+    launchDialog (std::make_unique<WelcomeDialog> (
+                      studio, [this] (Cmd c) { run (c); }, [this] (const std::filesystem::path& p) { openProject (p); }),
+                  "Welcome", this);
 }
 
 void MainComponent::deleteSelectedTrack()
@@ -222,10 +411,29 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
     switch (index)
     {
         case 0:
+        {
+            add (Cmd::newProject);
+            add (Cmd::openProject);
+            juce::PopupMenu recentMenu;
+            const auto& items = studio.recentProjects().items();
+            for (std::size_t i = 0; i < items.size(); ++i)
+            {
+                auto label = pathText (items[i].filename()).upToLastOccurrenceOf (".weft", false, false);
+                if (! project::RecentProjects::available (items[i]))
+                    label += " (not found)";
+                recentMenu.addItem (recentMenuBase + static_cast<int> (i) + 1, label);
+            }
+            menu.addSubMenu ("Open Recent", recentMenu, ! items.empty());
+            menu.addSeparator();
             add (Cmd::save);
+            add (Cmd::saveAs);
             menu.addSeparator();
             add (Cmd::bounce);
+            menu.addSeparator();
+            add (Cmd::projectSettings);
+            add (Cmd::audioSettings);
             break;
+        }
         case 1:
             for (auto c : { Cmd::undo, Cmd::redo })
                 add (c);
@@ -270,7 +478,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > 0)
+    if (itemId > recentMenuBase)
+        openRecent (itemId - recentMenuBase - 1);
+    else if (itemId > 0)
         run (static_cast<Cmd> (itemId - 1));
 }
 } // namespace weft::ui

@@ -20,6 +20,7 @@ add_library(weft_engine_juce STATIC
     src/HostedPlugin.cpp
     src/JuceAudioDevice.cpp
     src/JuceDecoders.cpp
+    src/JuceMidiInputs.cpp
     src/PluginCatalog.cpp
     src/Vst3Host.cpp)
 add_library(weft::engine_juce ALIAS weft_engine_juce)

@@ -9,6 +9,7 @@ target_sources(WeftStudio PRIVATE src/Main.cpp)
 # The window and everything in it, as a library the UI tests link too.
 add_library(weft_app_lib STATIC
     src/ui/AboutPanel.cpp
+    src/ui/AudioSetup.cpp
     src/ui/BottomArea.cpp
     src/ui/BounceDialog.cpp
     src/ui/PianoRoll.cpp
@@ -18,6 +19,7 @@ add_library(weft_app_lib STATIC
     src/ui/MainComponent.cpp
     src/ui/Mixer.cpp
     src/ui/PluginWindows.cpp
+    src/ui/ProjectDialogs.cpp
     src/ui/NewTrackDialog.cpp
     src/ui/SidePanel.cpp
     src/ui/Studio.cpp

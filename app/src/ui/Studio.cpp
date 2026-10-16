@@ -65,11 +65,12 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
 
 // Studio -------------------------------------------------------------------------------
 
-Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& projectParent, engine::DeviceConfig config)
+Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& projectParent_, engine::DeviceConfig config)
     : audioDevice (std::move (device))
 {
     eng = std::make_unique<engine::Engine> (pool, rack);
     live = std::make_unique<engine::LiveAutomation> (*eng);
+    midiRouter = std::make_unique<engine::MidiInputRouter> (*eng);
     catalog = std::make_unique<engine::PluginCatalog> (settingsFolder() / "plugins.json");
     catalog->load();
     host = std::make_unique<engine::Vst3Host> (*catalog);
@@ -80,41 +81,32 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
                       .getFullPathName()
                       .toStdString();
     userDisplayName = juce::SystemStats::getFullUserName().toStdString();
-    fs::path dir;
-    for (int n = 1;; ++n)
-    {
-        dir = project::ProjectFolder::folderFor (projectParent, n == 1 ? "Untitled" : "Untitled " + std::to_string (n));
-        if (! fs::exists (dir))
-            break;
-    }
-    folder = std::make_unique<project::ProjectFolder> (dir);
+    projectParent = projectParent_;
+    recent = project::RecentProjects (settingsFolder() / "recent-projects.txt");
+    recent.load();
     std::string error;
-    folder->create (&error);
-    auto created = commands::Session::createNew ({}, "local", &error);
-    jassert (created.has_value());
-    sess = std::make_unique<commands::Session> (std::move (*created));
-    sess->onLocalChange = [this] (const doc::Bytes& change, std::int64_t time) {
-        folder->log().append (change, time);
-        unsaved = true;
-    };
-    folder->save (sess->document());
-    local.selectedTrack = model().trackOrder.empty() ? Id {} : model().trackOrder.front();
-    eng->setProjectFolder (folder->root());
-    auto settings = engine::TransportSettings::fromDefaults (model().info.metronomeDefaults);
-    eng->setSettings (settings);
+    const auto made = newProject (projectParent, {}, &error, true);
+    jassert (made);
+    juce::ignoreUnused (made);
     audioOk = audioDevice != nullptr && audioDevice->open (config) && audioDevice->start (*eng);
     if (! audioOk)
+    {
         status = "No audio device: Weft is running without sound.";
+        startSilentClock();
+    }
     syncEngine();
 }
 
 Studio::~Studio()
 {
+    if (silentClock != nullptr)
+        silentClock->stop();
     if (audioDevice != nullptr)
     {
         audioDevice->stop();
         audioDevice->close();
     }
+    releaseProject();
 }
 
 void Studio::syncEngine()
@@ -319,6 +311,17 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 
 void Studio::tick()
 {
+    if (silentClock != nullptr)
+    {
+        // No-audio mode: the engine runs on the message thread, in step with the system clock.
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        const auto frames = static_cast<std::int64_t> ((now - silentClockMs) * silentClock->config().sampleRate / 1000.0);
+        if (frames > 0)
+        {
+            silentClock->render (std::min<std::int64_t> (frames, static_cast<std::int64_t> (silentClock->config().sampleRate)));
+            silentClockMs += 1000.0 * static_cast<double> (frames) / silentClock->config().sampleRate;
+        }
+    }
     stepBounce();
     flushPluginStates();
     if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
@@ -584,7 +587,8 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::nextMarker: case Cmd::marker1: case Cmd::marker2: case Cmd::marker3: case Cmd::marker4: case Cmd::marker5: case Cmd::marker6:
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
-        case Cmd::toggleAutomation: case Cmd::bounce:
+        case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
+        case Cmd::projectSettings: case Cmd::audioSettings:
             break;
     }
     return std::nullopt;
@@ -615,6 +619,11 @@ bool Studio::perform (Cmd command)
             {
                 eng->stopRecording();
                 break;
+            }
+            if (! audioOk)
+            {
+                setStatus ("Recording needs an audio device: choose one in Audio & MIDI Settings.");
+                return false;
             }
             const auto result = eng->record (playhead());
             locatedAt.reset();
@@ -768,7 +777,7 @@ bool Studio::perform (Cmd command)
             std::vector<engine::KeyboardMidi::Message> out;
             keys.toggle (out);
             for (const auto& msg : out)
-                eng->sendMidi (msg.status, msg.data1, msg.data2);
+                midiRouter->deliver ({}, msg.status, msg.data1, msg.data2);
             status = keys.enabled() ? "Keyboard MIDI on: A-L play notes, Z/X octave, C/V velocity." : "Keyboard MIDI off.";
             break;
         }
@@ -782,6 +791,11 @@ bool Studio::perform (Cmd command)
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
         case Cmd::bounce:
+        case Cmd::newProject:
+        case Cmd::openProject:
+        case Cmd::saveAs:
+        case Cmd::projectSettings:
+        case Cmd::audioSettings:
             if (uiCommand)
                 uiCommand (command);
             break;
@@ -854,7 +868,7 @@ bool Studio::keyboardMidiKey (const juce::KeyPress& key, bool down)
     std::vector<engine::KeyboardMidi::Message> out;
     const bool used = down ? keys.keyDown (c, false, out) : keys.keyUp (c, out);
     for (const auto& msg : out)
-        eng->sendMidi (msg.status, msg.data1, msg.data2);
+        midiRouter->deliver ({}, msg.status, msg.data1, msg.data2);
     return used;
 }
 
@@ -883,17 +897,328 @@ bool Studio::previewFile (const fs::path& file)
     return true;
 }
 
+// Projects ------------------------------------------------------------------------------
+
 bool Studio::save()
 {
+    flushPluginStates (true);
     std::string error;
     if (! folder->save (sess->document(), {}, &error))
     {
         setStatus ("Couldn't save: " + juce::String (error));
         return false;
     }
+    project::writeMediaIndex (model(), folder->mediaDir());
+    saveViewState();
     unsaved = false;
+    scratch = false; // the user saved it: it stays when replaced
+    recent.add (folder->root());
     setStatus ("Saved.");
     return true;
+}
+
+juce::String Studio::windowTitle() const
+{
+    return juce::String (juce::CharPointer_UTF8 (model().info.name.c_str())) + (unsaved ? "*" : "") + " - Weft Studio";
+}
+
+bool Studio::newProject (const fs::path& parent, const commands::NewProjectOptions& options, std::string* error, bool scratchProject)
+{
+    if (! model::isValidSampleRate (options.sampleRate))
+    {
+        if (error != nullptr)
+            *error = "The sample rate must be 44.1, 48, 88.2 or 96 kHz.";
+        return false;
+    }
+    // An untouched new project gives way, so its name is free again.
+    if (sess != nullptr && untouched())
+    {
+        std::error_code ec;
+        fs::remove_all (folder->root(), ec);
+        scratch = false;
+    }
+    fs::path dir;
+    auto opts = options;
+    for (int n = 1;; ++n)
+    {
+        opts.name = n == 1 ? options.name : options.name + " " + std::to_string (n);
+        dir = project::ProjectFolder::folderFor (parent, opts.name);
+        if (! fs::exists (dir))
+            break;
+    }
+    auto projectFolder = std::make_unique<project::ProjectFolder> (dir);
+    if (! projectFolder->create (error))
+        return false;
+    auto created = commands::Session::createNew (opts, "local", error);
+    if (! created || ! projectFolder->save (created->document(), {}, error))
+        return false;
+    adopt (std::move (projectFolder), std::make_unique<commands::Session> (std::move (*created)), scratchProject);
+    return true;
+}
+
+Studio::OpenResult Studio::openProject (const fs::path& picked, Recovery recovery)
+{
+    OpenResult result;
+    const auto root = project::projectRootFor (picked);
+    result.root = root;
+    if (! project::isProjectFolder (root))
+    {
+        result.error = project::utf8 (root.filename()) + " isn't a Weft project.";
+        return result;
+    }
+    auto projectFolder = std::make_unique<project::ProjectFolder> (root);
+    auto opened = projectFolder->open();
+    if (! opened.document)
+    {
+        result.error = opened.error;
+        return result;
+    }
+    if (opened.recoveryAvailable())
+    {
+        const auto entries = projectFolder->log().read();
+        result.recoveryTimeMs = entries.empty() ? 0 : entries.back().timeMs;
+        if (recovery == Recovery::ask)
+        {
+            result.needsRecoveryChoice = true;
+            return result;
+        }
+        if (recovery == Recovery::recover ? ! projectFolder->recover (opened, &result.error)
+                                          : ! projectFolder->discard (opened, commands::systemClockMs()))
+        {
+            if (result.error.empty())
+                result.error = "Couldn't archive the recovery log.";
+            return result;
+        }
+    }
+    auto session = std::make_unique<commands::Session> (std::move (*opened.document), "local");
+    adopt (std::move (projectFolder), std::move (session), false);
+    recent.add (root);
+    result.ok = true;
+    result.missingMedia = missingMedia();
+    result.missingPlugins = missingPlugins();
+    return result;
+}
+
+bool Studio::saveAs (const fs::path& newRoot, bool copyMedia, std::string* error)
+{
+    flushPluginStates (true);
+    if (! project::saveProjectAs (sess->document(), model(), folder->root(), newRoot, { copyMedia }, error))
+        return false;
+    // The session (and its undo history) carries on in the new folder.
+    folder = std::make_unique<project::ProjectFolder> (newRoot);
+    eng->setProjectFolder (folder->root());
+    auto name = project::utf8 (newRoot.filename());
+    if (name.ends_with (".weft"))
+        name.resize (name.size() - 5);
+    if (! name.empty() && name != model().info.name)
+        sess->renameProject (name);
+    scratch = false;
+    if (! save())
+        return false;
+    edited();
+    return true;
+}
+
+void Studio::discardUnsavedChanges()
+{
+    if (unsaved)
+        folder->log().archive (commands::systemClockMs());
+    unsaved = false;
+    if (scratch)
+        everEdited = false; // nothing worth keeping: the folder goes when the project is replaced
+    sendChangeMessage();
+}
+
+std::vector<std::string> Studio::missingMedia() const { return project::missingMedia (model(), project::mediaFolders (folder->root())); }
+
+int Studio::locateMedia (const fs::path& searchFolder)
+{
+    std::map<std::string, std::int64_t> wanted;
+    for (const auto& hash : missingMedia())
+    {
+        const auto* ref = model().mediaRef (hash);
+        wanted[hash] = ref != nullptr ? ref->sizeBytes : 0;
+    }
+    const auto found = project::locateMedia (searchFolder, wanted, folder->mediaDir());
+    for (const auto& hash : found)
+        pool.load (folder->mediaDir(), hash);
+    if (! found.empty())
+    {
+        peakCache.clear();
+        edited();
+    }
+    return static_cast<int> (found.size());
+}
+
+std::vector<std::string> Studio::missingPlugins() const
+{
+    std::vector<std::string> names;
+    auto check = [&] (const model::PluginInstance& p) {
+        const auto proc = eng->processor (p.id);
+        if (proc != nullptr && proc->isPlaceholder() && std::find (names.begin(), names.end(), p.name) == names.end())
+            names.push_back (p.name.empty() ? p.pluginUid : p.name);
+    };
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id))
+        {
+            if (t->strip.instrument)
+                check (*t->strip.instrument);
+            for (const auto& p : t->strip.inserts)
+                check (p);
+        }
+    if (const auto* master = model().track (model().info.masterTrackId))
+        for (const auto& p : master->strip.inserts)
+            check (p);
+    return names;
+}
+
+void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::unique_ptr<commands::Session> session, bool isScratch)
+{
+    releaseProject();
+    folder = std::move (projectFolder);
+    sess = std::move (session);
+    scratch = isScratch;
+    everEdited = false;
+    unsaved = false;
+    sess->onLocalChange = [this] (const doc::Bytes& change, std::int64_t time) {
+        folder->log().append (change, time);
+        unsaved = true;
+        everEdited = true;
+    };
+    resetViewState();
+    local.selectedTrack = model().trackOrder.empty() ? Id {} : model().trackOrder.front();
+    eng->setProjectFolder (folder->root());
+    eng->setSettings (engine::TransportSettings::fromDefaults (model().info.metronomeDefaults));
+    loadProjectMedia();
+    syncEngine();
+    loadViewState();
+    ++editCount;
+    sendChangeMessage();
+}
+
+void Studio::releaseProject()
+{
+    if (sess == nullptr)
+        return;
+    if (bounceJob != nullptr)
+        cancelBounce();
+    eng->stop();
+    eng->stopPreview();
+    if (! scratch || everEdited)
+        saveViewState();
+    // A new project nobody touched leaves nothing behind.
+    if (scratch && ! everEdited && folder != nullptr)
+    {
+        std::error_code ec;
+        fs::remove_all (folder->root(), ec);
+    }
+    sess->onLocalChange = nullptr;
+}
+
+void Studio::resetViewState()
+{
+    selection = {};
+    tool = Tool::pointer;
+    view = {};
+    editorRegion.clear();
+    clipboard = {};
+    piano = {};
+    pointSelection = {};
+    local = {};
+    heights.clear();
+    lanesShown.clear();
+    pendingState.clear();
+    peakCache.clear();
+    locatedAt.reset();
+    locatedFrame = -1;
+    pool.clear();
+}
+
+void Studio::loadProjectMedia()
+{
+    const auto folders = project::mediaFolders (folder->root());
+    for (const auto& [hash, ref] : model().media)
+        if (const auto file = project::findMediaFile (folders, hash))
+            pool.load (file->parent_path(), hash);
+}
+
+void Studio::saveViewState() const
+{
+    if (folder == nullptr || ! fs::exists (folder->root()))
+        return;
+    const auto text = "playhead=" + std::to_string (playhead()) + "\norigin=" + std::to_string (view.originTick)
+                      + "\nzoom=" + std::to_string (view.pixelsPerTick) + "\n";
+    std::error_code ec;
+    fs::create_directories (folder->root() / "Cache", ec);
+    const auto* p = reinterpret_cast<const std::uint8_t*> (text.data());
+    project::writeFileAtomic (folder->root() / "Cache" / "view.txt", { p, text.size() });
+}
+
+void Studio::loadViewState()
+{
+    const auto bytes = project::readFile (folder->root() / "Cache" / "view.txt");
+    if (! bytes)
+        return;
+    const auto lines = juce::StringArray::fromLines (juce::String (reinterpret_cast<const char*> (bytes->data()), bytes->size()));
+    for (const auto& line : lines)
+    {
+        const auto key = line.upToFirstOccurrenceOf ("=", false, false);
+        const auto value = line.fromFirstOccurrenceOf ("=", false, false);
+        if (key == "playhead")
+            locate (std::max<Ticks> (0, value.getLargeIntValue()));
+        else if (key == "origin")
+            view.originTick = std::max (0.0, value.getDoubleValue());
+        else if (key == "zoom")
+            view.pixelsPerTick = std::clamp (value.getDoubleValue(), arrange::TimelineView::minPixelsPerTick, arrange::TimelineView::maxPixelsPerTick);
+    }
+}
+
+// Audio device ---------------------------------------------------------------------------
+
+bool Studio::setAudioDevice (std::unique_ptr<engine::AudioDevice> device, const engine::DeviceConfig& config)
+{
+    eng->stop();
+    if (audioDevice != nullptr)
+    {
+        audioDevice->stop();
+        audioDevice->close();
+    }
+    if (silentClock != nullptr)
+    {
+        silentClock->stop();
+        silentClock.reset();
+    }
+    audioDevice = std::move (device);
+    audioOk = audioDevice != nullptr && audioDevice->open (config) && audioDevice->start (*eng);
+    if (! audioOk)
+        startSilentClock();
+    setStatus (audioOk ? "Audio: " + juce::String (audioDevice->name()) : "No audio device: Weft is running without sound.");
+    return audioOk;
+}
+
+void Studio::startSilentClock()
+{
+    silentClock = std::make_unique<engine::NullDevice>();
+    engine::DeviceConfig c;
+    c.sampleRate = model().info.sampleRate;
+    c.maxBlockSize = 512;
+    c.numInputChannels = 0;
+    silentClock->open (c);
+    silentClock->start (*eng);
+    silentClockMs = juce::Time::getMillisecondCounterHiRes();
+}
+
+void Studio::playTestTone()
+{
+    const auto rate = audioDevice != nullptr && audioOk ? audioDevice->config().sampleRate : 48000.0;
+    auto tone = std::make_shared<media::AudioData>();
+    tone->sampleRate = rate;
+    const auto frames = static_cast<std::size_t> (std::lround (rate));
+    const auto gain = std::pow (10.0, -18.0 / 20.0);
+    tone->channels.assign (2, std::vector<float> (frames));
+    for (std::size_t i = 0; i < frames; ++i)
+        tone->channels[0][i] = tone->channels[1][i] = static_cast<float> (gain * std::sin (2.0 * juce::MathConstants<double>::pi * 1000.0 * static_cast<double> (i) / rate));
+    eng->preview (std::move (tone));
 }
 
 const std::vector<float>& Studio::peaks (const std::string& hash)

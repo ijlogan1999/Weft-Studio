@@ -27,6 +27,7 @@ public:
 
     Audio find (const std::string& hash) const;
     void remove (const std::string& hash) { pool.erase (hash); }
+    void clear() { pool.clear(); }
     std::size_t size() const noexcept { return pool.size(); }
 
     /** Files up to this many frames are read whole; longer ones stream. Default: 30 s at 48 kHz. */
