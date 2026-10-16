@@ -129,6 +129,16 @@ jobs:
           foreach ($f in "Weft Studio.exe", "weft-plugin-scanner.exe", "vcruntime140.dll", "LICENSE", "ThirdPartyNotices.txt", "Uninstall.exe") {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "missing after install: $f" }
           }
+          # Every shortcut the installer made must open a file that exists.
+          $shell = New-Object -ComObject WScript.Shell
+          $menus = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+          $links = @(Get-ChildItem $menus -Recurse -Filter *.lnk -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -like "*Weft Studio*" })
+          if ($links.Count -eq 0) { throw "no Start Menu shortcut" }
+          foreach ($l in $links) {
+            $target = $shell.CreateShortcut($l.FullName).TargetPath
+            if (-not (Test-Path $target)) { throw "shortcut $($l.Name) points at a missing file: $target" }
+          }
           Start-Process -FilePath (Join-Path $dir "Uninstall.exe") -ArgumentList "/S", "_?=$dir" -Wait
           if (Test-Path (Join-Path $dir "Weft Studio.exe")) { throw "the uninstaller left the app behind" }
 
