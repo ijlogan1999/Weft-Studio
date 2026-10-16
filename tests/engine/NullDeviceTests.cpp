@@ -29,8 +29,11 @@ public:
         for (int ch = 0; ch < config.numOutputChannels; ++ch)
             for (int i = 0; i < numFrames; ++i)
                 outputs[ch][i] = config.numInputChannels > 0 ? inputs[0][i] : 0.0f;
-        if (sleepPerBlock.count() > 0)
-            std::this_thread::sleep_for (sleepPerBlock);
+        // Busy, not asleep: deadline simulation measures CPU time (D-ARCH-49).
+        const auto until = NullDevice::threadCpuSeconds() + std::chrono::duration<double> (busyPerBlock).count();
+        while (busyPerBlock.count() > 0 && NullDevice::threadCpuSeconds() < until)
+        {
+        }
     }
 
     void release() override { ++releaseCalls; }
@@ -39,7 +42,7 @@ public:
     int prepareCalls = 0, releaseCalls = 0;
     bool sawAudioThreadFlag = true;
     std::vector<int> blockSizes;
-    std::chrono::microseconds sleepPerBlock { 0 };
+    std::chrono::microseconds busyPerBlock { 0 };
 };
 
 DeviceConfig makeConfig (int maxBlock)
@@ -122,7 +125,7 @@ TEST_CASE ("NullDevice counts deadline misses when simulation is on", "[E][null-
     REQUIRE (device.render (48 * 4));
     const auto fastMisses = device.stats().deadlineMisses;
 
-    rec.sleepPerBlock = std::chrono::milliseconds (5);
+    rec.busyPerBlock = std::chrono::milliseconds (5);
     REQUIRE (device.render (48 * 3));
     CHECK (device.stats().deadlineMisses - fastMisses == 3);
 }

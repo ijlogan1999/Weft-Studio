@@ -1,5 +1,7 @@
 #include "weft/engine/media/MediaStreamer.h"
 
+#include "../transport/Sinc.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -98,9 +100,10 @@ void MediaStreamer::pump()
                 const auto s = std::max (a, w.start), e = std::min (b, w.end);
                 if (s >= e)
                     continue;
-                // Two frames either side for interpolated reads.
-                const auto first = static_cast<std::int64_t> (std::floor (w.sourceAtStart + static_cast<double> (s - w.start) * w.step)) - 2;
-                const auto last = static_cast<std::int64_t> (std::ceil (w.sourceAtStart + static_cast<double> (e - w.start) * w.step)) + 2;
+                // The sinc kernel's reach either side for resampled reads.
+                const auto margin = w.step == 1.0 ? 1 : sinc::reach (sinc::cutoff (w.step));
+                const auto first = static_cast<std::int64_t> (std::floor (w.sourceAtStart + static_cast<double> (s - w.start) * w.step)) - margin;
+                const auto last = static_cast<std::int64_t> (std::ceil (w.sourceAtStart + static_cast<double> (e - w.start) * w.step)) + margin;
                 const auto b0 = std::max<std::int64_t> (0, first / MediaSource::blockFrames);
                 const auto b1 = std::min<std::int64_t> (w.source->numBlocks() - 1, std::max<std::int64_t> (0, last) / MediaSource::blockFrames);
                 for (auto blk = b0; blk <= b1; ++blk)

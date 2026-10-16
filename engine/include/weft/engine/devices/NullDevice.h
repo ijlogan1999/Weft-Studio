@@ -15,9 +15,10 @@ namespace weft::engine
     the headless CLI run anywhere.
 
     Inputs come from an optional generator; outputs are captured up to a fixed
-    capacity. With deadline simulation on, each process() call is timed against
-    the block's real-time period and late calls count as deadline misses
-    (used by AT-RT-2 and AT-TRN-17).
+    capacity. With deadline simulation on, the CPU time of each process() call
+    is compared with the block's real-time period and calls that take longer
+    count as deadline misses (used by AT-RT-2 and AT-TRN-17). CPU time rather
+    than wall time, so a busy test machine doesn't count against the engine.
 */
 class NullDevice final : public AudioDevice
 {
@@ -60,6 +61,9 @@ public:
     bool renderBlocks (std::span<const int> blockSizes);
 
     const Stats& stats() const noexcept { return counters; }
+
+    /** CPU time the calling thread has used, in seconds: what deadline simulation measures. */
+    static double threadCpuSeconds() noexcept;
 
 private:
     bool renderBlock (int numFrames);

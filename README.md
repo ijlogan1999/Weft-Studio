@@ -6,13 +6,14 @@ online or offline, and every change merges.
 
 A weft is the thread woven across a loom; Weft weaves many people's ideas into one song.
 
-> **Status:** early development. Milestones 0 to 12 are done: recording, arranging, the
+> **Status:** early development. All 14 planned milestones (0 to 13) are done: recording, arranging, the
 > piano roll, a mixer with buses, built-in effects and VST3 plug-ins, automation,
 > bouncing to WAV and MP3, opening, saving and setting up projects and audio devices,
 > and live collaboration through a relay: accounts, sharing, invites, roles, offline
 > merge, collaborators' pointers, playheads and selections, and audio files that upload
 > and download in the background, plus comments, chat, track locks and version
-> history. Hardening and the installer come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
+> history. CI builds a Windows installer; a pass on real Windows hardware
+> ([checklist](docs/hardware-test-pass.md)) comes before the first release. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
 > and [the milestone reports](docs/reports).
 
 ## Support Weft
@@ -56,6 +57,14 @@ ctest --preset dev
 
 # Rust parts (the CRDT shim and the relay server)
 cargo test --workspace
+```
+
+### Building the installer
+
+```sh
+cmake -S . -B build-rel -DWEFT_BUILD_TESTS=OFF
+cmake --build build-rel --config Release --target WeftStudio
+cd build-rel && cpack -C Release   # a ZIP, plus a setup .exe on Windows when NSIS is installed
 ```
 
 ### Running a relay

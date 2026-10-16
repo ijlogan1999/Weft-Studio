@@ -53,6 +53,9 @@ jobs:
       - name: Test (Rust)
         run: cargo test --workspace --locked
 
+      - name: Relay capacity (Release, 50 rooms x 8 clients on 2 workers)
+        run: cargo test --release --locked -p weft-relay --test load -- --ignored --nocapture
+
       - name: Rust lint
         run: |
           cargo fmt --all --check
@@ -87,4 +90,50 @@ jobs:
         with:
           name: WeftStudio-windows-debug
           path: build/app/WeftStudio_artefacts/Debug/
+          if-no-files-found: error
+
+  installer:
+    name: Windows installer (Release)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache fetched C++ dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps/*-src
+          key: deps-windows-release-${{ hashFiles('third_party/cpp-deps.json') }}
+
+      - name: Configure
+        run: cmake -S . -B build -DWEFT_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel --target WeftStudio
+
+      - name: Package
+        working-directory: build
+        run: cpack -C Release -B "${{ runner.temp }}/package"
+
+      - name: Install, check and uninstall silently
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "${{ runner.temp }}/package/WeftStudio-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "no installer was built" }
+          $dir = Join-Path "${{ runner.temp }}" "Weft Studio"
+          Start-Process -FilePath $setup.FullName -ArgumentList "/S", "/D=$dir" -Wait
+          foreach ($f in "Weft Studio.exe", "weft-plugin-scanner.exe", "vcruntime140.dll", "LICENSE", "ThirdPartyNotices.txt", "Uninstall.exe") {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "missing after install: $f" }
+          }
+          Start-Process -FilePath (Join-Path $dir "Uninstall.exe") -ArgumentList "/S", "_?=$dir" -Wait
+          if (Test-Path (Join-Path $dir "Weft Studio.exe")) { throw "the uninstaller left the app behind" }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeftStudio-windows-installer
+          path: |
+            ${{ runner.temp }}/package/WeftStudio-*.exe
+            ${{ runner.temp }}/package/WeftStudio-*.zip
           if-no-files-found: error

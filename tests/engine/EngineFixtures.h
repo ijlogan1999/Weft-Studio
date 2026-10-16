@@ -100,8 +100,12 @@ public:
     void prepare (double sampleRate, int) override { rate = sampleRate; }
     void process (std::span<const MidiEvent>, float* const* outputs, int numChannels, int numFrames) noexcept override
     {
-        const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double> (fraction.load() * numFrames / rate);
-        while (std::chrono::steady_clock::now() < until)
+        // Spins for the wall time the CPU meter measures; past the deadline, also for the CPU time
+        // that deadline simulation measures (D-ARCH-49), so a busy machine can't hide the miss.
+        const double seconds = fraction.load() * numFrames / rate;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double> (seconds);
+        const auto cpuUntil = NullDevice::threadCpuSeconds() + (seconds > numFrames / rate ? seconds : 0.0);
+        while (std::chrono::steady_clock::now() < until || NullDevice::threadCpuSeconds() < cpuUntil)
         {
         }
         for (int ch = 0; ch < numChannels; ++ch)
