@@ -6,10 +6,11 @@ online or offline, and every change merges.
 
 A weft is the thread woven across a loom; Weft weaves many people's ideas into one song.
 
-> **Status:** early development. Milestones 0 to 9 are done: recording, arranging, the
+> **Status:** early development. Milestones 0 to 10 are done: recording, arranging, the
 > piano roll, a mixer with buses, built-in effects and VST3 plug-ins, automation,
-> bouncing to WAV and MP3, and opening, saving and setting up projects and audio devices.
-> Collaboration comes next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
+> bouncing to WAV and MP3, opening, saving and setting up projects and audio devices,
+> and live collaboration through a relay: accounts, sharing, invites, roles and offline
+> merge. Presence and media sync come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
 > and [the milestone reports](docs/reports).
 
 ## Support Weft
@@ -55,6 +56,16 @@ ctest --preset dev
 cargo test --workspace
 ```
 
+### Running a relay
+
+```sh
+cargo run --release -p weft-relay -- --addr 127.0.0.1:8080 --data ./relay-data
+```
+
+The relay listens on loopback by default and speaks plain HTTP: put a TLS proxy in front
+of it and pass `--public` to listen on other addresses. Weft only connects to `https://`
+relays, or to `http://` on localhost. In Weft, Share › Sign In… takes the relay's address.
+
 The `headless` preset skips JUCE and builds only the core, engine and CLI.
 
 ## Repository layout
@@ -67,7 +78,10 @@ The `headless` preset skips JUCE and builds only the core, engine and CLI.
 | `cli/` | `weft-cli`, a headless driver for engine and sync tests |
 | `crates/weft-crdt/` | C API over the Automerge CRDT |
 | `crates/weft-codec/` | C API over the LAME MP3 encoder, plus an MP3 decoder for tests |
-| `crates/weft-ffi/` | Bundles the two crates above into the one static library the app links |
+| `crates/weft-proto/` | The relay's wire protocol, shared by the relay and the client |
+| `crates/weft-sync/` | Client transport to the relay (WebSocket and REST) behind a C API |
+| `crates/weft-ffi/` | Bundles the Rust crates into the one static library the app links |
+| `collab/` | Relay accounts and the sync client that keeps a project in step with the relay |
 | `relay/` | Collaboration relay server (Rust) |
 | `tests/` | Unit, engine and plugin tests, plus the fixture VST3 plugins |
 | `docs/` | Spec, architecture and milestone reports |

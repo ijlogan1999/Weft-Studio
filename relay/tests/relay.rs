@@ -537,9 +537,13 @@ fn at_col_4_roles_invites_viewer_comments_and_removal() {
     );
     assert_eq!(status, 204);
     wait_until(&mut [&mut o, &mut bc, &mut cc], "B's removal", |c| {
-        c[1].notices.iter().any(|n| n.kind == notice::REMOVED) && c[1].disconnects > 0
+        c[1].notices.iter().any(|n| n.kind == notice::REMOVED)
+            && c[1].disconnects > 0
+            && c[0]
+                .notices
+                .iter()
+                .any(|n| n.kind == notice::MEMBER_REMOVED)
     });
-    assert!(o.notices.iter().any(|n| n.kind == notice::MEMBER_REMOVED));
     // B can't come back.
     let mut again = Client::connect(&url, "song", &b, AutoCommit::new());
     wait_until(&mut [&mut again], "B's rejection", |c| {

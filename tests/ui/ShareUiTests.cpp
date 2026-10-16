@@ -27,7 +27,10 @@ void pump (std::initializer_list<Ui*> uis, const std::string& what, const std::f
         }
         if (done())
             return;
-        INFO ("waiting for " << what);
+        juce::String states;
+        for (auto* u : uis)
+            states << u->studio.syncStatus() << " (" << u->studio.status << "); ";
+        INFO ("waiting for " << what << ": " << states);
         REQUIRE (std::chrono::steady_clock::now() < deadline);
         std::this_thread::sleep_for (std::chrono::milliseconds (5));
     }
@@ -172,6 +175,55 @@ TEST_CASE ("AT-COL-4 [UI] share from the Share menu, a Viewer joins from the lin
     CHECK (a.studio.syncStatus() == juce::String::fromUTF8 ("Signed out \xe2\x80\x93 sign in to sync"));
     CHECK (a.studio.check (a.studio.session().renameTrack (a.m().trackOrder.front(), "Local")));
     // Account files are per machine; the next tests start signed out.
+    std::error_code ec;
+    std::filesystem::remove (a.studio.accountFile(), ec);
+}
+
+// Run with: weft_ui_tests "[.screenshot-m10]" (writes the PNGs into WEFT_SCREENSHOT_DIR or the working folder).
+TEST_CASE ("Screenshots of the M10 Share dialogs", "[.screenshot-m10]")
+{
+    weft::test::RelayProcess relay;
+    const auto* env = std::getenv ("WEFT_SCREENSHOT_DIR");
+    const auto dir = env != nullptr ? juce::File (juce::String (env)) : juce::File::getCurrentWorkingDirectory();
+    auto shoot = [&] (juce::Component& c, const char* name) {
+        c.setVisible (true);
+        const auto image = c.createComponentSnapshot (c.getLocalBounds());
+        auto out = dir.getChildFile (name);
+        out.deleteFile();
+        juce::FileOutputStream stream (out);
+        REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+    };
+    Ui a;
+    {
+        SignInDialog d (a.studio);
+        d.relay.setText (relay.url());
+        d.email.setText ("ana@example.org");
+        d.password.setText ("password123");
+        d.createAccount.setToggleState (true, juce::sendNotificationSync);
+        d.displayName.setText ("Ana");
+        shoot (d, "sign-in.png");
+        REQUIRE (d.submit());
+    }
+    a.studio.session().createTracks (model::TrackKind::instrument, 3);
+    a.studio.edited();
+    ShareDialog share (a.studio);
+    REQUIRE (share.share());
+    pump ({ &a }, "the upload", [&] { return a.studio.syncStatus() == "Synced"; });
+    share.role.setSelectedId (2, juce::sendNotificationSync);
+    REQUIRE (share.makeLink());
+    const auto link = share.link.getText().toStdString();
+    Ui b;
+    signUpThroughDialog (b, relay.url(), "ben@example.org", "Ben");
+    {
+        JoinDialog join (b.studio);
+        join.link.setText (link);
+        REQUIRE (join.submit());
+    }
+    pump ({ &a, &b }, "B synced", [&] { return b.studio.syncStatus() == "Synced"; });
+    REQUIRE (share.refreshMembers());
+    shoot (share, "share-dialog.png");
+    b.settle();
+    shoot (*b.main, "viewer.png");
     std::error_code ec;
     std::filesystem::remove (a.studio.accountFile(), ec);
 }

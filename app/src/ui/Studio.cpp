@@ -1622,6 +1622,9 @@ bool Studio::joinProject (const std::string& inviteLink, std::string* error, fs:
         return fail ("The project from the relay couldn't be read.");
     if (const auto newer = project::checkSchemaVersion (*document))
         return fail (*newer);
+    // The Owner's copy reaches the relay just after sharing; until then there's nothing to open.
+    if (const auto url = document->get (doc::path ({ "collab", "relayUrl" })); ! url || ! url->isString())
+        return fail ("The project is still being uploaded. Try again in a moment.");
     if (parent.empty())
         parent = projectParent;
     auto name = model::Projector::project (*document).info.name;
@@ -1658,7 +1661,7 @@ juce::String Studio::syncStatus() const
     if (! shared())
         return "Local only";
     if (! signedIn())
-        return "Signed out \xe2\x80\x93 sign in to sync";
+        return juce::String::fromUTF8 ("Signed out \xe2\x80\x93 sign in to sync");
     if (syncClient == nullptr)
         return "On another relay";
     return juce::String::fromUTF8 (syncClient->statusText().c_str());
