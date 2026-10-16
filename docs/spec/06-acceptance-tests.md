@@ -104,7 +104,9 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-5** [E] · F-REC-2 · Four armed tracks on inputs 1, 2, 1+2 (stereo), 1, recording 1 bar, produce four files of identical length starting at the same sample, and one undo step removes all four regions.
 
-**AT-REC-6** [HW] · F-REC-2 · With a real ASIO interface, 8 tracks record simultaneously at 48 kHz / 64-sample buffer for 10 minutes with no dropouts on the reference machine (Phase 2 defines it).
+**AT-REC-6** [HW] · F-REC-2 · With a real ASIO interface, 8 tracks record simultaneously at 48 kHz / 64-sample buffer for 10 minutes with no dropouts on the reference machine (Phase 2 defines it). **Decision D-AT-3** fixes the reference machine.
+
+**Decision D-AT-3 (reference machine):** Windows 11 (23H2 or later), a 4-core/8-thread x64 desktop CPU at 3 GHz or more from 2019 or later, 16 GB RAM, the project on an SSD, Windows' "Best performance" power mode, and a USB audio interface with at least 8 inputs and its maker's ASIO driver. The test passes when the CPU meter's tooltip shows 0 dropouts and 0 disk underruns after the 10 minutes and every take plays back with no gaps.
 
 **AT-REC-7** [E] · F-REC-3 · *Given* an instrument track with `TestSynth`, *when* MIDI note 60 vel 100 arrives at sample 48,000 and its note-off at 72,000 during recording from tick 0, *then* the recorded region contains one note at tick 1,920, length 960, velocity 100, and the region spans bar 1 (0–3,840).
 
@@ -294,7 +296,9 @@ Notation: *Given* / *When* / *Then*.
 
 ## 10. Plugins (PLG)
 
-**AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error.
+**AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error. **Decision D-AT-4** fixes the list.
+
+**Decision D-AT-4 (VST3 list):** effects: TDR Nova (dynamic EQ), Valhalla Supermassive (reverb/delay), MeldaProduction MCompressor (from the free bundle), Airwindows Consolidated, and Voxengo SPAN (analyser); instruments: Surge XT and Dexed. All are free, 64-bit VST3 and widely used; the latest release on the day of the pass is the one tested. A plug-in that stops being free or available is replaced by another free one of the same kind and the swap is noted in the pass record.
 
 **AT-PLG-2** [E] · F-PLG-1 · `TestGain` loaded via the VST3 host applies its gain parameter; `TestSynth` responds to MIDI; parameter changes from the host arrive with correct sample offsets.
 
@@ -578,3 +582,5 @@ These protect non-functional requirements stated in the brief and apply to all a
 |---|---|
 | D-AT-1 | Dropping a MIDI file into an empty project adopts its tempo map; otherwise the project tempo is kept. |
 | D-AT-2 | Reference decoders for bounce tests: JUCE (WAV) and Symphonia (MP3). |
+| D-AT-3 | The AT-REC-6 reference machine: a 2019-or-later 4-core/8-thread PC, 16 GB, SSD, Windows 11, an 8-input USB interface with its own ASIO driver. |
+| D-AT-4 | The AT-PLG-1 list: TDR Nova, Valhalla Supermassive, MCompressor, Airwindows Consolidated, SPAN; Surge XT and Dexed. |

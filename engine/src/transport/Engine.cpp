@@ -8,8 +8,10 @@
 #include "weft/engine/record/RecordLayout.h"
 #include "weft/media/Hash.h"
 #include "weft/model/Automation.h"
+#include "Sinc.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -24,6 +26,9 @@ namespace weft::engine
 {
 namespace
 {
+/** Built at static initialisation, never on the audio thread. */
+const sinc::Kernel sincKernel;
+
 /** Flushes denormals to zero while the audio thread processes a block (AT-PLG-9). */
 struct ScopedNoDenormals
 {
@@ -1123,26 +1128,40 @@ void Engine::mixSegments (const ChannelPlan& channel, std::int64_t from, int fra
             continue;
         }
 
-        // Resampled read (D-ARCH-15): Catmull-Rom between samples.
+        // Resampled read (D-ARCH-15, D-ARCH-50): a Kaiser-windowed sinc, its cutoff lowered when
+        // reading faster than real time so the source can't alias.
+        const double cutoff = sinc::cutoff (seg.sourceStep);
+        const int reach = sinc::reach (cutoff);
         for (auto t = s; t < e; ++t)
         {
             const double pos = seg.sourceAtRegionStart + static_cast<double> (t - seg.regionStart) * seg.sourceStep;
             const auto i = static_cast<std::int64_t> (std::floor (pos));
-            const auto frac = static_cast<float> (pos - static_cast<double> (i));
+            const double frac = pos - static_cast<double> (i);
             float v[2] = {};
-            for (int ch = 0; ch < std::min (numCh, 2); ++ch)
+            if (frac == 0.0 && cutoff == 1.0)
             {
-                const float p1 = source.sample (ch, i, underrun);
-                if (frac == 0.0f)
+                for (int ch = 0; ch < std::min (numCh, 2); ++ch)
+                    v[ch] = source.sample (ch, i, underrun);
+            }
+            else
+            {
+                // Taps i - reach + 1 ... i + reach, normalised to unity gain at DC.
+                std::array<float, 2 * sinc::maxReach + 2> w;
+                float sum = 0.0f;
+                const int taps = 2 * reach;
+                for (int j = 0; j < taps; ++j)
                 {
-                    v[ch] = p1;
-                    continue;
+                    w[static_cast<std::size_t> (j)] = sincKernel ((static_cast<double> (j - reach + 1) - frac) * cutoff);
+                    sum += w[static_cast<std::size_t> (j)];
                 }
-                const float p0 = source.sample (ch, i - 1, underrun), p2 = source.sample (ch, i + 1, underrun), p3 = source.sample (ch, i + 2, underrun);
-                const float c1 = 0.5f * (p2 - p0);
-                const float c2 = p0 - 2.5f * p1 + 2.0f * p2 - 0.5f * p3;
-                const float c3 = 0.5f * (p3 - p0) + 1.5f * (p1 - p2);
-                v[ch] = ((c3 * frac + c2) * frac + c1) * frac + p1;
+                const float scale = sum != 0.0f ? 1.0f / sum : 0.0f;
+                for (int ch = 0; ch < std::min (numCh, 2); ++ch)
+                {
+                    float acc = 0.0f;
+                    for (int j = 0; j < taps; ++j)
+                        acc += w[static_cast<std::size_t> (j)] * source.sample (ch, i - reach + 1 + j, underrun);
+                    v[ch] = acc * scale;
+                }
             }
             put (t, v[0], numCh > 1 ? v[1] : v[0]);
         }

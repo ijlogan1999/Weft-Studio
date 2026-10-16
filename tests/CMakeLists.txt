@@ -32,6 +32,7 @@ add_executable(weft_engine_tests
     engine/ArrangeEngineTests.cpp
     engine/AutomationEngineTests.cpp
     engine/BounceTests.cpp
+    engine/FuzzTests.cpp
     engine/ImportTests.cpp
     engine/MixerEngineTests.cpp
     engine/NullDeviceTests.cpp

@@ -11,6 +11,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include <array>
+#include <numbers>
 
 using namespace weft;
 using namespace weft::test;
@@ -375,6 +376,60 @@ TEST_CASE ("AT-UI-5: changing buffer size and sample rate keeps output correct",
 
     rig.reopen (256);
     check48k();
+}
+
+TEST_CASE ("Resampled playback is a windowed sinc: accurate to 10 kHz and free of aliasing (D-ARCH-50)", "[E][devices][resample]")
+{
+    Rig rig (512, 44100.0);
+    auto sineMedia = [] (double rate, double hz, std::int64_t frames) {
+        media::AudioData a;
+        a.sampleRate = rate;
+        a.channels.assign (1, std::vector<float> (static_cast<std::size_t> (frames)));
+        for (std::int64_t i = 0; i < frames; ++i)
+            a.channels[0][static_cast<std::size_t> (i)] = static_cast<float> (0.5 * std::sin (2.0 * std::numbers::pi * hz * static_cast<double> (i) / rate));
+        return a;
+    };
+    auto play = [&] (const std::string& hash, media::AudioData data) {
+        const auto frames = data.numFrames();
+        rig.media.add (hash, std::move (data));
+        model::MediaRef m;
+        m.hash = hash;
+        m.originalName = "tone.wav";
+        m.lengthSamples = frames;
+        REQUIRE (rig.session.addMedia (m));
+        const auto track = rig.session.createTrack (TrackKind::audio, hash, 1).value();
+        REQUIRE (rig.session.createAudioRegion (track, 0, hash, 0, frames));
+        rig.sync();
+        rig.engine.play (0);
+        auto out = rig.run (40000);
+        rig.engine.stop();
+        rig.run (512);
+        REQUIRE (rig.session.deleteTrack (track));
+        rig.sync();
+        return out;
+    };
+
+    // A mono track panned centre plays at -3 dB on each side.
+    const double centre = std::sqrt (0.5);
+
+    // A 10 kHz tone recorded at 48 kHz, played on a 44.1 kHz device: within -80 dB of the true sine
+    // (Catmull-Rom was off by 2%).
+    {
+        const auto out = play ("b3:tone10k", sineMedia (48000.0, 10000.0, 48000));
+        double worst = 0.0;
+        for (std::int64_t k = 1000; k < 39000; ++k)
+            worst = std::max (worst, std::abs (out[static_cast<std::size_t> (k)] - centre * 0.5 * std::sin (2.0 * std::numbers::pi * 10000.0 * static_cast<double> (k) / 44100.0)));
+        CHECK (worst < 1e-4);
+    }
+    // A 30 kHz tone recorded at 96 kHz is above the device's Nyquist frequency: filtered out,
+    // not folded down to 14.1 kHz (it was, at full level).
+    {
+        const auto out = play ("b3:tone30k", sineMedia (96000.0, 30000.0, 96000));
+        double peak = 0.0;
+        for (std::int64_t k = 1000; k < 39000; ++k)
+            peak = std::max (peak, static_cast<double> (std::abs (out[static_cast<std::size_t> (k)])));
+        CHECK (peak < 1e-4); // more than 70 dB down
+    }
 }
 
 TEST_CASE ("AT-RT-3: buffer sizes from 32 to 2,048 and odd sizes give identical output", "[E][transport][AT-RT-3]")

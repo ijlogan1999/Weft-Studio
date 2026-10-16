@@ -5,8 +5,47 @@
 #include <algorithm>
 #include <chrono>
 
+#if defined(_WIN32)
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#else
+ #include <ctime>
+#endif
+
 namespace weft::engine
 {
+/** CPU time this thread has used, in seconds. Deadline simulation counts the callback's own
+    work, so a test machine that is busy with something else doesn't look like a slow engine
+    (D-ARCH-49). */
+double NullDevice::threadCpuSeconds() noexcept
+{
+#if defined(_WIN32)
+    // Cycle counts are exact; GetThreadTimes only advances with the 15.6 ms scheduler tick.
+    static const double cyclesPerSecond = [] {
+        ULONG64 c0 = 0, c1 = 0;
+        QueryThreadCycleTime (GetCurrentThread(), &c0);
+        const auto t0 = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds (20))
+        {
+        }
+        QueryThreadCycleTime (GetCurrentThread(), &c1);
+        const std::chrono::duration<double> took = std::chrono::steady_clock::now() - t0;
+        return static_cast<double> (c1 - c0) / took.count();
+    }();
+    ULONG64 cycles = 0;
+    QueryThreadCycleTime (GetCurrentThread(), &cycles);
+    return static_cast<double> (cycles) / cyclesPerSecond;
+#else
+    timespec t {};
+    clock_gettime (CLOCK_THREAD_CPUTIME_ID, &t);
+    return static_cast<double> (t.tv_sec) + static_cast<double> (t.tv_nsec) * 1e-9;
+#endif
+}
 bool NullDevice::open (const DeviceConfig& config)
 {
     if (callback != nullptr || config.sampleRate <= 0.0 || config.maxBlockSize <= 0
@@ -134,17 +173,13 @@ bool NullDevice::renderBlock (int numFrames)
     for (auto& b : outputBuffers)
         std::fill_n (b.data(), frames, 0.0f);
 
-    const auto started = std::chrono::steady_clock::now();
+    const auto started = simulateDeadlines ? threadCpuSeconds() : 0.0;
     {
         const rt::ScopedAudioThread audioThread;
         callback->process (inputPointers.data(), outputPointers.data(), numFrames);
     }
-    if (simulateDeadlines)
-    {
-        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
-        if (elapsed.count() > numFrames / cfg.sampleRate)
-            ++counters.deadlineMisses;
-    }
+    if (simulateDeadlines && threadCpuSeconds() - started > numFrames / cfg.sampleRate)
+        ++counters.deadlineMisses;
 
     for (std::size_t ch = 0; ch < loopHistory.size(); ++ch)
     {

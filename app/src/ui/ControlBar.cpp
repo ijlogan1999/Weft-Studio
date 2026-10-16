@@ -147,6 +147,11 @@ void ControlBar::timerCallback()
     cpu.setText ("CPU " + juce::String (juce::roundToInt (load * 100.0)) + "%", juce::dontSendNotification);
     const auto level = load > 0.9 || studio.engine().dropouts() > 0 ? Token::record : load > 0.7 ? Token::warning : Token::textDim;
     cpu.setColour (juce::Label::textColourId, colour (level));
+    // The counts a hardware test pass reads off (docs/hardware-test-pass.md).
+    const auto counts = "Audio thread load. Dropouts: " + juce::String (studio.engine().dropouts()) + ", disk underruns: "
+                        + juce::String (studio.engine().diskUnderruns());
+    if (cpu.getTooltip() != counts)
+        cpu.setTooltip (counts);
     play.setToggleState (studio.playing(), juce::dontSendNotification);
     record.setToggleState (studio.recording(), juce::dontSendNotification);
 }

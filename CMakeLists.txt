@@ -52,6 +52,7 @@ add_subdirectory(cli)
 
 if(WEFT_WITH_JUCE)
     add_subdirectory(app)
+    include(cmake/WeftPackaging.cmake)
 endif()
 
 if(WEFT_BUILD_TESTS)
