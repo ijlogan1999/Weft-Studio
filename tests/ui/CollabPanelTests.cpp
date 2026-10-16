@@ -59,6 +59,10 @@ void shareWith (Ui& a, Ui& b, const weft::test::RelayProcess& relay)
     INFO (error);
     REQUIRE (joined);
     waitSynced (a, b);
+    // The member list arrives on its own; mentions and "Locked by" need the names.
+    pump ({ &a, &b }, "both knowing each other's names", [&] {
+        return a.studio.nameOf (b.studio.session().user()) == "Ben" && b.studio.nameOf (a.studio.session().user()) == "Ana";
+    });
 }
 
 void forgetAccounts (Ui& ui)
