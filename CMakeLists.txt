@@ -24,6 +24,10 @@ if(WEFT_BUILD_TESTS)
     # The relay binary, for the [S] sync tests (tests/sync).
     corrosion_import_crate(MANIFEST_PATH "${PROJECT_SOURCE_DIR}/Cargo.toml" CRATES weft-relay LOCKED)
 endif()
+# getrandom (pulled in by the relay transport's TLS) calls BCryptGenRandom, which Corrosion doesn't add on its own.
+if(WIN32)
+    target_link_libraries(weft_ffi INTERFACE bcrypt)
+endif()
 add_library(weft_crdt_c INTERFACE)
 target_link_libraries(weft_crdt_c INTERFACE weft_ffi)
 target_include_directories(weft_crdt_c INTERFACE "${PROJECT_SOURCE_DIR}/crates/weft-crdt/include")
