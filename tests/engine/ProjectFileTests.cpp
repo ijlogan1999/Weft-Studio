@@ -213,9 +213,12 @@ TEST_CASE ("AT-PRJ-7 Save As without copying references the original media", "[E
     const auto file = project::findMediaFile (folders, p.hash);
     REQUIRE (file.has_value());
     CHECK (fs::equivalent (*file, p.folder.mediaDir() / media::mediaFileName (p.hash)));
-    MediaPool pool;
-    loadMedia (pool, s.model(), linked);
-    CHECK (pool.find (p.hash) != nullptr);
+    {
+        // Scoped so the pool closes the file before it is deleted (Windows refuses otherwise).
+        MediaPool pool;
+        loadMedia (pool, s.model(), linked);
+        CHECK (pool.find (p.hash) != nullptr);
+    }
 
     // While the original exists; without it the media is missing.
     fs::remove_all (p.root);
