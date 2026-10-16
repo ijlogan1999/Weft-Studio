@@ -108,6 +108,17 @@ public:
         engine doesn't apply them again when they reach the model. */
     void adoptPluginParams (const Id& pluginId, const std::vector<std::pair<std::string, double>>& values);
     void adoptPluginState (const Id& pluginId, std::vector<std::uint8_t> state);
+    // Automation (W-8) ---------------------------------------------------------------
+    /** A control is touched: the target plays `value` (normalized) instead of its lane until released.
+        A target without a plan gets one (the snapshot is recompiled). */
+    void touchAutomation (const Id& trackId, const model::AutomationTarget& target, double value);
+    /** The control is released: back to the lane at once (Read), or over 200 ms (`glide`, Touch). */
+    void releaseAutomation (const Id& trackId, const model::AutomationTarget& target, bool glide);
+    /** The value the engine last applied to an automated target (normalized), if it plays one. */
+    std::optional<double> automationValue (const Id& trackId, const model::AutomationTarget& target) const;
+    /** Releases every touch (after a write pass is committed or the project changes). */
+    void releaseAllAutomation();
+
     /** A built-in, hosted or placeholder processor for a plug-in instance. */
     static std::shared_ptr<Processor> makeProcessor (const model::PluginInstance& plugin, bool instrument, const PluginFactory& hosted);
 
@@ -171,6 +182,8 @@ public:
     /** Playhead in device-rate samples (negative during a count-in before bar 1). */
     std::int64_t positionSamples() const noexcept { return published.position.load (std::memory_order_acquire); }
     double positionTicks() const noexcept;
+    /** Where the transport last started playing (or recording). */
+    double playStartTicks() const noexcept;
     double sampleRate() const noexcept { return rate; }
 
     /** Once a pass has stopped: finishes its files, moves them into Media/ and commits the regions
@@ -239,6 +252,9 @@ private:
     void mixSegments (const ChannelPlan& channel, std::int64_t from, int frames, float* left, float* right) noexcept;
     void renderInstrument (const ChannelPlan& channel, std::int64_t from, int offset, int frames, bool timeline, float* left, float* right) noexcept;
     void runInserts (const std::vector<InsertPlan>& inserts, float* left, float* right, int frames) noexcept;
+    /** Inserts with automated parameters: split where lane points fall so changes land on their sample (D-W8-3). */
+    void runAutomatedInserts (const std::vector<InsertPlan>& inserts, const std::vector<AutomationPlan>& automation, std::int64_t from, float* left,
+                              float* right, int frames) noexcept;
     bool monitoring (const ChannelPlan& channel) const noexcept;
     void renderClicks (const EngineSnapshot& snap, std::int64_t from, int offset, int frames, bool audible) noexcept;
     void flushAllNotes (const EngineSnapshot* snap) noexcept;
@@ -263,10 +279,11 @@ private:
     std::uint64_t nextSerial = 1;
     TransportSettings currentSettings;
     LocalMixState local;
+    std::set<std::string> touchedTargets; // "<track>|<target key>" that have a plan for touches
     InstrumentFactory instrumentFactory;
     PluginFactory pluginFactory;
     void syncPlugins();
-    void applyPlugin (Processor& processor, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin);
+    void applyPlugin (Processor& processor, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin, const std::set<std::string>& automated);
     InstrumentSlot::Applied* appliedFor (const Id& pluginId);
     double recordSeconds = 10;
     std::filesystem::path projectFolder;
@@ -292,6 +309,7 @@ private:
     {
         std::atomic<int> state { 0 };
         std::atomic<std::int64_t> position { 0 };
+        std::atomic<std::int64_t> playStart { 0 };
         std::atomic<double> load { 0 };
         std::atomic<std::int64_t> dropouts { 0 };
         std::atomic<std::int64_t> frames { 0 };
@@ -333,7 +351,7 @@ private:
     std::vector<std::vector<float>> mix;
     std::vector<float*> mixPtrs;
     std::vector<float> scratchLeft, scratchRight;
-    float masterGainNow = 1;
+    float masterGainLeft = 1, masterGainRight = 1;
     bool masterGainSet = false;
     std::vector<MidiEvent> events;
     static constexpr int maxClicksPerSpan = 64;

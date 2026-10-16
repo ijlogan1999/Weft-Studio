@@ -316,6 +316,8 @@ input (hardware input / instrument output / bus input)
 - Written automation is thinned on the fly: points are stored only when the value changes by more than 0.1% of range or at least every 50 ms of change, whichever is less frequent. **Decision D-W8-2.**
 - A write pass is one undo step.
 - Automation reaches the audio thread with sample-accurate interpolation at block boundaries for MVP (block size ≤ 512 samples), with per-sample smoothing for volume and pan to avoid zipper noise. **Decision D-W8-3:** sub-block accuracy for plugin parameters is via VST3 parameter change queues with sample offsets.
+- **Decision D-W8-4:** what a pass writes. Touch writes each touch from the moment it starts to its release, and a second touch in the same pass writes a second range. Latch writes from the first touch to stop. Write writes every existing lane of the track from play start, holding the value the control showed there until it's touched, plus any other control touched during the pass from its first touch. When the cycle jumps back, the pass keeps what it wrote before the jump and writes nothing more for that control. The Touch glide back is linear over 200 ms. Clicking Mute while its automation is live counts as a touch and a release. Touching a control with nothing to follow while stopped changes its static value, as in Off.
+- **Decision D-W8-5:** the master's pan acts as balance, like a stereo track's, and the master's volume, pan, mute and insert parameters can all be automated (F-AUT-11).
 
 ### Collaboration notes
 A live write pass is local until stop; then the points arrive as one CRDT change. While writing, presence shows "writing automation on <track>".
@@ -443,6 +445,8 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W8-1 | Write mode reverts to Latch after a pass. |
 | D-W8-2 | Automation thinning thresholds. |
 | D-W8-3 | Automation interpolation and parameter queues. |
+| D-W8-4 | What Touch, Latch and Write passes write; cycle jumps; glide; mute clicks. |
+| D-W8-5 | Master pan is balance; master volume, pan, mute and inserts are automatable. |
 | D-W9-1 | Warn when bouncing with undownloaded media. |
 | D-W9-2 | Offline bounce is deterministic (fixed dither seed). |
 | D-W10-1 | Media stored by content hash. |

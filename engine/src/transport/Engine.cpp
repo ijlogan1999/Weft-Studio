@@ -7,11 +7,13 @@
 #include "weft/media/Resample.h"
 #include "weft/engine/record/RecordLayout.h"
 #include "weft/media/Hash.h"
+#include "weft/model/Automation.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <tuple>
 
 #if defined(__SSE__) || defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__)
     #include <xmmintrin.h>
@@ -124,7 +126,7 @@ void Engine::adoptPluginState (const Id& pluginId, std::vector<std::uint8_t> sta
         applied->state = std::move (state);
 }
 
-void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin)
+void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin, const std::set<std::string>& automated)
 {
     if (p.isPlaceholder())
         return; // keeps the document's state untouched (F-PLG-15)
@@ -141,8 +143,10 @@ void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const 
     // A parameter that left the model (undoing its first change) goes back to what the state
     // chunk says, or to its default when there is none.
     std::vector<std::string> removed;
+    // Automated parameters are marked NaN: the audio thread sets them, and once the automation
+    // ends they count as changed, so the static value (or the state's) comes back.
     for (const auto& [paramId, value] : applied.params)
-        if (! plugin.params.contains (paramId))
+        if (! plugin.params.contains (paramId) && ! automated.contains (paramId))
             removed.push_back (paramId);
     if (! removed.empty())
     {
@@ -158,10 +162,14 @@ void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const 
         }
         applied.params.clear();
     }
+    for (const auto& paramId : automated)
+        applied.params[paramId] = std::numeric_limits<double>::quiet_NaN();
     if (plugin.params.empty())
         return;
     for (const auto& [paramId, value] : plugin.params)
     {
+        if (automated.contains (paramId))
+            continue;
         const auto it = applied.params.find (paramId);
         if (it != applied.params.end() && same (it->second, value))
             continue;
@@ -176,6 +184,20 @@ void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const 
 
 void Engine::syncPlugins()
 {
+    // Parameters the audio thread automates, by plug-in id: their static values aren't applied.
+    std::map<Id, std::set<std::string>> automated;
+    for (const auto& [laneId, lane] : lastModel->automationLanes)
+        if (lane->target.kind == "pluginParam" && ! lane->points.empty())
+            if (const auto* t = lastModel->track (lane->trackId); t != nullptr && followsAutomation (*t))
+                automated[lane->target.pluginId].insert (lane->target.paramId);
+    for (const auto& key : touchedTargets)
+        if (const auto target = model::AutomationTarget::fromKey (key.substr (key.find ('|') + 1)); target && target->kind == "pluginParam")
+            automated[target->pluginId].insert (target->paramId);
+    const auto automatedFor = [&] (const Id& pluginId) -> const std::set<std::string>& {
+        static const std::set<std::string> none;
+        const auto it = automated.find (pluginId);
+        return it == automated.end() ? none : it->second;
+    };
     std::set<Id> instrumentTracks, pluginIds;
     std::vector<Id> trackIds;
     for (const auto& [id, track] : lastModel->tracks)
@@ -192,7 +214,7 @@ void Engine::syncPlugins()
                 if (auto instrument = instrumentFactory (*track))
                     slot = rack.set (id, std::move (instrument), key);
             if (slot && ! slot->key.empty() && inst)
-                applyPlugin (slot->instrument(), slot->applied, *inst);
+                applyPlugin (slot->instrument(), slot->applied, *inst, automatedFor (inst->id));
         }
         for (const auto& plugin : track->strip.inserts)
         {
@@ -201,7 +223,7 @@ void Engine::syncPlugins()
             auto slot = effects.find (plugin.id);
             if (! slot || slot->key != key)
                 slot = effects.set (plugin.id, makeProcessor (plugin, false, pluginFactory), key);
-            applyPlugin (*slot->processor, slot->applied, plugin);
+            applyPlugin (*slot->processor, slot->applied, plugin, automatedFor (plugin.id));
         }
     }
     rack.prune (instrumentTracks);
@@ -219,6 +241,63 @@ Engine::~Engine()
 
 // Message thread ------------------------------------------------------------------
 
+void Engine::touchAutomation (const Id& trackId, const model::AutomationTarget& target, double value)
+{
+    const auto key = target.key();
+    auto slot = mixer.automation (trackId, key);
+    slot->touched.store (std::clamp (value, 0.0, 1.0), std::memory_order_release);
+    if (touchedTargets.insert (trackId + "|" + key).second)
+        refresh();
+}
+
+void Engine::releaseAutomation (const Id& trackId, const model::AutomationTarget& target, bool glide)
+{
+    if (auto slot = mixer.findAutomation (trackId, target.key()))
+    {
+        slot->touched.store (std::numeric_limits<double>::quiet_NaN(), std::memory_order_release);
+        slot->glide.store (glide, std::memory_order_release);
+    }
+}
+
+std::optional<double> Engine::automationValue (const Id& trackId, const model::AutomationTarget& target) const
+{
+    if (! live)
+        return std::nullopt;
+    const auto key = target.key();
+    const auto slot = mixer.findAutomation (trackId, key);
+    if (! slot)
+        return std::nullopt;
+    // Only while the current snapshot plays this target.
+    const auto plays = [&] (const std::vector<AutomationPlan>& plans) {
+        return std::any_of (plans.begin(), plans.end(), [&] (const AutomationPlan& p) { return p.slot == slot; });
+    };
+    bool found = lastModel && trackId == lastModel->info.masterTrackId ? plays (live->masterAutomation) : false;
+    for (const auto& ch : live->channels)
+        if (ch.trackId == trackId)
+            found = plays (ch.automation);
+    if (! found)
+        return std::nullopt;
+    const auto v = slot->applied.load (std::memory_order_relaxed);
+    if (std::isnan (v))
+        return std::nullopt;
+    return v;
+}
+
+void Engine::releaseAllAutomation()
+{
+    for (const auto& key : touchedTargets)
+    {
+        const auto bar = key.find ('|');
+        if (auto slot = mixer.findAutomation (key.substr (0, bar), key.substr (bar + 1)))
+            slot->touched.store (std::numeric_limits<double>::quiet_NaN(), std::memory_order_release);
+    }
+    if (! touchedTargets.empty())
+    {
+        touchedTargets.clear();
+        refresh();
+    }
+}
+
 void Engine::setProject (const model::ProjectModel& model)
 {
     lastModel = model;
@@ -230,7 +309,7 @@ void Engine::refresh()
     if (! lastModel)
         return;
     syncPlugins();
-    publish (compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, { rack, effects, mixer }, local));
+    publish (compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, { rack, effects, mixer }, local, touchedTargets));
 }
 
 void Engine::publish (std::unique_ptr<EngineSnapshot> snapshot)
@@ -294,6 +373,10 @@ bool Engine::send (const Command& c) { return commands.push (c); }
 std::int64_t Engine::toSamples (Ticks t) const { return live ? live->tickToSample (t) : 0; }
 
 double Engine::positionTicks() const noexcept { return live ? live->tempo.sampleToTick (static_cast<double> (positionSamples())) : 0.0; }
+double Engine::playStartTicks() const noexcept
+{
+    return live ? live->tempo.sampleToTick (static_cast<double> (published.playStart.load (std::memory_order_acquire))) : 0.0;
+}
 
 void Engine::play() { send ({ CommandType::play, fromPlayhead }); }
 void Engine::play (Ticks from)
@@ -770,6 +853,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
     {
         for (auto& m : mix)
             std::fill_n (m.data(), numFrames, 0.0f);
+        const auto blockStart = position;
 
         int offset = 0;
         while (offset < numFrames)
@@ -828,19 +912,48 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
             }
         }
 
-        // Master (F-MIX-11): inserts process the whole mix, then the fader, ramped over the block.
-        runInserts (snap->masterInserts, mix[0].data(), mix[1].data(), numFrames);
-        const float target = snap->masterGain;
-        const float start = masterGainSet ? masterGainNow : target;
-        masterGainNow = target;
+        // Master (F-MIX-11): inserts process the whole mix, then the fader and balance, ramped
+        // over the block. Its automation reads the block's timeline position (F-AUT-11).
+        const bool rolling = transport == TransportState::playing || transport == TransportState::recording;
+        const auto masterFrom = rolling ? blockStart : position;
+        const auto masterTo = rolling ? blockStart + numFrames : position;
+        float masterGain = snap->masterGain, masterLeft = snap->masterPanLeft, masterRight = snap->masterPanRight;
+        bool masterAudible = snap->masterAudible;
+        bool masterAutomatesInserts = false;
+        for (const auto& a : snap->masterAutomation)
+            switch (a.kind)
+            {
+                case AutomationKind::volume:
+                    masterGain = dbToGain (automation::toDb (a.valueAt (masterTo, numFrames)));
+                    break;
+                case AutomationKind::pan:
+                    std::tie (masterLeft, masterRight) = balanceGains (automation::toPan (a.valueAt (masterTo, numFrames)));
+                    break;
+                case AutomationKind::mute:
+                    masterAudible = ! automation::toMute (a.valueAt (masterFrom, numFrames));
+                    break;
+                case AutomationKind::param:
+                    masterAutomatesInserts = masterAutomatesInserts || a.index >= 0;
+                    break;
+                case AutomationKind::send:
+                    break;
+            }
+        if (masterAutomatesInserts)
+            runAutomatedInserts (snap->masterInserts, snap->masterAutomation, masterFrom, mix[0].data(), mix[1].data(), numFrames);
+        else
+            runInserts (snap->masterInserts, mix[0].data(), mix[1].data(), numFrames);
+        const float targetL = masterAudible ? masterGain * masterLeft : 0.0f, targetR = masterAudible ? masterGain * masterRight : 0.0f;
+        const float startL = masterGainSet ? masterGainLeft : targetL, startR = masterGainSet ? masterGainRight : targetR;
+        masterGainLeft = targetL;
+        masterGainRight = targetR;
         masterGainSet = true;
         float masterPeak = 0;
         for (int i = 0; i < numFrames; ++i)
         {
-            const float g = start + (target - start) * static_cast<float> (i + 1) / static_cast<float> (numFrames);
+            const float x = static_cast<float> (i + 1) / static_cast<float> (numFrames);
             const auto k = static_cast<std::size_t> (i);
-            mix[0][k] *= g;
-            mix[1][k] *= g;
+            mix[0][k] *= startL + (targetL - startL) * x;
+            mix[1][k] *= startR + (targetR - startR) * x;
             masterPeak = std::max ({ masterPeak, std::abs (mix[0][k]), std::abs (mix[1][k]) });
         }
         for (std::size_t ch = 0; ch < 2; ++ch)
@@ -881,6 +994,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
     frameCounter += numFrames;
     published.state.store (static_cast<int> (transport), std::memory_order_release);
     published.position.store (position, std::memory_order_release);
+    published.playStart.store (playStart, std::memory_order_release);
     published.frames.store (frameCounter, std::memory_order_release);
 
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
@@ -1020,8 +1134,41 @@ void Engine::runInserts (const std::vector<InsertPlan>& inserts, float* left, fl
         insert.slot->processor->process ({}, io, 2, frames);
 }
 
+void Engine::runAutomatedInserts (const std::vector<InsertPlan>& inserts, const std::vector<AutomationPlan>& automation, std::int64_t from, float* left,
+                                  float* right, int frames) noexcept
+{
+    // Cut the span where a lane point of an automated insert parameter falls inside it.
+    constexpr int maxCuts = 64;
+    std::array<int, maxCuts> cuts {};
+    int numCuts = 0;
+    cuts[static_cast<std::size_t> (numCuts++)] = 0;
+    for (const auto& a : automation)
+        if (a.kind == AutomationKind::param && a.index >= 0)
+        {
+            auto it = std::upper_bound (a.nodes.begin(), a.nodes.end(), from, [] (std::int64_t t, const AutomationNode& n) { return t < n.at; });
+            for (; it != a.nodes.end() && it->at < from + frames && numCuts < maxCuts; ++it)
+                cuts[static_cast<std::size_t> (numCuts++)] = static_cast<int> (it->at - from);
+        }
+    std::sort (cuts.begin(), cuts.begin() + numCuts);
+    numCuts = static_cast<int> (std::unique (cuts.begin(), cuts.begin() + numCuts) - cuts.begin());
+    for (int c = 0; c < numCuts; ++c)
+    {
+        const int a = cuts[static_cast<std::size_t> (c)];
+        const int b = c + 1 < numCuts ? cuts[static_cast<std::size_t> (c + 1)] : frames;
+        if (b <= a)
+            continue;
+        for (const auto& plan : automation)
+            if (plan.kind == AutomationKind::param && plan.index >= 0 && plan.index < static_cast<int> (inserts.size()))
+                inserts[static_cast<std::size_t> (plan.index)].slot->processor->setParameter (plan.param, plan.valueAt (from + a, b - a));
+        runInserts (inserts, left + a, right + a, b - a);
+    }
+}
+
 void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs, std::int64_t from, int offset, int frames, bool timeline) noexcept
 {
+    // Continuous targets (volume, pan, sends) take their value at the end of the span and ramp to it;
+    // stopped, the playhead doesn't move, so they read the lane there (W-8).
+    const auto rampTo = timeline ? from + frames : from;
     const auto count = snap.channels.size();
     for (std::size_t b = 0; b < count * 2; ++b)
         std::fill_n (snap.buffers[b].data(), frames, 0.0f);
@@ -1033,6 +1180,37 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         float* left = snap.buffers[2 * i].data();
         float* right = snap.buffers[2 * i + 1].data();
         const bool mono = ch.sourceChannels == 1;
+
+        // Automation (W-8): this span's values.
+        float gain = ch.gain, panLeft = ch.panLeft, panRight = ch.panRight;
+        bool audible = ch.audible;
+        std::array<float, 8> sendGains {};
+        for (std::size_t s = 0; s < ch.sends.size() && s < sendGains.size(); ++s)
+            sendGains[s] = ch.sends[s].gain;
+        for (const auto& a : ch.automation)
+            switch (a.kind)
+            {
+                case AutomationKind::volume:
+                    gain = dbToGain (automation::toDb (a.valueAt (rampTo, frames)));
+                    break;
+                case AutomationKind::pan:
+                {
+                    const auto pan = automation::toPan (a.valueAt (rampTo, frames));
+                    std::tie (panLeft, panRight) = mono ? panGains (pan) : balanceGains (pan);
+                    break;
+                }
+                case AutomationKind::mute:
+                    audible = ch.soloAudible && ! automation::toMute (a.valueAt (from, frames));
+                    break;
+                case AutomationKind::send:
+                    if (a.index >= 0 && static_cast<std::size_t> (a.index) < sendGains.size())
+                        sendGains[static_cast<std::size_t> (a.index)] = dbToGain (automation::toDb (a.valueAt (rampTo, frames)));
+                    break;
+                case AutomationKind::param:
+                    if (a.index < 0 && ch.instrument)
+                        ch.instrument->instrument().setParameter (a.param, a.valueAt (from, frames));
+                    break;
+            }
 
         // Source.
         if (timeline && ! ch.segments.empty())
@@ -1066,7 +1244,10 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         {
             if (mono)
                 std::copy_n (left, frames, right);
-            runInserts (ch.inserts, left, right, frames);
+            if (ch.automatesInserts)
+                runAutomatedInserts (ch.inserts, ch.automation, from, left, right, frames);
+            else
+                runInserts (ch.inserts, left, right, frames);
             if (mono)
                 for (int k = 0; k < frames; ++k)
                     left[k] = 0.5f * (left[k] + right[k]);
@@ -1074,7 +1255,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
 
         // Muted or solo-silenced: no output and no sends (D-W6-2). The delay lines still run on
         // silence so nothing stale plays when the channel comes back, and the fader ramps up from 0.
-        if (! ch.audible)
+        if (! audible)
         {
             std::fill_n (left, frames, 0.0f);
             std::fill_n (right, frames, 0.0f);
@@ -1082,13 +1263,13 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
             state.gainSet = true;
         }
 
-        const auto sendTo = [&] (const SendPlan& send, bool stereo) noexcept {
+        const auto sendTo = [&] (const SendPlan& send, float sendGain, bool stereo) noexcept {
             float* sl = scratchLeft.data();
             float* sr = scratchRight.data();
             for (int k = 0; k < frames; ++k)
             {
-                sl[k] = left[k] * send.gain;
-                sr[k] = (stereo ? right[k] : left[k]) * send.gain;
+                sl[k] = left[k] * sendGain;
+                sr[k] = (stereo ? right[k] : left[k]) * sendGain;
             }
             if (send.delayLine)
                 send.delayLine->process (sl, sr, frames, send.delay, snap.fadeFrames);
@@ -1100,12 +1281,13 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                 tr[k] += sr[k];
             }
         };
-        for (const auto& send : ch.sends)
-            if (send.pre)
-                sendTo (send, ! mono);
+        const auto sendGain = [&] (std::size_t s) { return s < sendGains.size() ? sendGains[s] : ch.sends[s].gain; };
+        for (std::size_t s = 0; s < ch.sends.size(); ++s)
+            if (ch.sends[s].pre)
+                sendTo (ch.sends[s], sendGain (s), ! mono);
 
         // Fader and pan: the channel becomes stereo here. Gain changes ramp across the span (AT-MIX-2).
-        const float targetL = ch.audible ? ch.gain * ch.panLeft : 0.0f, targetR = ch.audible ? ch.gain * ch.panRight : 0.0f;
+        const float targetL = audible ? gain * panLeft : 0.0f, targetR = audible ? gain * panRight : 0.0f;
         const float startL = state.gainSet ? state.gainLeft : targetL, startR = state.gainSet ? state.gainRight : targetR;
         state.gainLeft = targetL;
         state.gainRight = targetR;
@@ -1124,9 +1306,9 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
             left[k] = l * gl;
             right[k] = r * gr;
         }
-        for (const auto& send : ch.sends)
-            if (! send.pre)
-                sendTo (send, true);
+        for (std::size_t s = 0; s < ch.sends.size(); ++s)
+            if (! ch.sends[s].pre)
+                sendTo (ch.sends[s], sendGain (s), true);
 
         float p = 0;
         for (int k = 0; k < frames; ++k)

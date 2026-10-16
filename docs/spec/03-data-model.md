@@ -339,6 +339,7 @@ AutoPoint { id: Id, pos: Ticks, value: Normalized, curve: float /* −1..1, appl
 - One lane per (track, target). If concurrent creation produces two lanes for the same target, the lane with the smaller `Id` is canonical and points from both are read as one set (union). **Decision D-DM-11.**
 - Values are normalized: volume maps `0..1` to `−inf..+6 dB` with Weft's fader taper (defined in Phase 2 architecture and fixed thereafter, since saved automation depends on it); pan `0..1` → `−1..+1`; mute `<0.5` off, `≥0.5` on.
 - Automation is anchored in ticks.
+- **Decision D-DM-22:** a segment's shape is `t^(4^curve)` for `t` in 0..1 from its first point to the next: 0 is linear, +1 is `t^4` (starts slow), −1 is `t^0.25` (starts fast), and every curve in between is monotonic. The fader taper is `dB = 6 + 60·log10(v)` with `v = 0` as −inf (so 0 dB is at v ≈ 0.794 and −12 dB at v = 0.5); send levels use it too (D-ARCH-28). Two points at the same position play the one with the larger id from there on; the editors don't create such pairs.
 
 ### 8.3 Metronome
 ```ts
@@ -502,3 +503,4 @@ All repairs are deterministic functions of the document state so every client sh
 | D-DM-19 | Adding a tempo/signature change at an existing position edits that point. |
 | D-DM-20 | Plugin state over 64 KB lives in `Blobs/<hash>.bin`; `state` holds the hash. |
 | D-DM-21 | VST3 uid is the 32-hex class ID; hosted ParamIds are VST3 parameter IDs; removed params revert to state. |
+| D-DM-22 | Segment curve shape and the fader taper formula. |

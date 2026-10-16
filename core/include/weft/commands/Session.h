@@ -255,6 +255,29 @@ public:
     std::optional<Id> addAutomationPoint (const Id& trackId, const model::AutomationTarget& target, Ticks pos, double value, double curve = 0.0);
     EditResult moveAutomationPoint (const Id& laneId, const Id& pointId, Ticks pos, double value);
     EditResult deleteAutomationPoint (const Id& laneId, const Id& pointId);
+    /** Bends the segment that starts at a point (Alt+drag, W-8 step 6): -1..+1, 0 linear. */
+    EditResult setAutomationCurve (const Id& laneId, const Id& pointId, double curve);
+    /** Rubber-band + Delete: one undo step. */
+    EditResult deleteAutomationPoints (const Id& laneId, const std::vector<Id>& pointIds);
+    struct PointMove
+    {
+        Id pointId;
+        Ticks pos = 0;
+        double value = 0;
+    };
+    /** Drags several selected points as one undo step. */
+    EditResult moveAutomationPoints (const Id& laneId, const std::vector<PointMove>& moves);
+    /** One lane's part of a live write pass: points in [from, to] are replaced by `points`. */
+    struct AutomationWrite
+    {
+        Id trackId;
+        model::AutomationTarget target;
+        Ticks from = 0, to = 0;
+        std::vector<std::pair<Ticks, double>> points;
+    };
+    /** A whole write pass as one undo step "Write Automation" (W-8); `toLatch` tracks switch
+        from Write to Latch (D-W8-1). */
+    EditResult writeAutomation (const std::vector<AutomationWrite>& writes, const std::vector<Id>& toLatch);
 
     // Tempo, signature, markers --------------------------------------------------
     std::optional<Id> addTempoPoint (Ticks pos, double bpm);

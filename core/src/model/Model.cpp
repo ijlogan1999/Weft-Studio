@@ -525,6 +525,34 @@ std::string AutomationTarget::key() const
     return kind;
 }
 
+std::optional<AutomationTarget> AutomationTarget::fromKey (const std::string& key)
+{
+    AutomationTarget t;
+    if (key == "volume" || key == "pan" || key == "mute")
+    {
+        t.kind = key;
+        return t;
+    }
+    const auto colon = key.find (':');
+    if (colon == std::string::npos)
+        return std::nullopt;
+    t.kind = key.substr (0, colon);
+    const auto rest = key.substr (colon + 1);
+    if (t.kind == "sendLevel" && ! rest.empty())
+    {
+        t.sendId = rest;
+        return t;
+    }
+    const auto second = rest.find (':');
+    if (t.kind == "pluginParam" && second != std::string::npos && second > 0 && second + 1 < rest.size())
+    {
+        t.pluginId = rest.substr (0, second);
+        t.paramId = rest.substr (second + 1);
+        return t;
+    }
+    return std::nullopt;
+}
+
 AutomationTarget AutomationTarget::fromValue (const Value& v)
 {
     AutomationTarget t;

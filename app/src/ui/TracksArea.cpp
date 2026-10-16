@@ -235,8 +235,66 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
     }
+    mode.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
+    describe (mode, "Automation mode");
+    mode.setWantsKeyboardFocus (false);
+    mode.onChange = [this] {
+        static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
+        const auto i = mode.getSelectedItemIndex();
+        if (i >= 0 && i < 5)
+            studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
+    };
+    addChildComponent (mode);
     setTitle ("Track header");
     refresh();
+}
+
+void TrackHeader::rebuildAutomation()
+{
+    const bool shown = studio.automationView;
+    mode.setVisible (shown);
+    const auto lanes = shown ? studio.shownLanes (trackId) : std::vector<model::AutomationTarget> {};
+    const auto choices = shown ? studio.automationTargets (trackId) : std::vector<automation::TargetChoice> {};
+    std::vector<std::string> built;
+    for (const auto& c : choices)
+        built.push_back (c.target.key() + "=" + c.name);
+    for (const auto& l : lanes)
+        built.push_back ("lane:" + l.key());
+    if (built != shownChoices)
+    {
+        shownChoices = built;
+        parameters.clear();
+        addLane.clear();
+        for (std::size_t i = 0; i < lanes.size(); ++i)
+        {
+            auto box = std::make_unique<juce::ComboBox>();
+            describe (*box, "Automation parameter");
+            box->setWantsKeyboardFocus (false);
+            for (std::size_t c = 0; c < choices.size(); ++c)
+                box->addItem (juce::String (choices[c].name), static_cast<int> (c) + 1);
+            for (std::size_t c = 0; c < choices.size(); ++c)
+                if (choices[c].target.key() == lanes[i].key())
+                    box->setSelectedItemIndex (static_cast<int> (c), juce::dontSendNotification);
+            box->onChange = [this, i, choices, b = box.get()] {
+                const auto c = b->getSelectedItemIndex();
+                if (c >= 0 && static_cast<std::size_t> (c) < choices.size())
+                    studio.setShownLane (trackId, i, choices[static_cast<std::size_t> (c)].target);
+            };
+            addAndMakeVisible (*box);
+            parameters.push_back (std::move (box));
+            auto plus = std::make_unique<juce::TextButton> ("+");
+            describe (*plus, "Add automation lane", "Show another automation lane");
+            plus->setWantsKeyboardFocus (false);
+            plus->onClick = [this] { studio.addShownLane (trackId); };
+            addAndMakeVisible (*plus);
+            addLane.push_back (std::move (plus));
+        }
+    }
+    static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
+    if (const auto* t = studio.model().track (trackId))
+        for (int i = 0; i < 5; ++i)
+            if (t->automationMode == modes[i])
+                mode.setSelectedItemIndex (i, juce::dontSendNotification);
 }
 
 void TrackHeader::refresh()
@@ -252,6 +310,8 @@ void TrackHeader::refresh()
     arm.setVisible (commands::LocalView::canArm (*t));
     arm.setColour (juce::TextButton::buttonOnColourId, colour (Token::record));
     arm.setColour (juce::TextButton::textColourOnId, colour (Token::onRecord));
+    rebuildAutomation();
+    resized();
     repaint();
 }
 
@@ -270,11 +330,14 @@ void TrackHeader::paint (juce::Graphics& g)
     g.drawText (juce::String (number), 14, 4, 22, 20, juce::Justification::centredLeft);
     g.setColour (colour (Token::border));
     g.drawHorizontalLine (getHeight() - 1, 0.0f, static_cast<float> (getWidth()));
+    for (std::size_t i = 0; i < parameters.size(); ++i)
+        g.drawHorizontalLine (studio.trackHeight (trackId) + static_cast<int> (i) * Studio::automationLaneHeight, 32.0f, static_cast<float> (getWidth()));
 }
 
 void TrackHeader::resized()
 {
-    auto r = getLocalBounds().reduced (4).withTrimmedLeft (32);
+    const auto trackPart = getLocalBounds().withHeight (studio.trackHeight (trackId));
+    auto r = trackPart.reduced (4).withTrimmedLeft (32);
     auto row = r.removeFromTop (24);
     for (auto* b : { &arm, &solo, &mute })
     {
@@ -282,16 +345,32 @@ void TrackHeader::resized()
         row.removeFromRight (3);
     }
     name.setBounds (row);
+    // Automation lanes: the parameter and "+" on each; the track's mode on the first (W-8 step 1).
+    for (std::size_t i = 0; i < parameters.size(); ++i)
+    {
+        auto lane = juce::Rectangle<int> (0, trackPart.getBottom() + static_cast<int> (i) * Studio::automationLaneHeight, getWidth(),
+                                          Studio::automationLaneHeight)
+                        .reduced (4)
+                        .withTrimmedLeft (32);
+        auto top = lane.removeFromTop (22);
+        addLane[i]->setBounds (top.removeFromRight (24));
+        top.removeFromRight (3);
+        parameters[i]->setBounds (top);
+        if (i == 0)
+            mode.setBounds (lane.removeFromTop (24).withTrimmedTop (2).withWidth (std::min (lane.getWidth(), 90)));
+    }
 }
 
 void TrackHeader::mouseMove (const juce::MouseEvent& e)
 {
-    setMouseCursor (e.y >= getHeight() - 4 ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+    const auto bottom = studio.trackHeight (trackId);
+    setMouseCursor (e.y >= bottom - 4 && e.y <= bottom ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
 }
 
 void TrackHeader::mouseDown (const juce::MouseEvent& e)
 {
-    resizeFrom = e.y >= getHeight() - 4 ? getHeight() : -1;
+    const auto bottom = studio.trackHeight (trackId);
+    resizeFrom = e.y >= bottom - 4 && e.y <= bottom ? bottom : -1;
     studio.selectTrack (trackId);
 }
 
@@ -311,19 +390,49 @@ Timeline::Timeline (Studio& s) : studio (s)
 
 int Timeline::rows() const { return static_cast<int> (studio.model().trackOrder.size()); }
 
-juce::Rectangle<float> Timeline::laneBounds (int row) const
+juce::Rectangle<float> Timeline::rowBounds (int row) const
 {
     float y = static_cast<float> (-scrollY);
     const auto& order = studio.model().trackOrder;
     for (int i = 0; i < row && i < static_cast<int> (order.size()); ++i)
-        y += static_cast<float> (studio.trackHeight (order[static_cast<std::size_t> (i)]));
-    const auto h = row < static_cast<int> (order.size()) ? studio.trackHeight (order[static_cast<std::size_t> (row)]) : defaultTrackHeight;
+        y += static_cast<float> (studio.rowHeight (order[static_cast<std::size_t> (i)]));
+    const auto h = row < static_cast<int> (order.size()) ? studio.rowHeight (order[static_cast<std::size_t> (row)]) : defaultTrackHeight;
     if (row >= static_cast<int> (order.size()))
         y += static_cast<float> ((row - static_cast<int> (order.size())) * defaultTrackHeight);
     return { 0.0f, y, static_cast<float> (getWidth()), static_cast<float> (h) };
 }
 
-int Timeline::contentHeight() const { return static_cast<int> (laneBounds (rows()).getY()) + scrollY; }
+juce::Rectangle<float> Timeline::laneBounds (int row) const
+{
+    const auto& order = studio.model().trackOrder;
+    auto r = rowBounds (row);
+    if (row >= 0 && row < static_cast<int> (order.size()))
+        r.setHeight (static_cast<float> (studio.trackHeight (order[static_cast<std::size_t> (row)])));
+    return r;
+}
+
+juce::Rectangle<float> Timeline::automationBounds (int row, std::size_t index) const
+{
+    const auto lane = laneBounds (row);
+    return lane.withY (lane.getBottom() + static_cast<float> (index * Studio::automationLaneHeight)).withHeight (static_cast<float> (Studio::automationLaneHeight));
+}
+
+std::optional<Timeline::AutomationHit> Timeline::automationLaneAt (juce::Point<float> p) const
+{
+    if (! studio.automationView)
+        return std::nullopt;
+    const auto row = rowAt (p.y);
+    if (row < 0 || row >= rows())
+        return std::nullopt;
+    const auto trackId = studio.model().trackOrder[static_cast<std::size_t> (row)];
+    const auto lanes = studio.shownLanes (trackId);
+    for (std::size_t i = 0; i < lanes.size(); ++i)
+        if (const auto box = automationBounds (row, i); box.contains (p))
+            return AutomationHit { trackId, lanes[i], box };
+    return std::nullopt;
+}
+
+int Timeline::contentHeight() const { return static_cast<int> (rowBounds (rows()).getY()) + scrollY; }
 
 int Timeline::rowAt (float y) const
 {
@@ -331,9 +440,271 @@ int Timeline::rowAt (float y) const
         return -1;
     const auto n = rows();
     for (int i = 0; i < n; ++i)
-        if (laneBounds (i).getBottom() > y)
+        if (rowBounds (i).getBottom() > y)
             return i;
-    return n + static_cast<int> ((y - laneBounds (n).getY()) / defaultTrackHeight);
+    return n + static_cast<int> ((y - rowBounds (n).getY()) / defaultTrackHeight);
+}
+
+// Automation lanes (W-8) ----------------------------------------------------------------
+
+namespace
+{
+constexpr float lanePad = 6.0f, pointRadius = 4.0f, pointReach = 7.0f;
+} // namespace
+
+double Timeline::valueAtY (juce::Rectangle<float> box, float y)
+{
+    const auto h = std::max (1.0f, box.getHeight() - 2 * lanePad);
+    return std::clamp (1.0 - static_cast<double> (y - box.getY() - lanePad) / h, 0.0, 1.0);
+}
+
+juce::Point<float> Timeline::pointPosition (const AutomationHit& lane, const model::AutoPoint& point) const
+{
+    const auto h = lane.box.getHeight() - 2 * lanePad;
+    return { static_cast<float> (studio.view.tickToX (static_cast<double> (point.pos))),
+             lane.box.getY() + lanePad + static_cast<float> (1.0 - point.value) * h };
+}
+
+std::optional<model::AutoPoint> Timeline::pointNear (const AutomationHit& lane, juce::Point<float> p) const
+{
+    const auto* l = studio.model().lane (lane.trackId, lane.target);
+    if (l == nullptr)
+        return std::nullopt;
+    std::optional<model::AutoPoint> best;
+    float bestDistance = pointReach;
+    for (const auto& point : automation::sortedPoints (*l))
+        if (const auto d = pointPosition (lane, point).getDistanceFrom (p); d <= bestDistance)
+        {
+            bestDistance = d;
+            best = point;
+        }
+    return best;
+}
+
+std::pair<Ticks, double> Timeline::pointDelta (juce::Point<float> p, juce::ModifierKeys mods) const
+{
+    auto dx = p.x - downAt.x, dy = p.y - downAt.y;
+    if (mods.isShiftDown()) // Shift constrains to one axis (W-8 step 3)
+    {
+        if (std::abs (dx) >= std::abs (dy))
+            dy = 0;
+        else
+            dx = 0;
+    }
+    const auto raw = static_cast<Ticks> (std::llround (dx / studio.view.pixelsPerTick));
+    const auto to = std::abs (dx) < 0.5f ? grabbed.pos : std::max<Ticks> (0, studio.snapped (grabbed.pos + raw, mods.isAltDown()));
+    const auto h = std::max (1.0f, autoLane.box.getHeight() - 2 * lanePad);
+    return { to - grabbed.pos, -static_cast<double> (dy) / h };
+}
+
+std::vector<model::AutoPoint> Timeline::previewPoints (const AutomationHit& lane) const
+{
+    const auto* l = studio.model().lane (lane.trackId, lane.target);
+    if (l == nullptr)
+        return {};
+    auto points = automation::sortedPoints (*l);
+    const bool mine = autoLane.trackId == lane.trackId && autoLane.target.key() == lane.target.key();
+    if (mine && autoDrag == AutoDrag::move && lastAt != downAt)
+    {
+        const auto [dt, dv] = pointDelta (lastAt, dragMods);
+        for (auto& point : points)
+            if (studio.pointSelection.points.contains (point.id))
+            {
+                point.pos = std::max<Ticks> (0, point.pos + dt);
+                point.value = std::clamp (point.value + dv, 0.0, 1.0);
+            }
+        std::stable_sort (points.begin(), points.end(), [] (const auto& a, const auto& b) { return a.pos < b.pos; });
+    }
+    if (mine && autoDrag == AutoDrag::bend)
+        for (auto& point : points)
+            if (point.id == grabbed.id)
+                point.curve = bendCurve;
+    return points;
+}
+
+void Timeline::paintAutomation (juce::Graphics& g, const AutomationHit& lane)
+{
+    const auto& m = studio.model();
+    const auto* track = m.track (lane.trackId);
+    if (track == nullptr)
+        return;
+    g.setColour (colour (Token::surface).withAlpha (0.7f));
+    g.fillRect (lane.box);
+    g.setColour (colour (Token::border));
+    g.drawHorizontalLine (juce::roundToInt (lane.box.getY()), 0.0f, lane.box.getRight());
+    const auto points = previewPoints (lane);
+    const auto line = colourFor (track->color.palette, track->color.rgb);
+    const bool active = track->automationMode != "off" && ! points.empty();
+    const auto h = lane.box.getHeight() - 2 * lanePad;
+    const auto yFor = [&] (double v) { return lane.box.getY() + lanePad + static_cast<float> (1.0 - v) * h; };
+    juce::Path path;
+    if (points.empty())
+    {
+        // An empty lane plays the static value (W-8 step 5).
+        double fallback = 0;
+        if (lane.target.kind == "pluginParam")
+            if (const auto proc = studio.processor (lane.target.pluginId))
+                if (const auto i = proc->parameterIndex (lane.target.paramId); i >= 0)
+                    fallback = proc->parameter (i);
+        const auto y = yFor (automation::staticValue (*track, lane.target, fallback));
+        path.startNewSubPath (lane.box.getX(), y);
+        path.lineTo (lane.box.getRight(), y);
+    }
+    else
+        for (float x = lane.box.getX(); x <= lane.box.getRight(); x += 2.0f)
+        {
+            const auto y = yFor (automation::valueAt (points, studio.view.xToTick (x)));
+            if (x <= lane.box.getX())
+                path.startNewSubPath (x, y);
+            else
+                path.lineTo (x, y);
+        }
+    g.setColour (active ? line : colour (Token::textDim));
+    g.strokePath (path, juce::PathStrokeType (active ? 2.0f : 1.0f));
+    for (const auto& point : points)
+    {
+        const auto c = pointPosition (lane, point);
+        if (c.x < -pointRadius || c.x > lane.box.getRight() + pointRadius)
+            continue;
+        const bool selected = studio.pointSelection.points.contains (point.id);
+        const auto dot = juce::Rectangle<float> (pointRadius * 2, pointRadius * 2).withCentre (c);
+        g.setColour (selected ? colour (Token::accent) : colour (Token::lane));
+        g.fillEllipse (dot);
+        g.setColour (selected ? colour (Token::text) : line);
+        g.drawEllipse (dot, 1.5f);
+    }
+    g.setColour (colour (Token::textDim));
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText (studio.automationTargetName (lane.trackId, lane.target), lane.box.reduced (6.0f, 2.0f), juce::Justification::topLeft);
+    if (autoDrag == AutoDrag::band && autoLane.box == lane.box)
+    {
+        const auto band = juce::Rectangle<float> (downAt, lastAt);
+        g.setColour (colour (Token::accent).withAlpha (0.15f));
+        g.fillRect (band);
+        g.setColour (colour (Token::accent));
+        g.drawRect (band, 1.0f);
+    }
+}
+
+void Timeline::automationDown (const AutomationHit& hit, juce::Point<float> p, juce::ModifierKeys mods)
+{
+    autoLane = hit;
+    dragMods = mods;
+    toggleOnUp = false;
+    const auto* lane = studio.model().lane (hit.trackId, hit.target);
+    auto& sel = studio.pointSelection;
+    if (lane == nullptr || sel.laneId != lane->id)
+        sel = { lane != nullptr ? lane->id : Id {}, {} };
+    if (const auto near = pointNear (hit, p))
+    {
+        grabbed = *near;
+        if (mods.isShiftDown() && sel.points.contains (near->id))
+            toggleOnUp = true;
+        else if (mods.isShiftDown())
+            sel.points.insert (near->id);
+        else if (! sel.points.contains (near->id))
+            sel.points = { near->id };
+        autoDrag = AutoDrag::move;
+    }
+    else if (mods.isAltDown() && lane != nullptr)
+    {
+        // Alt+drag on a segment bends it (W-8 step 6).
+        const auto points = automation::sortedPoints (*lane);
+        const auto tick = studio.view.xToTick (p.x);
+        autoDrag = AutoDrag::none;
+        for (std::size_t i = 0; i + 1 < points.size(); ++i)
+            if (static_cast<double> (points[i].pos) <= tick && tick < static_cast<double> (points[i + 1].pos))
+            {
+                grabbed = points[i];
+                bendCurve = points[i].curve;
+                bendSign = points[i + 1].value >= points[i].value ? -1.0 : 1.0;
+                autoDrag = AutoDrag::bend;
+            }
+    }
+    else
+    {
+        if (! mods.isShiftDown())
+            sel.points.clear();
+        autoDrag = AutoDrag::add;
+    }
+    repaint();
+}
+
+void Timeline::automationDrag (juce::Point<float> p, juce::ModifierKeys mods)
+{
+    lastAt = p;
+    dragMods = mods;
+    switch (autoDrag)
+    {
+        case AutoDrag::add:
+            if (p.getDistanceFrom (downAt) > 4.0f)
+                autoDrag = AutoDrag::band;
+            break;
+        case AutoDrag::bend:
+            bendCurve = std::clamp (grabbed.curve + bendSign * static_cast<double> (downAt.y - p.y) / 60.0, -1.0, 1.0);
+            break;
+        case AutoDrag::band:
+        case AutoDrag::move:
+        case AutoDrag::none:
+            break;
+    }
+    repaint();
+}
+
+void Timeline::automationUp (juce::Point<float> p, juce::ModifierKeys mods)
+{
+    lastAt = p;
+    dragMods = mods;
+    auto& s = studio.session();
+    auto& sel = studio.pointSelection;
+    const auto* lane = s.model().lane (autoLane.trackId, autoLane.target);
+    switch (autoDrag)
+    {
+        case AutoDrag::add:
+        {
+            const auto at = std::max<Ticks> (0, studio.snapped (tickAt (p.x), mods.isAltDown()));
+            if (const auto id = s.addAutomationPoint (autoLane.trackId, autoLane.target, at, valueAtY (autoLane.box, p.y)))
+            {
+                const auto* added = s.model().lane (autoLane.trackId, autoLane.target);
+                sel = { added != nullptr ? added->id : Id {}, { *id } };
+            }
+            else
+                studio.setStatus (juce::String (s.lastError()));
+            studio.edited();
+            break;
+        }
+        case AutoDrag::band:
+            if (lane != nullptr)
+            {
+                const auto band = juce::Rectangle<float> (downAt, p);
+                sel.laneId = lane->id;
+                for (const auto& point : automation::sortedPoints (*lane))
+                    if (band.contains (pointPosition (autoLane, point)))
+                        sel.points.insert (point.id);
+            }
+            break;
+        case AutoDrag::move:
+            if (lane != nullptr && p.getDistanceFrom (downAt) > 1.0f)
+            {
+                const auto [dt, dv] = pointDelta (p, mods);
+                std::vector<commands::Session::PointMove> moves;
+                for (const auto& point : automation::sortedPoints (*lane))
+                    if (sel.points.contains (point.id))
+                        moves.push_back ({ point.id, std::max<Ticks> (0, point.pos + dt), std::clamp (point.value + dv, 0.0, 1.0) });
+                studio.check (s.moveAutomationPoints (lane->id, moves));
+            }
+            else if (toggleOnUp)
+                sel.points.erase (grabbed.id);
+            break;
+        case AutoDrag::bend:
+            if (lane != nullptr)
+                studio.check (s.setAutomationCurve (lane->id, grabbed.id, bendCurve));
+            break;
+        case AutoDrag::none:
+            break;
+    }
+    autoDrag = AutoDrag::none;
+    repaint();
 }
 
 juce::Rectangle<float> Timeline::regionBounds (const model::Region& r) const
@@ -527,6 +898,18 @@ void Timeline::paint (juce::Graphics& g)
         }
     }
     paintGrid (g, getLocalBounds().toFloat());
+    if (studio.automationView)
+        for (int row = 0; row < rows(); ++row)
+        {
+            const auto trackId = m.trackOrder[static_cast<std::size_t> (row)];
+            const auto lanes = studio.shownLanes (trackId);
+            for (std::size_t i = 0; i < lanes.size(); ++i)
+            {
+                const auto box = automationBounds (row, i);
+                if (box.getBottom() >= 0 && box.getY() <= getHeight())
+                    paintAutomation (g, { trackId, lanes[i], box });
+            }
+        }
     if (m.info.cycle.enabled)
     {
         g.setColour (colour (Token::playhead).withAlpha (0.06f));
@@ -636,6 +1019,12 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
     const auto trackId = row >= 0 && row < rows() ? m.trackOrder[static_cast<std::size_t> (row)] : Id {};
     if (! trackId.empty())
         studio.selectTrack (trackId);
+    if (const auto hit = automationLaneAt (p))
+    {
+        automationDown (*hit, p, mods);
+        return;
+    }
+    studio.pointSelection = {};
 
     if (clicks >= 2 && r != nullptr)
     {
@@ -719,6 +1108,8 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
 
 void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
 {
+    if (autoDrag != AutoDrag::none)
+        return automationDrag (p, mods);
     lastAt = p;
     auto& s = studio.session();
     const auto& m = studio.model();
@@ -783,7 +1174,8 @@ void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
 
 void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
 {
-    juce::ignoreUnused (p, mods);
+    if (autoDrag != AutoDrag::none)
+        return automationUp (p, mods);
     if (drag == Drag::move && regionDrag)
     {
         const bool moved = regionDrag->deltaTicks() != 0 || ! regionDrag->preview().newTracks.empty()
@@ -812,6 +1204,12 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
 
 bool Timeline::cancelDrag()
 {
+    if (autoDrag != AutoDrag::none)
+    {
+        autoDrag = AutoDrag::none;
+        repaint();
+        return true;
+    }
     if (drag == Drag::none)
         return false;
     if (regionDrag)
@@ -964,7 +1362,7 @@ void TracksArea::rebuildHeaders()
 void TracksArea::layoutHeaders()
 {
     for (std::size_t i = 0; i < trackHeaders.size(); ++i)
-        trackHeaders[i]->setBounds (lanes.laneBounds (static_cast<int> (i)).withX (0).withWidth (static_cast<float> (headerWidth)).toNearestInt());
+        trackHeaders[i]->setBounds (lanes.rowBounds (static_cast<int> (i)).withX (0).withWidth (static_cast<float> (headerWidth)).toNearestInt());
 }
 
 void TracksArea::changeListenerCallback (juce::ChangeBroadcaster*)

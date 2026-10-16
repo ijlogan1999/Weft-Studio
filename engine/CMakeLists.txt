@@ -16,6 +16,7 @@ add_library(weft_engine STATIC
     src/record/RecordPass.cpp
     src/record/RecordWriter.cpp
     src/transport/Engine.cpp
+    src/transport/LiveAutomation.cpp
     src/transport/Metronome.cpp
 )
 add_library(weft::engine ALIAS weft_engine)

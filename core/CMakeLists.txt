@@ -24,6 +24,7 @@ add_library(weft_core STATIC
     src/media/MidiFile.cpp
     src/media/Resample.cpp
     src/media/WavFile.cpp
+    src/model/Automation.cpp
     src/model/Model.cpp
     src/model/Projector.cpp
     src/project/ProjectFolder.cpp

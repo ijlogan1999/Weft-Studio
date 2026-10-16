@@ -249,7 +249,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         case 5:
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
-                            Cmd::toggleGlobalTracks })
+                            Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             menu.addSeparator();
             for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::keyboardMidi, Cmd::toggleTheme })

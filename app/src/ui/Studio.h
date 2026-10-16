@@ -17,6 +17,8 @@
 #include "weft/engine/plugins/PluginCatalog.h"
 #include "weft/engine/plugins/Vst3Host.h"
 #include "weft/engine/transport/Engine.h"
+#include "weft/engine/transport/LiveAutomation.h"
+#include "weft/model/Automation.h"
 #include "weft/project/ProjectFolder.h"
 
 #include <juce_events/juce_events.h>
@@ -208,6 +210,37 @@ public:
     bool pluginStatePending (const Id& pluginId) const { return pendingState.contains (pluginId); }
     std::function<void (const Id& pluginId)> openPluginEditor;
 
+    // Automation (M7) --------------------------------------------------------------------
+    /** Automation view (A): lanes under each track (local view state, F-AUT-1). */
+    bool automationView = false;
+    static constexpr int automationLaneHeight = 60;
+    /** The lanes a track shows in automation view, top to bottom (first: Volume). */
+    std::vector<model::AutomationTarget> shownLanes (const Id& trackId) const;
+    /** The parameter selector of a shown lane. */
+    void setShownLane (const Id& trackId, std::size_t index, const model::AutomationTarget& target);
+    /** "+": another lane, showing the next parameter not yet shown. */
+    void addShownLane (const Id& trackId);
+    /** A track row: the track lane plus its automation lanes in automation view. */
+    int rowHeight (const Id& trackId) const;
+    /** What a track can automate (AT-AUT-2); plug-in parameters come from the engine's processors. */
+    std::vector<automation::TargetChoice> automationTargets (const Id& trackId) const;
+    juce::String automationTargetName (const Id& trackId, const model::AutomationTarget& target) const;
+    /** Selected automation points of one lane; Delete removes them (F-AUT-3). */
+    struct PointSelection
+    {
+        Id laneId;
+        std::set<Id> points;
+    };
+    PointSelection pointSelection;
+    /** Mixer controls (F-AUT-6): while a target is live (W-8) a gesture overrides or writes its
+        automation; otherwise it changes the static value. Values are normalized. */
+    bool automationLive (const Id& trackId, const model::AutomationTarget& target) const;
+    void touchControl (const Id& trackId, const model::AutomationTarget& target, double normalized);
+    void releaseControl (const Id& trackId, const model::AutomationTarget& target);
+    /** What the engine plays for a target while automation drives it (controls follow it). */
+    std::optional<double> automationValue (const Id& trackId, const model::AutomationTarget& target) const;
+    engine::LiveAutomation& liveAutomation() noexcept { return *live; }
+
     /** "Remove bus and N sends?" (W-7 step 6) for a bus; empty when no question is needed. */
     juce::String deleteTrackQuestion (const Id& trackId) const;
     bool deleteTrack (const Id& trackId);
@@ -231,6 +264,8 @@ private:
     commands::LocalView local;
     engine::KeyboardMidi keys;
     std::map<Id, int> heights;
+    std::map<Id, std::vector<model::AutomationTarget>> lanesShown;
+    std::unique_ptr<engine::LiveAutomation> live;
     std::map<std::string, std::vector<float>> peakCache;
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
     std::int64_t locatedFrame = -1;

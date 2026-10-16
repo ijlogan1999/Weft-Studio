@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <string>
@@ -66,16 +67,39 @@ struct ChannelState
     std::shared_ptr<DelayLine> delayFor (const std::string& edge, int delay);
 };
 
+/**
+    One automated parameter's live state (W-8), kept across snapshots by (track, target).
+    The message thread touches it; the audio thread follows it and reports what it applied.
+*/
+struct AutomationSlot
+{
+    /** A touched control's value (normalized), or NaN when nothing overrides the lane. */
+    std::atomic<double> touched { std::numeric_limits<double>::quiet_NaN() };
+    /** Set on a Touch release: the value glides back to the lane over glideSeconds. */
+    std::atomic<bool> glide { false };
+    /** The value applied last (normalized), NaN before the first block. For the UI. */
+    std::atomic<double> applied { std::numeric_limits<double>::quiet_NaN() };
+    static constexpr double glideSeconds = 0.2;
+
+    // Audio thread only.
+    double glideFrom = 0;
+    std::int64_t glideLeft = 0, glideLength = 0;
+};
+
 /** Channel states by track id (the master's under its own id). Message thread. */
 class MixerState
 {
 public:
     std::shared_ptr<ChannelState> channel (const Id& trackId);
     std::shared_ptr<ChannelState> find (const Id& trackId) const;
+    /** The live state of an automated target ("<track>|<target key>"), made on first use. */
+    std::shared_ptr<AutomationSlot> automation (const Id& trackId, const std::string& targetKey);
+    std::shared_ptr<AutomationSlot> findAutomation (const Id& trackId, const std::string& targetKey) const;
     void prune (const std::vector<Id>& keep);
 
 private:
     std::map<Id, std::shared_ptr<ChannelState>> channels;
+    std::map<std::string, std::shared_ptr<AutomationSlot>> automations;
 };
 
 /**

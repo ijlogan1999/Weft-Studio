@@ -78,12 +78,51 @@ struct SendPlan
     bool pre = false;
     std::shared_ptr<DelayLine> delayLine; // delay compensation for this edge (F-MIX-13)
     int delay = 0;
+    Id sendId;
 };
 
 /** An insert that processes (bypassed inserts aren't planned, so bypass is bit-exact). */
 struct InsertPlan
 {
     std::shared_ptr<EffectSlot> slot;
+    Id pluginId;
+};
+
+/** A lane point at a device-rate position (W-8). Segments are interpolated in time (D-ARCH-29). */
+struct AutomationNode
+{
+    std::int64_t at = 0;
+    double value = 0; // normalized
+    double curve = 0; // shape of the segment that starts here
+};
+
+enum class AutomationKind : std::uint8_t
+{
+    volume,
+    pan,
+    mute,
+    send,  // index: into ChannelPlan::sends
+    param  // index: into the inserts, or -1 for the instrument; param: the parameter index
+};
+
+/**
+    One automated target of a channel (W-8): the lane's points, followed while the mode isn't
+    Off, and the slot through which a touched control overrides them.
+*/
+struct AutomationPlan
+{
+    AutomationKind kind = AutomationKind::volume;
+    int index = -1, param = -1;
+    std::vector<AutomationNode> nodes; // sorted; empty: the static value (only touches move it)
+    double staticValue = 0;            // normalized
+    std::int64_t glideFrames = 9600;   // AutomationSlot::glideSeconds at the device rate
+    std::shared_ptr<AutomationSlot> slot;
+
+    /** The lane's value at a position (no touch or glide). Audio thread safe. */
+    double laneValue (std::int64_t at) const noexcept;
+    /** What the target plays at a position: a touch, a glide back to the lane, or the lane.
+        `frames` advances the glide. Audio thread. */
+    double valueAt (std::int64_t at, int frames) const noexcept;
 };
 
 /**
@@ -99,6 +138,7 @@ struct ChannelPlan
     float gain = 1;            // fader
     float panLeft = 1, panRight = 1; // constant-power pan (mono) or balance (stereo), F-MIX-3
     bool audible = true;       // false when muted, or silenced by another channel's solo (D-W6-1, D-W6-2)
+    bool soloAudible = true;   // not silenced by another channel's solo (mute automation keeps this)
     int output = -1;           // channel index of the destination bus, or -1 for the master
     std::vector<SendPlan> sends;
     std::vector<InsertPlan> inserts;
@@ -106,6 +146,8 @@ struct ChannelPlan
     std::shared_ptr<DelayLine> outputDelayLine;
     int outputDelay = 0;
     std::shared_ptr<ChannelState> state; // fader ramp and meter
+    std::vector<AutomationPlan> automation; // W-8
+    bool automatesInserts = false;          // an insert parameter is automated: inserts run split at points
 
     std::vector<AudioSegment> segments; // sorted by start; overlapping only where regions crossfade
     std::int64_t longestSegment = 0;
@@ -133,6 +175,9 @@ struct EngineSnapshot
     bool punchEnabled = false;
     std::int64_t punchStart = 0, punchEnd = 0;
     float masterGain = 1;
+    float masterPanLeft = 1, masterPanRight = 1; // master balance
+    bool masterAudible = true;
+    std::vector<AutomationPlan> masterAutomation;
     std::vector<InsertPlan> masterInserts; // the master's inserts process the whole mix (F-MIX-11)
     std::shared_ptr<ChannelState> masterState;
     int masterLatency = 0;     // the longest path to the master, compensated on every other path
@@ -160,10 +205,14 @@ struct MixerRacks
 
 /**
     Builds a snapshot of the projected model at the device sample rate. Missing media plays
-    as silence; an insert with no slot in the rack is skipped.
+    as silence; an insert with no slot in the rack is skipped. `touchedTargets` ("<track>|<target
+    key>") get an automation plan even without a lane, so a touched control can override them.
 */
 std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& model, double deviceRate, int maxBlock, const MediaPool& media,
-                                                 MixerRacks racks, const LocalMixState& local = {});
+                                                 MixerRacks racks, const LocalMixState& local = {}, const std::set<std::string>& touchedTargets = {});
+
+/** Whether a track's mode plays its lanes: anything but Off (W-8). */
+bool followsAutomation (const model::Track& track) noexcept;
 
 /** Constant-power pan gains for a mono source at pan -1..+1 (centre = -3 dB each side). */
 std::pair<float, float> panGains (double pan) noexcept;

@@ -13,6 +13,13 @@ const char* const feedbackText = "Would create a feedback loop";
 
 bool isSilent (double db) { return db <= fader::minDb + 1e-6; }
 
+model::AutomationTarget targetOf (const char* kind)
+{
+    model::AutomationTarget t;
+    t.kind = kind;
+    return t;
+}
+
 } // namespace
 
 void KnobLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&)
@@ -64,6 +71,14 @@ void setDbSlider (juce::Slider& s, double db)
 } // namespace
 
 // Fader law --------------------------------------------------------------------------------
+
+juce::NormalisableRange<double> fader::range()
+{
+    // Positions follow the automation taper (D-ARCH-28), so a lane and the fader agree.
+    return { minDb, maxDb,
+             [] (double, double, double proportion) { return std::clamp (automation::toDb (proportion), minDb, maxDb); },
+             [] (double, double, double db) { return db <= minDb + 1e-6 ? 0.0 : automation::fromDb (db); } };
+}
 
 juce::String fader::dbText (double db)
 {
@@ -325,21 +340,52 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
         return n == 0 ? juce::String ("C") : juce::String (std::abs (n)) + (n < 0 ? "L" : "R");
     };
     pan.setPopupDisplayEnabled (true, true, nullptr);
-    pan.onDragStart = [this] { studio.session().beginGesture ("Pan"); };
-    pan.onDragEnd = [this] { studio.session().endGesture(); };
+    // Fader, pan and mute gestures write or override automation while it is live (W-8, F-AUT-6).
+    pan.onDragStart = [this] {
+        livePan = studio.automationLive (id, targetOf ("pan"));
+        if (! livePan)
+            studio.session().beginGesture ("Pan");
+    };
+    pan.onDragEnd = [this] {
+        if (livePan)
+            studio.releaseControl (id, targetOf ("pan"));
+        else
+            studio.session().endGesture();
+        livePan = false;
+    };
     pan.onValueChange = [this] {
+        if (livePan)
+            return studio.touchControl (id, targetOf ("pan"), automation::fromPan (pan.getValue() / 100.0));
         studio.check (studio.session().setTrackPan (id, pan.getValue() / 100.0));
         studio.edited();
     };
     addAndMakeVisible (pan);
 
     styleSlider (volume, juce::Slider::LinearVertical, fader::minDb, fader::maxDb, 0.0, *knobs);
-    volume.setSkewFactor (3.0);
+    volume.setNormalisableRange (fader::range());
     describe (volume, "Volume", "Volume (Alt+click: 0 dB, Shift-drag: fine)");
     volume.textFromValueFunction = [] (double v) { return fader::dbText (v) + " dB"; };
-    volume.onDragStart = [this] { studio.session().beginGesture ("Volume"); };
-    volume.onDragEnd = [this] { studio.session().endGesture(); };
-    volume.onValueChange = [this] { setVolume (isSilent (volume.getValue()) ? fader::silentDb : volume.getValue()); };
+    volume.onDragStart = [this] {
+        liveVolume = studio.automationLive (id, targetOf ("volume"));
+        if (! liveVolume)
+            studio.session().beginGesture ("Volume");
+    };
+    volume.onDragEnd = [this] {
+        if (liveVolume)
+            studio.releaseControl (id, targetOf ("volume"));
+        else
+            studio.session().endGesture();
+        liveVolume = false;
+    };
+    volume.onValueChange = [this] {
+        const auto db = isSilent (volume.getValue()) ? fader::silentDb : volume.getValue();
+        if (liveVolume)
+        {
+            readout.setText (fader::dbText (db), juce::dontSendNotification);
+            return studio.touchControl (id, targetOf ("volume"), automation::fromDb (db));
+        }
+        setVolume (db);
+    };
     addAndMakeVisible (volume);
 
     readout.setJustificationType (juce::Justification::centred);
@@ -376,8 +422,19 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     monitor.setColour (juce::TextButton::buttonOnColourId, colour (Token::accent));
     monitor.setColour (juce::TextButton::textColourOnId, colour (Token::onAccent));
     mute.onClick = [this] {
-        if (const auto* t = track())
-            studio.check (studio.session().setTrackMute (id, ! t->mute));
+        const auto* t = track();
+        if (t == nullptr)
+            return;
+        const auto mutes = targetOf ("mute");
+        if (studio.automationLive (id, mutes))
+        {
+            // A click is a touch and a release: Latch and Write hold it until stop.
+            const auto now = studio.automationValue (id, mutes).value_or (t->mute ? 1.0 : 0.0);
+            studio.touchControl (id, mutes, automation::toMute (now) ? 0.0 : 1.0);
+            studio.releaseControl (id, mutes);
+            return;
+        }
+        studio.check (studio.session().setTrackMute (id, ! t->mute));
         studio.edited();
     };
     solo.onClick = [this] { studio.toggleSolo (id, juce::ModifierKeys::currentModifiers.isCommandDown()); };
@@ -574,6 +631,29 @@ void ChannelStrip::updateMeter (double now)
 {
     const auto m = studio.engine().takeMeter (isMaster() ? Id() : id);
     meter.update (m.output, m.clip, now);
+}
+
+void ChannelStrip::followAutomation()
+{
+    // Controls move with the automation the engine plays (W-8 "control follows automation").
+    const auto v = studio.automationValue (id, targetOf ("volume"));
+    const auto p = studio.automationValue (id, targetOf ("pan"));
+    const auto m = studio.automationValue (id, targetOf ("mute"));
+    if (v && ! volume.isMouseButtonDown())
+    {
+        const auto db = automation::toDb (*v);
+        setDbSlider (volume, db);
+        if (! readout.isBeingEdited())
+            readout.setText (fader::dbText (db), juce::dontSendNotification);
+    }
+    if (p && ! pan.isMouseButtonDown())
+        pan.setValue (automation::toPan (*p) * 100.0, juce::dontSendNotification);
+    if (m)
+        mute.setToggleState (automation::toMute (*m), juce::dontSendNotification);
+    const bool following = v || p || m;
+    if (followed && ! following)
+        refresh(); // back to the static values
+    followed = following;
 }
 
 void ChannelStrip::paint (juce::Graphics& g)
@@ -1027,8 +1107,14 @@ void MixerView::timerCallback()
         return;
     const auto now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
     for (auto& s : channelStrips)
+    {
         s->updateMeter (now);
+        s->followAutomation();
+    }
     if (master != nullptr)
+    {
         master->updateMeter (now);
+        master->followAutomation();
+    }
 }
 } // namespace weft::ui

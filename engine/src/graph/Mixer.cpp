@@ -73,9 +73,27 @@ std::shared_ptr<ChannelState> MixerState::find (const Id& trackId) const
     return it == channels.end() ? nullptr : it->second;
 }
 
+std::shared_ptr<AutomationSlot> MixerState::automation (const Id& trackId, const std::string& targetKey)
+{
+    auto& slot = automations[trackId + "|" + targetKey];
+    if (! slot)
+        slot = std::make_shared<AutomationSlot>();
+    return slot;
+}
+
+std::shared_ptr<AutomationSlot> MixerState::findAutomation (const Id& trackId, const std::string& targetKey) const
+{
+    const auto it = automations.find (trackId + "|" + targetKey);
+    return it == automations.end() ? nullptr : it->second;
+}
+
 void MixerState::prune (const std::vector<Id>& keep)
 {
     std::erase_if (channels, [&] (const auto& kv) { return std::find (keep.begin(), keep.end(), kv.first) == keep.end(); });
+    std::erase_if (automations, [&] (const auto& kv) {
+        const auto track = kv.first.substr (0, kv.first.find ('|'));
+        return std::find (keep.begin(), keep.end(), track) == keep.end();
+    });
 }
 
 float gainToDb (float gain) noexcept { return gain > 1.0e-7f ? 20.0f * std::log10 (gain) : -144.0f; }
