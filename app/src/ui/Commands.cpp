@@ -83,6 +83,9 @@ std::vector<CommandInfo> build()
         { Cmd::signIn, "Sign In...", "", {} },
         { Cmd::signOut, "Sign Out", "", {} },
         { Cmd::goOffline, "Go Offline", "", {} },
+        { Cmd::addComment, "Add Comment", "Shift+C", { key ('C', shift) } },
+        { Cmd::saveVersion, "Save Version...", "Ctrl+Alt+S", { key ('S', ctrl | alt) } },
+        { Cmd::lockTrack, "Lock/Unlock Track", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

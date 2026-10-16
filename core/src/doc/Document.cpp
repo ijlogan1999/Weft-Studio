@@ -127,6 +127,13 @@ bool Document::commit (std::string_view message, std::int64_t timeMs)
 
 void Document::rollback() { weft_doc_rollback (doc); }
 
+std::optional<Document> Document::forkAt (std::span<const std::uint8_t> at) const
+{
+    if (auto* handle = weft_doc_fork_at (doc, at.data(), at.size()))
+        return Document (handle);
+    return std::nullopt;
+}
+
 Bytes Document::heads() const
 {
     WeftBytes bytes {};

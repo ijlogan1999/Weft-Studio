@@ -331,6 +331,13 @@ void Studio::tick()
         updatePresence();
         syncClient->poll();
     }
+    // 30 minutes without input ends a session: an automatic version if this user changed things (05 §9.3).
+    if (lastInputMs > 0 && juce::Time::getMillisecondCounterHiRes() - lastInputMs >= idleSessionMs && ! previewing())
+    {
+        lastInputMs = 0;
+        if (sess->autoVersion())
+            edited();
+    }
     if (mediaSyncer != nullptr)
     {
         mediaSyncer->setRecording (recording());
@@ -616,7 +623,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::joinProject: case Cmd::signIn:
-        case Cmd::signOut: case Cmd::goOffline:
+        case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
             break;
     }
     return std::nullopt;
@@ -625,6 +632,11 @@ std::optional<bool> Studio::performNotes (Cmd command)
 bool Studio::perform (Cmd command)
 {
     endPluginGesture();
+    if (previewing() && changesDocument (command))
+    {
+        setStatus (readOnlyReason());
+        return false;
+    }
     if (notesFocused())
         if (const auto handled = performNotes (command))
             return *handled;
@@ -827,9 +839,18 @@ bool Studio::perform (Cmd command)
         case Cmd::shareProject:
         case Cmd::joinProject:
         case Cmd::signIn:
+        case Cmd::addComment:
+        case Cmd::saveVersion:
             if (uiCommand)
                 uiCommand (command);
             break;
+        case Cmd::lockTrack:
+            if (local.selectedTrack.empty())
+            {
+                setStatus ("Select a track to lock.");
+                return false;
+            }
+            return toggleLock (local.selectedTrack);
         case Cmd::signOut:
             signOut();
             break;
@@ -1062,6 +1083,7 @@ void Studio::discardUnsavedChanges()
     if (unsaved)
         folder->log().archive (commands::systemClockMs());
     unsaved = false;
+    changesDiscarded = true;
     if (scratch)
         everEdited = false; // nothing worth keeping: the folder goes when the project is replaced
     sendChangeMessage();
@@ -1118,6 +1140,7 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     scratch = isScratch;
     everEdited = false;
     unsaved = false;
+    changesDiscarded = false;
     if (signedIn())
         sess->setUser (relayAccount.userId);
     sess->onLocalChange = [this] (const doc::Bytes& change, std::int64_t time) {
@@ -1141,6 +1164,9 @@ void Studio::releaseProject()
 {
     if (sess == nullptr)
         return;
+    endSessionVersion();
+    previewModel.reset();
+    previewId.clear();
     mediaSyncer.reset();
     syncClient.reset();
     missingSeen.clear();
@@ -1178,6 +1204,12 @@ void Studio::resetViewState()
     locatedAt.reset();
     locatedFrame = -1;
     pool.clear();
+    openThread.clear();
+    mentionsShown.clear();
+    notices.clear();
+    commentsSeenAt = mentionsSeenAt = 0;
+    chatReadId.clear();
+    lastInputMs = 0;
 }
 
 void Studio::loadProjectMedia()
@@ -1193,7 +1225,8 @@ void Studio::saveViewState() const
     if (folder == nullptr || ! fs::exists (folder->root()))
         return;
     const auto text = "playhead=" + std::to_string (playhead()) + "\norigin=" + std::to_string (view.originTick)
-                      + "\nzoom=" + std::to_string (view.pixelsPerTick) + "\n";
+                      + "\nzoom=" + std::to_string (view.pixelsPerTick) + "\ncommentsSeen=" + std::to_string (commentsSeenAt)
+                      + "\nmentionsSeen=" + std::to_string (mentionsSeenAt) + "\nchatRead=" + chatReadId + "\n";
     std::error_code ec;
     fs::create_directories (folder->root() / "Cache", ec);
     const auto* p = reinterpret_cast<const std::uint8_t*> (text.data());
@@ -1216,6 +1249,12 @@ void Studio::loadViewState()
             view.originTick = std::max (0.0, value.getDoubleValue());
         else if (key == "zoom")
             view.pixelsPerTick = std::clamp (value.getDoubleValue(), arrange::TimelineView::minPixelsPerTick, arrange::TimelineView::maxPixelsPerTick);
+        else if (key == "commentsSeen")
+            commentsSeenAt = value.getLargeIntValue();
+        else if (key == "mentionsSeen")
+            mentionsSeenAt = value.getLargeIntValue();
+        else if (key == "chatRead")
+            chatReadId = value.toStdString();
     }
 }
 
@@ -1565,7 +1604,10 @@ void Studio::startSync()
     o.pendingFile = folder->root() / "Cache" / "sync-pending.txt";
     o.startOnline = wantOnline;
     if (syncClock)
+    {
         o.clock = syncClock;
+        sess->setClock (syncClock);
+    }
     syncClient = std::make_unique<collab::SyncClient> (*sess, std::move (o));
     syncClient->onRemoteChange = [this] { remoteChanged(); };
     syncClient->onMessage = [this] (const std::string& m) { setStatus (m); };
@@ -1586,6 +1628,7 @@ void Studio::startSync()
     syncClient->onJoined = [this] {
         if (mediaSyncer != nullptr)
             mediaSyncer->setRole (syncClient->role());
+        collabNotices();
         sendChangeMessage();
     };
     syncClient->onBlobAvailable = [this] (const std::string& hash, std::int64_t) {
@@ -1664,6 +1707,7 @@ void Studio::setPointer (std::optional<collab::Presence::Pointer> pointer)
 
 void Studio::noteInput()
 {
+    lastInputMs = juce::Time::getMillisecondCounterHiRes();
     if (syncClient != nullptr)
         syncClient->noteInput();
 }
@@ -1794,8 +1838,11 @@ void Studio::remoteChanged()
         editorRegion.clear();
     unsaved = true;
     everEdited = true;
+    if (previewModel != nullptr && sess->model().version (previewId) == nullptr)
+        returnToCurrent();
     edited();
     noticeMissingPlugins();
+    collabNotices();
 }
 
 bool Studio::shareProject (std::string* error)
@@ -1933,6 +1980,22 @@ void Studio::setOnline (bool online)
     if (syncClient != nullptr)
         syncClient->setOnline (online);
     sendChangeMessage();
+}
+
+bool Studio::changesDocument (Cmd command)
+{
+    switch (command)
+    {
+        case Cmd::record: case Cmd::newTrack: case Cmd::undo: case Cmd::redo: case Cmd::cut: case Cmd::paste:
+        case Cmd::deleteSelection: case Cmd::split: case Cmd::join: case Cmd::muteRegions: case Cmd::nudgeLeft:
+        case Cmd::nudgeRight: case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::addMarker:
+        case Cmd::muteNotes: case Cmd::quantize: case Cmd::transposeUp: case Cmd::transposeDown: case Cmd::octaveUp:
+        case Cmd::octaveDown: case Cmd::notesLeft: case Cmd::notesRight: case Cmd::applyQuantize: case Cmd::deleteTrack:
+        case Cmd::newBus: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
+            return true;
+        default:
+            return false;
+    }
 }
 
 juce::String Studio::readOnlyReason() const

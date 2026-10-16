@@ -111,6 +111,8 @@ public:
     /** Paths touched since `since` heads, truncated to depth segments. */
     std::vector<Path> changedPaths (std::span<const std::uint8_t> since, std::size_t depth) const;
     Status merge (Document& other);
+    /** The document as it was at `heads` (a version's state, spec 05 §9.3); nullopt if a head is unknown. */
+    std::optional<Document> forkAt (std::span<const std::uint8_t> heads) const;
 
     // Sync protocol ------------------------------------------------------------
     /** The next sync message for the peer, or nullopt when there is nothing to send. */

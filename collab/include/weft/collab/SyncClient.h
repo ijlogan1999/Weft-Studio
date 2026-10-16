@@ -128,6 +128,7 @@ private:
     void updateState();
     void setState (SyncState s);
     void setRole (const std::string& role);
+    void shareNames();
     void savePending();
     void loadPending();
     void sendPresence();

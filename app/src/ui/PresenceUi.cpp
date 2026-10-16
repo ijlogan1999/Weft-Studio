@@ -165,4 +165,36 @@ void Avatars::goTo (int index)
     studio.view.originTick = std::max (0.0, target - studio.timelineWidth * 0.1 / studio.view.pixelsPerTick);
     studio.sendChangeMessage();
 }
+juce::Colour userColour (const Studio& studio, const UserId& user)
+{
+    const auto* sync = studio.sync();
+    const auto index = sync != nullptr ? sync->colorOf (user) : -1;
+    return index >= 0 ? collaboratorColour (index) : colour (Token::accent);
+}
+
+void drawLock (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c)
+{
+    const auto w = box.getWidth();
+    auto body = box.withTrimmedTop (box.getHeight() * 0.45f);
+    juce::Path shackle;
+    shackle.addCentredArc (box.getCentreX(), body.getY(), w * 0.28f, box.getHeight() * 0.32f, 0.0f, -juce::MathConstants<float>::halfPi,
+                           juce::MathConstants<float>::halfPi, true);
+    g.setColour (c);
+    g.strokePath (shackle, juce::PathStrokeType (std::max (1.5f, w * 0.13f)));
+    g.fillRoundedRectangle (body, w * 0.15f);
+}
+
+void drawCommentPin (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c, bool resolved)
+{
+    juce::Path pin;
+    const auto bubble = box.withTrimmedBottom (box.getHeight() * 0.25f);
+    pin.addRoundedRectangle (bubble, bubble.getHeight() * 0.35f);
+    pin.addTriangle (bubble.getX() + 2.0f, bubble.getBottom() - 1.0f, bubble.getX() + bubble.getWidth() * 0.45f, bubble.getBottom() - 1.0f,
+                     bubble.getX() + 2.0f, box.getBottom());
+    g.setColour (c);
+    if (resolved)
+        g.strokePath (pin, juce::PathStrokeType (1.5f));
+    else
+        g.fillPath (pin);
+}
 } // namespace weft::ui

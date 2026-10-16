@@ -107,20 +107,49 @@ void MediaList::paintListBoxItem (int row, juce::Graphics& g, int width, int hei
     g.drawText (juce::String (item.seconds, 1) + " s  ·  " + used, 8, height / 2, width - 16, height / 2 - 2, juce::Justification::topLeft);
 }
 
-SidePanel::SidePanel (Studio& studio, const juce::File& browserRoot)
+SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
 {
     setTitle ("Side panel");
     fileBrowser = new FileBrowser (studio, browserRoot);
     mediaList = new MediaList (studio);
+    commentsPanel = new CommentsPanel (studio);
+    chatPanel = new ChatPanel (studio);
+    historyPanel = new HistoryPanel (studio);
     const auto tab = colour (Token::surface);
     tabbed.addTab ("Browser", tab, fileBrowser, true);
     tabbed.addTab ("Media", tab, mediaList, true);
-    tabbed.addTab ("Comments", tab, new Placeholder ("Comments", "arrive with collaboration."), true);
-    tabbed.addTab ("Chat", tab, new Placeholder ("Chat", "arrives with collaboration."), true);
-    tabbed.addTab ("History", tab, new Placeholder ("History", "arrives with collaboration."), true);
+    tabbed.addTab ("Comments", tab, commentsPanel, true);
+    tabbed.addTab ("Chat", tab, chatPanel, true);
+    tabbed.addTab ("History", tab, historyPanel, true);
     tabbed.setTabBarDepth (28);
     tabbed.setOutline (0);
     addAndMakeVisible (tabbed);
+    studio.addChangeListener (this);
+    refreshTabs();
+}
+
+SidePanel::~SidePanel() { studio.removeChangeListener (this); }
+
+void SidePanel::showTab (Tab tab) { tabbed.setCurrentTabIndex (static_cast<int> (tab)); }
+
+void SidePanel::refreshTabs()
+{
+    // Looking at a tab reads it.
+    const bool visible = studio.layout.sidePanel;
+    const auto current = tabbed.getCurrentTabIndex();
+    if (visible && current == commentsTab)
+        studio.markCommentsSeen();
+    if (visible && current == chatTab)
+        studio.markChatRead();
+    const auto unread = studio.unreadChat();
+    const auto comments = studio.commentsUnread() ? juce::String::fromUTF8 ("Comments \xe2\x80\xa2") : juce::String ("Comments");
+    const juce::String chat = unread > 0 ? "Chat (" + juce::String (unread) + ")" : juce::String ("Chat");
+    if (tabbed.getNumTabs() <= historyTab)
+        return;
+    if (tabbed.getTabNames()[commentsTab] != comments)
+        tabbed.setTabName (commentsTab, comments);
+    if (tabbed.getTabNames()[chatTab] != chat)
+        tabbed.setTabName (chatTab, chat);
 }
 
 void SidePanel::paint (juce::Graphics& g) { g.fillAll (colour (Token::surface)); }

@@ -165,7 +165,13 @@ bool Transfers::busy (const std::string& hash, bool upload) const
     const std::scoped_lock l (lock);
     const auto& running = upload ? runningUploads : runningDownloads;
     const auto& queue = upload ? uploads : downloads;
-    return running.contains (hash) || std::any_of (queue.begin(), queue.end(), [&] (const Job& j) { return j.hash == hash; });
+    if (running.contains (hash) || std::any_of (queue.begin(), queue.end(), [&] (const Job& j) { return j.hash == hash; }))
+        return true;
+    // Finished but not yet polled: still busy, so a refresh in between doesn't start it again.
+    using K = TransferEvent::Kind;
+    return std::any_of (events.begin(), events.end(), [&] (const TransferEvent& e) {
+        return e.hash == hash && e.upload == upload && (e.kind == K::uploaded || e.kind == K::downloaded || e.kind == K::failed);
+    });
 }
 
 int Transfers::activeUploads() const

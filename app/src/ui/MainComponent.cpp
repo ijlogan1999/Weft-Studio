@@ -85,8 +85,38 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s), plugins (s)
 {
     setTitle ("Weft Studio");
-    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly })
+    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly, &preview })
         addChildComponent (c);
+    preview.restore.onClick = [this] { studio.restorePreviewed(); };
+    preview.back.onClick = [this] { studio.returnToCurrent(); };
+    studio.confirmBreakLock = [this] (const Id& trackId) {
+        const auto* t = studio.model().track (trackId);
+        const auto lock = studio.session().lockOf (trackId);
+        if (t == nullptr || ! lock)
+            return;
+        ask ("Break Lock", studio.nameOf (lock->by) + " has locked \"" + juce::String (t->name) + "\". Break the lock? They'll be told.", "Break Lock", {},
+             [this, trackId] (int choice) {
+                 if (choice == 1)
+                     studio.breakLock (trackId);
+             });
+    };
+    studio.onShowThread = [this] (const Id& threadId, juce::Rectangle<int> area) {
+        if (! desktopWindows() || area.isEmpty())
+            return;
+        auto view = std::make_unique<ThreadView> (studio, threadId);
+        view->setSize (300, std::min (440, view->preferredHeight (300)));
+        auto& box = juce::CallOutBox::launchAsynchronously (std::move (view), area, nullptr);
+        juce::Component::SafePointer<juce::CallOutBox> safe (&box);
+        if (auto* v = dynamic_cast<ThreadView*> (box.getChildComponent (0)))
+            v->onClose = [safe] {
+                if (safe != nullptr)
+                    safe->dismiss();
+            };
+    };
+    studio.onNotice = [this] (const commands::Notice& n) {
+        if (n.kind == commands::Notice::Kind::lockBroken)
+            alert ("Lock Broken", juce::String (n.text));
+    };
     banner.setup.onClick = [this] { run (Cmd::audioSettings); };
     status.onSyncClicked = [this] { alert ("Sync", studio.syncDetails()); };
     studio.onMissingPlugins = [this] (const std::vector<Studio::MissingPlugin>& missing) {
@@ -114,6 +144,9 @@ MainComponent::~MainComponent()
 {
     studio.uiCommand = nullptr;
     studio.onMissingPlugins = nullptr;
+    studio.confirmBreakLock = nullptr;
+    studio.onShowThread = nullptr;
+    studio.onNotice = nullptr;
     studio.removeChangeListener (this);
 }
 
@@ -131,7 +164,7 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         banner.setVisible (! studio.audioRunning());
         resized();
     }
-    const auto readOnlyText = studio.readOnlyReason();
+    const auto readOnlyText = studio.previewing() ? juce::String() : studio.readOnlyReason(); // the preview banner says it
     if (readOnly.message.getText() != readOnlyText)
         readOnly.message.setText (readOnlyText, juce::dontSendNotification);
     if (readOnly.isVisible() == readOnlyText.isEmpty())
@@ -139,6 +172,13 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         readOnly.setVisible (readOnlyText.isNotEmpty());
         resized();
     }
+    if (preview.isVisible() != studio.previewing())
+    {
+        preview.setVisible (studio.previewing());
+        resized();
+    }
+    if (const auto* v = studio.session().model().version (studio.previewedVersion()))
+        preview.message.setText (juce::String::fromUTF8 ("Viewing version '") + juce::String (v->name) + juce::String::fromUTF8 ("' \xe2\x80\x93 read-only."), juce::dontSendNotification);
     inspectorPanel.setVisible (studio.layout.inspector);
     sidePanel.setVisible (studio.layout.sidePanel);
     bottomArea.setVisible (studio.layout.bottom != BottomTab::none);
@@ -177,6 +217,8 @@ void MainComponent::resized()
     // The tracks area keeps at least 160 px (F-UI-1: it is always visible).
     if (l.bottom != BottomTab::none)
         bottomArea.setBounds (r.removeFromBottom (std::clamp (l.bottomHeight, 120, std::max (120, r.getHeight() - 160))));
+    if (preview.isVisible())
+        preview.setBounds (r.removeFromTop (PreviewBanner::height));
     tracksArea.setBounds (r);
 }
 
@@ -276,6 +318,20 @@ void MainComponent::handleUiCommand (Cmd command)
                     launchDialog (std::make_unique<JoinDialog> (studio), "Join Project", this);
             });
         });
+    else if (command == Cmd::addComment || command == Cmd::saveVersion)
+    {
+        // Shift+C writes a comment at the playhead on the selected track; Ctrl+Alt+S names a version (04 §9.3, §9.5).
+        if (command == Cmd::addComment && ! studio.draftComment)
+            studio.draftComment = studio.commentAnchorHere();
+        studio.layout.sidePanel = true;
+        sidePanel.showTab (command == Cmd::addComment ? SidePanel::commentsTab : SidePanel::historyTab);
+        studio.sendChangeMessage();
+        changeListenerCallback (nullptr);
+        if (command == Cmd::addComment)
+            sidePanel.comments().focusDraft();
+        else if (sidePanel.history().name.isShowing())
+            sidePanel.history().name.grabKeyboardFocus();
+    }
     else if (command == Cmd::audioSettings && devices != nullptr && desktopWindows())
         launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
 }
@@ -305,7 +361,8 @@ void MainComponent::ask (const juce::String& title, const juce::String& text, co
         return; // headless: answerProject() stands in for the buttons
     projectAlert = std::make_unique<juce::AlertWindow> (title, text, juce::MessageBoxIconType::QuestionIcon, this);
     projectAlert->addButton (first, 1, juce::KeyPress (juce::KeyPress::returnKey));
-    projectAlert->addButton (second, 2);
+    if (second.isNotEmpty())
+        projectAlert->addButton (second, 2);
     projectAlert->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     projectAlert->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<MainComponent> (this)] (int result) {
                                        if (safe != nullptr)
@@ -507,6 +564,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::save);
             add (Cmd::saveAs);
+            add (Cmd::saveVersion);
             menu.addSeparator();
             add (Cmd::bounce);
             menu.addSeparator();
@@ -526,10 +584,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 add (c);
             menu.addSeparator();
             add (Cmd::toolMenu);
+            menu.addSeparator();
+            add (Cmd::addComment);
             break;
         case 2:
             add (Cmd::newTrack);
             add (Cmd::deleteTrack);
+            add (Cmd::lockTrack);
             break;
         case 3:
             add (Cmd::newBus);

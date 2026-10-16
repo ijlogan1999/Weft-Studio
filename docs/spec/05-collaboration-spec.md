@@ -269,6 +269,18 @@ Mentions (`@name`) produce an in-app notification for that user when they next c
 - Restore requires Editor or Owner role.
 - Media: blobs referenced by any version are retained by the relay as long as the version exists (no garbage collection in MVP).
 
+### 9.4 Build decisions (M12)
+- **Decision D-COL-35:** locking, comments, chat and saving a version are not undo steps. They're written as ordinary document changes that skip the undo stack, so Ctrl+Z never removes someone's comment or lock. Restoring a version is an undo step.
+- **Decision D-COL-36:** restore leaves the collaboration metadata (`collab`: comments, chat, versions and locks) as it is now. Only the project's content goes back; the locks in force stay in force.
+- **Decision D-COL-37:** previewing a version shows its content read-only, but comments, chat and the History list stay live and usable, and they show the current ones.
+- **Decision D-COL-38:** a lock expires 24 h after the holder's last presence as this client saw it, or 24 h after the lock was taken when this client never saw the holder. An expired lock counts as no lock, so anyone can edit the track or take the lock.
+- **Decision D-COL-39:** the "lock broken" and "offline edits were merged" notices are raised on the lock holder's own client when the change that causes them arrives. A broken lock shows an alert; merged offline edits show in the status bar.
+- **Decision D-COL-40:** an automatic version is made by the client on close, or after 30 minutes without input, when the user edited the project since their last version. It's named "<name>'s session". Choosing Don't Save when closing a local project makes none. The relay's daily versions aren't built yet.
+- **Decision D-COL-41:** only Owners and Editors save versions. A project that was never shared has its user as the Owner.
+- **Decision D-COL-42:** comment filters: Open, Resolved, Mine (threads you started or replied to) and Mentions (threads that mention you). Clicking the active filter again shows every thread.
+- **Decision D-COL-43:** Shift+C and Save Version (Ctrl+Alt+S) open a box in the side panel's Comments or History tab rather than a modal dialog. A version saved without a name is "Untitled version".
+- **Decision D-COL-44:** a mention is stored as `@<user id>` and shown as `@<name>`. Mentions newer than your last-seen marker are announced once in the status bar when you connect, and the Comments tab shows a dot until you look at it.
+
 ---
 
 ## 10. Machine-specific settings in a shared project
@@ -395,3 +407,13 @@ Conclusion: with optimistic local overhead (~5 ms, uncompressed PCM, tiny jitter
 | D-COL-32 | Pointers fade from 4 s to 5 s; playhead jumps while playing are sent at once. |
 | D-COL-33 | 12 collaborator colours by relay-assigned index; clicking an avatar scrolls to their selection or playhead. |
 | D-COL-34 | Missing plug-ins from a collaborator's change are announced once, with who added them. |
+| D-COL-35 | Locks, comments, chat and saving a version aren't undo steps; restoring is. |
+| D-COL-36 | Restore leaves comments, chat, versions and current locks as they are. |
+| D-COL-37 | Previewing a version is read-only; comments, chat and History stay live. |
+| D-COL-38 | Lock expiry counts from the holder's last presence seen here, else from the lock's time; expired means unlocked. |
+| D-COL-39 | Lock-broken and merged-offline-edits notices are raised on the holder's client. |
+| D-COL-40 | Client auto versions on close or 30 min idle after edits, named "<name>'s session"; relay daily versions not built. |
+| D-COL-41 | Only Owners and Editors save versions; an unshared project's user is its Owner. |
+| D-COL-42 | Comment filters Open/Resolved/Mine/Mentions; clicking the active one shows all. |
+| D-COL-43 | Shift+C and Save Version use side-panel boxes; an unnamed version is "Untitled version". |
+| D-COL-44 | Mentions stored as @<user id>; announced once on connect; Comments tab dot until seen. |

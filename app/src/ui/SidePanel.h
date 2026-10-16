@@ -1,8 +1,9 @@
 #pragma once
 
-// G · Side panel (spec 04 §8): the file browser and the project's media list; comments,
-// chat and history are placeholders until the collaboration milestones.
+// G · Side panel (spec 04 §8, §9): the file browser, the project's media list, and the
+// Comments, Chat and History tabs.
 
+#include "CollabPanels.h"
 #include "Studio.h"
 #include "Widgets.h"
 
@@ -67,19 +68,48 @@ private:
     std::vector<arrange::MediaUsage> items;
 };
 
-class SidePanel final : public juce::Component
+class SidePanel final : public juce::Component, private juce::ChangeListener
 {
 public:
     SidePanel (Studio& studio, const juce::File& browserRoot);
+    ~SidePanel() override;
     void resized() override;
     void paint (juce::Graphics&) override;
     FileBrowser& browser() noexcept { return *fileBrowser; }
     MediaList& media() noexcept { return *mediaList; }
+    CommentsPanel& comments() noexcept { return *commentsPanel; }
+    ChatPanel& chat() noexcept { return *chatPanel; }
+    HistoryPanel& history() noexcept { return *historyPanel; }
     juce::TabbedComponent& tabs() noexcept { return tabbed; }
+    enum Tab
+    {
+        browserTab,
+        mediaTab,
+        commentsTab,
+        chatTab,
+        historyTab
+    };
+    void showTab (Tab tab);
+    /** Tab names with the unread markers: "Comments •", "Chat (2)" (04 §9.3, §9.4). */
+    void refreshTabs();
 
 private:
-    juce::TabbedComponent tabbed { juce::TabbedButtonBar::TabsAtTop };
+    class Tabs final : public juce::TabbedComponent
+    {
+    public:
+        explicit Tabs (SidePanel& p) : juce::TabbedComponent (juce::TabbedButtonBar::TabsAtTop), panel (p) {}
+        void currentTabChanged (int, const juce::String&) override { panel.refreshTabs(); }
+
+    private:
+        SidePanel& panel;
+    };
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshTabs(); }
+    Studio& studio;
+    Tabs tabbed { *this };
     FileBrowser* fileBrowser = nullptr;
     MediaList* mediaList = nullptr;
+    CommentsPanel* commentsPanel = nullptr;
+    ChatPanel* chatPanel = nullptr;
+    HistoryPanel* historyPanel = nullptr;
 };
 } // namespace weft::ui

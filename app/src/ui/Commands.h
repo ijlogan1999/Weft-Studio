@@ -30,7 +30,9 @@ enum class Cmd
     // Projects and preferences (M9).
     newProject, openProject, saveAs, projectSettings, audioSettings,
     // Collaboration (M10).
-    shareProject, joinProject, signIn, signOut, goOffline
+    shareProject, joinProject, signIn, signOut, goOffline,
+    // M12
+    addComment, saveVersion, lockTrack
 };
 
 struct CommandInfo

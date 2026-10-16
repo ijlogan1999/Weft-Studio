@@ -1,6 +1,7 @@
 #include "weft/model/Model.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace weft::model
@@ -518,6 +519,116 @@ Marker Marker::fromValue (const Id& id, const Value& v)
 Value Marker::toValue() const
 {
     return Value::map().set ("id", id).set ("pos", pos).set ("name", name).set ("color", color ? color->toValue() : Value()).set ("createdBy", createdBy);
+}
+
+// Collaboration metadata (03 §9) ------------------------------------------------
+
+std::vector<UserId> Comment::mentions() const
+{
+    std::vector<UserId> out;
+    for (std::size_t at = body.find ('@'); at != std::string::npos; at = body.find ('@', at + 1))
+    {
+        std::size_t end = at + 1;
+        while (end < body.size() && (std::isalnum (static_cast<unsigned char> (body[end])) != 0 || body[end] == '_' || body[end] == '-'))
+            ++end;
+        if (end > at + 1)
+        {
+            auto who = body.substr (at + 1, end - at - 1);
+            if (std::find (out.begin(), out.end(), who) == out.end())
+                out.push_back (std::move (who));
+        }
+    }
+    return out;
+}
+
+Comment Comment::fromValue (const Id& id, const Value& v)
+{
+    Comment c;
+    c.id = id;
+    const auto& anchor = v["anchor"];
+    c.pos = std::max<std::int64_t> (0, anchor["pos"].asInt());
+    if (anchor["endPos"].isNumber())
+        c.endPos = std::max (c.pos, anchor["endPos"].asInt());
+    c.trackId = anchor["trackId"].asString();
+    c.regionId = anchor["regionId"].asString();
+    c.parentId = v["parentId"].asString();
+    c.author = v["author"].asString();
+    c.createdAt = v["createdAt"].asInt();
+    c.body = v["body"].asString();
+    if (v["editedAt"].isNumber())
+        c.editedAt = v["editedAt"].asInt();
+    c.resolved = v["resolved"].asBool();
+    c.resolvedBy = v["resolvedBy"].asString();
+    c.deleted = v["deleted"].asBool();
+    if (c.deleted)
+        c.body.clear();
+    return c;
+}
+
+Value Comment::toValue() const
+{
+    auto anchor = Value::map()
+                      .set ("pos", pos)
+                      .set ("endPos", endPos ? Value (*endPos) : Value())
+                      .set ("trackId", trackId.empty() ? Value() : Value (trackId))
+                      .set ("regionId", regionId.empty() ? Value() : Value (regionId));
+    return Value::map()
+        .set ("id", id)
+        .set ("anchor", anchor)
+        .set ("parentId", parentId.empty() ? Value() : Value (parentId))
+        .set ("author", author)
+        .set ("createdAt", createdAt)
+        .set ("body", body)
+        .set ("editedAt", editedAt ? Value (*editedAt) : Value())
+        .set ("resolved", resolved)
+        .set ("resolvedBy", resolvedBy.empty() ? Value() : Value (resolvedBy))
+        .set ("deleted", deleted);
+}
+
+ChatMessage ChatMessage::fromValue (const Value& v)
+{
+    ChatMessage m;
+    m.id = v["id"].asString();
+    m.author = v["author"].asString();
+    m.sentAt = v["sentAt"].asInt();
+    m.body = v["body"].asString();
+    m.deleted = v["deleted"].asBool();
+    if (m.deleted)
+        m.body.clear();
+    return m;
+}
+
+Value ChatMessage::toValue() const
+{
+    return Value::map().set ("id", id).set ("author", author).set ("sentAt", sentAt).set ("body", body).set ("deleted", deleted);
+}
+
+VersionTag VersionTag::fromValue (const Id& id, const Value& v)
+{
+    VersionTag t;
+    t.id = id;
+    t.name = v["name"].asString();
+    for (const auto& h : v["heads"].asList())
+        if (h.isString())
+            t.heads.push_back (h.asString());
+    t.createdBy = v["createdBy"].asString();
+    t.createdAt = v["createdAt"].asInt();
+    t.autoVersion = v["auto"].asBool();
+    return t;
+}
+
+Value VersionTag::toValue() const
+{
+    Value::List hs;
+    for (const auto& h : heads)
+        hs.emplace_back (h);
+    return Value::map()
+        .set ("id", id)
+        .set ("name", name)
+        .set ("heads", Value (std::move (hs)))
+        .set ("createdBy", createdBy)
+        .set ("createdAt", createdAt)
+        .set ("auto", autoVersion);
 }
 
 std::string AutomationTarget::key() const

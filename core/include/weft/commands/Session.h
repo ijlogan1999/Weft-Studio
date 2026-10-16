@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,29 @@ struct UndoResult
 {
     bool done = false;      // something was undone/redone (a change was made)
     std::string message;    // status bar text when parts were skipped
+};
+
+/** Where a comment is pinned (03 §9.1): a time, and optionally a range, a track or a region. */
+struct CommentAnchor
+{
+    Ticks pos = 0;
+    std::optional<Ticks> endPos;
+    Id trackId;
+    Id regionId;
+};
+
+/** Something a collaborator did that this user should be told about (05 §7). */
+struct Notice
+{
+    enum class Kind
+    {
+        lockBroken,        // the Owner broke (or someone took over) a lock this user held
+        offlineEditsMerged // edits made offline to a track this user has locked were merged
+    };
+    Kind kind = Kind::lockBroken;
+    UserId by;
+    Id trackId;
+    std::string text; // ready for the status bar or an alert
 };
 
 struct NewProjectOptions
@@ -71,6 +95,9 @@ public:
         a local project's user is linked to the account when it's shared). */
     void setUser (UserId user) { userId = std::move (user); }
     Id newId() { return ids.next(); }
+    /** The clock for timestamps and lock expiry (tests move it by hand). */
+    void setClock (Clock c) { clock = std::move (c); }
+    std::int64_t now() const { return clock(); }
 
     /** Called with each local change's bytes after commit (the recovery log listens here). */
     std::function<void (const doc::Bytes& change, std::int64_t timeMs)> onLocalChange;
@@ -325,6 +352,60 @@ public:
     EditResult renameMarker (const Id& markerId, const std::string& name);
     EditResult deleteMarker (const Id& markerId);
 
+    // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------
+    static constexpr std::int64_t lockExpiryMs = 24LL * 60 * 60 * 1000;
+    /** Locks a track for this user. Refused while someone else holds an unexpired lock. */
+    EditResult lockTrack (const Id& trackId, const std::string& note = {});
+    /** The holder unlocks (also clears an expired lock someone else left). */
+    EditResult unlockTrack (const Id& trackId);
+    /** The Owner removes anyone's lock; the holder gets a notice. */
+    EditResult breakLock (const Id& trackId);
+    /** The lock in force on a track: absent, or expired 24 h after the holder was last seen. */
+    std::optional<model::LockInfo> lockOf (const Id& trackId) const;
+    /** Locked by another user: this client refuses edits to the track (but not solo). */
+    bool lockedByOther (const Id& trackId) const;
+    /** "Locked by Ana" for the tooltip, or empty. */
+    std::string lockText (const Id& trackId) const;
+    /** A collaborator was present just now (locks expire 24 h after the holder's last presence). */
+    void notePresence (const UserId& who, std::int64_t atMs);
+    /** Whether this user owns the project (only the Owner may break locks). */
+    void setOwner (bool owner) noexcept { projectOwner = owner; }
+    bool isOwner() const noexcept { return projectOwner; }
+    /** Display names for messages ("Locked by Ana"); unknown users are "someone". */
+    void setUserName (const UserId& who, std::string name);
+    std::string nameOf (const UserId& who) const;
+    /** Notices raised by remote changes since the last call. */
+    std::vector<Notice> takeNotices();
+
+    // Comments (F-COL-12) and chat (F-COL-14). Not undo steps (D-COL-35) -----------------------
+    std::optional<Id> addComment (const CommentAnchor& anchor, const std::string& body);
+    /** A reply goes on the thread's first comment (replies are one level deep). */
+    std::optional<Id> replyToComment (const Id& commentId, const std::string& body);
+    /** Only the author edits or deletes a comment (05 §9.1). Delete leaves a tombstone. */
+    EditResult editComment (const Id& commentId, const std::string& body);
+    EditResult deleteComment (const Id& commentId);
+    /** Anyone who may comment may resolve or reopen a thread. */
+    EditResult setCommentResolved (const Id& commentId, bool resolved);
+    /** Appends a chat message (at most 4,000 characters). */
+    std::optional<Id> sendChat (const std::string& body);
+    /** The author deletes their message (tombstone). */
+    EditResult deleteChat (const Id& messageId);
+
+    // Version history (F-COL-15, 05 §9.3) ------------------------------------------------------
+    /** Tags the current state. Auto versions are made when a session with changes ends. */
+    std::optional<Id> saveVersion (const std::string& name, bool autoVersion = false);
+    /** The document as the version left it, read-only (preview). */
+    std::optional<doc::Document> versionDocument (const Id& versionId) const;
+    std::optional<ProjectModel> versionModel (const Id& versionId) const;
+    /** Makes the project's content equal the version's, as one undoable change, then tags the
+        result "Restored '<name>'" (D-COL-12). Comments, chat and versions are kept (D-COL-36). */
+    EditResult restoreVersion (const Id& versionId);
+    /** This user changed the project in this session (undoable edits, restores included). */
+    bool hasLocalEdits() const noexcept { return localEdits > 0; }
+    /** On close or after 30 minutes idle: an automatic version if this user made changes since
+        the last one (05 §9.3). Returns its id. */
+    std::optional<Id> autoVersion();
+
     /** Would a new edge fromTrack -> toTrack close a loop (W-6)? ignoreEdgeKey: the edge it replaces
         (a send being retargeted, or the track's output). The mixer disables such menu items. */
     bool wouldCycle (const Id& fromTrack, const Id& toTrack, const std::string& ignoreEdgeKey = {}) const;
@@ -343,7 +424,14 @@ private:
     std::optional<Id> runCreate (std::string_view name, Id id, const std::function<EditResult (TxnWriter&)>& fn);
     /** Commits txn; false (and rolled back) when this user's access doesn't allow it. */
     bool finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo);
-    bool allowed (const Txn& txn) const;
+    bool allowed (const Txn& txn);
+    /** Writes outside the undo stacks (locks, comments, chat, versions). */
+    EditResult commitUnrecorded (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn);
+    /** Tracks a set of paths edits (lock fields excluded), using `extra` for regions no longer in the projection. */
+    std::set<Id> tracksTouched (const std::vector<Path>& paths, const std::map<Id, Id>& extra) const;
+    void afterRemote (const doc::Bytes& headsBefore, const std::map<Id, model::LockInfo>& myLocksBefore, const std::map<Id, Id>& regionTracksBefore);
+    std::map<Id, model::LockInfo> myLocks() const;
+    std::map<Id, Id> regionTracksOn (const std::map<Id, model::LockInfo>& locks) const;
     void refreshFor (const Txn& txn);
     UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
     void stamp (TxnWriter& w, const Id& regionId);
@@ -351,6 +439,11 @@ private:
     bool writePlacement (TxnWriter& w, const RegionClipboard& clip, const MovePlan& plan, bool copy, std::vector<Id>& newTrackIds,
                          std::map<Id, std::int64_t>& nextZ, std::vector<Id>* created);
     std::vector<Id> placeCopies (std::string_view name, const RegionClipboard& clip, const std::vector<std::pair<Ticks, int>>& shifts, int fallbackRow);
+    std::optional<Id> rejectId (std::string why)
+    {
+        error = std::move (why);
+        return std::nullopt;
+    }
     EditResult reject (std::string why)
     {
         error = why;
@@ -371,6 +464,11 @@ private:
     Access accessLevel = Access::full;
     std::string accessReason;
     std::map<int, std::function<void (const doc::Bytes&)>> changeListeners;
+    bool projectOwner = true; // a project never shared belongs to its user
+    std::map<UserId, std::string> userNames;
+    std::map<UserId, std::int64_t> lastSeen;
+    std::vector<Notice> notices;
+    std::size_t localEdits = 0, editsAtLastVersion = 0;
     int nextListener = 1;
 };
 } // namespace weft::commands

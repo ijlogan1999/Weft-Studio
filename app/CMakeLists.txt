@@ -12,6 +12,7 @@ add_library(weft_app_lib STATIC
     src/ui/AudioSetup.cpp
     src/ui/BottomArea.cpp
     src/ui/BounceDialog.cpp
+    src/ui/CollabPanels.cpp
     src/ui/PianoRoll.cpp
     src/ui/PresenceUi.cpp
     src/ui/Commands.cpp
@@ -25,6 +26,7 @@ add_library(weft_app_lib STATIC
     src/ui/ShareDialogs.cpp
     src/ui/SidePanel.cpp
     src/ui/Studio.cpp
+    src/ui/StudioCollab.cpp
     src/ui/Theme.cpp
     src/ui/TracksArea.cpp)
 add_library(weft::app_lib ALIAS weft_app_lib)

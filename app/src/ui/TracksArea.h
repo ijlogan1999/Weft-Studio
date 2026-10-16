@@ -28,6 +28,9 @@ public:
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
     /** Marker under x in the marker lane. */
     const model::Marker* markerAt (double x) const;
+    /** Comment pins in the marker lane (04 §9.3): every thread, at its position. */
+    juce::Rectangle<float> pinBounds (const model::Comment& thread) const;
+    const model::Comment* commentAt (juce::Point<float> p) const;
 
     /** Pointer actions, also used by tests: click in the ruler moves the playhead; in the cycle strip drags the cycle;
         on a marker jumps to it (AT-ARR-21). */
@@ -42,7 +45,7 @@ private:
     Id draggedMarker;
 };
 
-class TrackHeader final : public juce::Component
+class TrackHeader final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     TrackHeader (Studio& studio, const Id& trackId, int number);
@@ -56,6 +59,17 @@ public:
     const Id trackId;
     juce::Label name;
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
+    juce::ShapeButton lock { "Lock", {}, {}, {} };
+    /** Right-click menu: Lock/Unlock, Break Lock (the Owner), Add Comment. */
+    juce::PopupMenu menu() const;
+    void pickMenu (int item);
+    enum MenuItem
+    {
+        itemLock = 1,
+        itemBreakLock,
+        itemComment
+    };
     // Automation view (W-8): the mode, and per lane the parameter selector and "+".
     juce::ComboBox mode;
     std::vector<std::unique_ptr<juce::ComboBox>> parameters;
@@ -66,7 +80,9 @@ public:
 
 private:
     void rebuildAutomation();
+    void lockClicked();
     Studio& studio;
+    std::map<juce::Component*, juce::String> tipsBeforeLock;
     std::vector<std::string> shownChoices; // what the parameter selectors were built from
     int number;
     int resizeFrom = -1;
@@ -87,6 +103,12 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    /** A thread's pin on its track's lane, when it's pinned to a track that's shown (04 §9.3). */
+    std::optional<juce::Rectangle<float>> pinBounds (const model::Comment& thread) const;
+    const model::Comment* commentPinAt (juce::Point<float> p) const;
+    /** Right-click on the timeline or a region: Add Comment (04 §9.3). */
+    juce::PopupMenu contextMenu (juce::Point<float> p) const;
+    void pickContext (int item, juce::Point<float> p);
     /** Where a collaborator's pointer is drawn (its lane's centre), when it's on a track (AT-COL-11). */
     std::optional<juce::Point<float>> collaboratorPointer (const std::string& clientId) const;
 

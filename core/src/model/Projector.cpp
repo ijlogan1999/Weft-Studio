@@ -40,6 +40,18 @@ const MediaRef* ProjectModel::mediaRef (const std::string& hash) const
     return it == media.end() ? nullptr : it->second.get();
 }
 
+const Comment* ProjectModel::comment (const Id& id) const
+{
+    auto it = comments.find (id);
+    return it == comments.end() ? nullptr : it->second.get();
+}
+
+const VersionTag* ProjectModel::version (const Id& id) const
+{
+    auto it = versions.find (id);
+    return it == versions.end() ? nullptr : it->second.get();
+}
+
 Id ProjectModel::effectiveTrackId (const Region& r) const
 {
     auto it = recoveredTrackFor.find (r.id);
@@ -122,6 +134,16 @@ void readSignatures (ProjectModel& m, const Value& v)
                                              static_cast<int> (p["denominator"].asInt (4)), false });
 }
 
+void readCollab (ProjectModel& m, const Value& collab)
+{
+    readCollection (m.comments, collab["comments"]);
+    readCollection (m.versions, collab["versions"]);
+    m.chat.clear();
+    for (const auto& item : collab["chat"].asList())
+        if (item.isMap())
+            m.chat.push_back (ChatMessage::fromValue (item));
+}
+
 void readInfo (ProjectModel& m, const Value& root)
 {
     auto& info = m.info;
@@ -197,6 +219,7 @@ ProjectModel Projector::project (const Document& document)
     readCollection (m.midiSequences, root[keys::midiSequences]);
     readCollection (m.markers, root[keys::markers]);
     readCollection (m.storedLanes, root[keys::automationLanes]);
+    readCollab (m, root[keys::collab]);
     m.media.clear();
     for (const auto& [hash, item] : root[keys::media].asMap())
         m.media.emplace (hash, std::make_shared<const MediaRef> (MediaRef::fromValue (hash, item)));
@@ -217,7 +240,9 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
             continue;
         }
         const auto& c = p[0].key;
-        if (c == keys::tempoMap)
+        if (c == keys::collab)
+            readCollab (m, document.get ({ p[0] }).value_or (Value {}));
+        else if (c == keys::tempoMap)
             readTempo (m, document.get ({ p[0] }).value_or (Value {}));
         else if (c == keys::signatureMap)
             readSignatures (m, document.get ({ p[0] }).value_or (Value {}));

@@ -5,6 +5,7 @@ add_executable(weft_unit_tests
     unit/ProjectTests.cpp
     unit/RepairTests.cpp
     unit/ArrangeTests.cpp
+    unit/CollabModelTests.cpp
     unit/MediaImportTests.cpp
     unit/TimeTests.cpp
     unit/TrackTests.cpp
@@ -45,7 +46,7 @@ target_link_libraries(weft_engine_tests PRIVATE weft::engine weft::codec Catch2:
 catch_discover_tests(weft_engine_tests)
 
 # [S] sync tests: clients with real Sessions against a weft-relay process on localhost.
-add_executable(weft_sync_tests sync/SyncTests.cpp sync/MediaTests.cpp sync/PresenceTests.cpp)
+add_executable(weft_sync_tests sync/SyncTests.cpp sync/MediaTests.cpp sync/PresenceTests.cpp sync/CollabTests.cpp)
 target_link_libraries(weft_sync_tests PRIVATE weft::collab weft::engine Catch2::Catch2WithMain)
 target_compile_definitions(weft_sync_tests PRIVATE WEFT_RELAY_EXE="$<TARGET_FILE:weft-relay>")
 add_dependencies(weft_sync_tests weft-relay)
@@ -95,7 +96,8 @@ endif()
 if(WEFT_WITH_JUCE)
     add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp
                                  ui/MixerUiTests.cpp ui/AutomationUiTests.cpp ui/BounceUiTests.cpp ui/ProjectUiTests.cpp ui/ShareUiTests.cpp
-                                 ui/CollabUiTests.cpp)
+                                 ui/CollabUiTests.cpp
+                                 ui/CollabPanelTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
     # The mixer and plug-in manager tests host the fixture plug-ins through the real scanner.
     add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3 weft-relay)

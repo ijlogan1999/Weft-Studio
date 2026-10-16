@@ -183,9 +183,16 @@ void SyncClient::updateState()
         setState (SyncState::syncing);
 }
 
+void SyncClient::shareNames()
+{
+    for (const auto& m : memberList)
+        session.setUserName (m.userId, m.displayName);
+}
+
 void SyncClient::setRole (const std::string& role)
 {
     myRole = role;
+    session.setOwner (role == "owner");
     session.setAccess (accessFor (role), role == "viewer" ? "You're a Viewer in this project: you can comment and chat." : "");
 }
 
@@ -257,6 +264,9 @@ void SyncClient::poll()
     }
     flushOutbox (false);
     flushPresence (false);
+    // Locks expire 24 h after their holder was last here (05 §7).
+    for (const auto& [client, p] : others)
+        session.notePresence (p.userId, options.clock());
     // Offline for 45 s: collaborators' presence is cleared (05 §5).
     if (! welcomed && disconnectedAt != 0 && ! others.empty() && options.clock() - disconnectedAt >= presenceGoneMs)
     {
@@ -283,6 +293,7 @@ void SyncClient::handle (const doc::Value& e)
         memberList.clear();
         for (const auto& m : e["members"].asList())
             memberList.push_back ({ m["userId"].asString(), m["displayName"].asString(), m["role"].asString(), static_cast<int> (m["color"].asInt()) });
+        shareNames();
         setRole (e["role"].asString());
         outbox.clear();
         sendSync();
@@ -375,6 +386,7 @@ void SyncClient::handle (const doc::Value& e)
         {
             memberList.push_back ({ member["userId"].asString(), member["displayName"].asString(), member["role"].asString(),
                                     static_cast<int> (member["color"].asInt()) });
+            shareNames();
             if (onMessage)
                 onMessage (member["displayName"].asString() + " joined the project.");
         }
