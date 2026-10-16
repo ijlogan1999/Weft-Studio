@@ -6,7 +6,11 @@
 #include "SyncFixtures.h"
 
 #include "weft/engine/arrange/OfflineRender.h"
+#include "weft/engine/devices/NullDevice.h"
+#include "weft/engine/transport/Engine.h"
 #include "weft/project/ProjectFolder.h"
+
+#include <catch2/catch_approx.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -699,4 +703,112 @@ TEST_CASE ("AT-TMP-7 two tempo points at one tick converge to the greater Id, fl
             }
         CHECK (atTick == 1);
     }
+}
+
+namespace
+{
+/** A stand-in for an installed plug-in: halves the signal and keeps a state chunk. */
+class HalfGain final : public engine::Processor
+{
+public:
+    void prepare (double, int) override {}
+    void process (std::span<const engine::MidiEvent>, float* const* io, int numChannels, int numFrames) noexcept override
+    {
+        for (int c = 0; c < numChannels; ++c)
+            for (int i = 0; i < numFrames; ++i)
+                io[c][i] *= 0.5f;
+    }
+};
+
+/** One client's audio engine on a NullDevice; with a plug-in factory when the plug-in is installed there. */
+struct Speaker
+{
+    engine::MediaPool pool;
+    engine::InstrumentRack rack;
+    engine::Engine engine { pool, rack };
+    engine::NullDevice device;
+
+    explicit Speaker (bool hasPlugin)
+    {
+        engine::TransportSettings quiet;
+        quiet.metronomeOn = false;
+        engine.setSettings (quiet);
+        if (hasPlugin)
+            engine.setPluginFactory ([] (const model::PluginInstance& p, bool) -> std::shared_ptr<engine::Processor> {
+                return p.pluginUid == "test.half-gain" ? std::make_shared<HalfGain>() : nullptr;
+            });
+        engine::DeviceConfig c;
+        c.sampleRate = 48000;
+        c.maxBlockSize = 256;
+        c.numInputChannels = 0;
+        REQUIRE (device.open (c));
+        REQUIRE (device.start (engine));
+    }
+
+    float level (const model::ProjectModel& m)
+    {
+        engine.setProject (m);
+        engine.play (0);
+        device.setCaptureCapacity (24000);
+        REQUIRE (device.render (24000));
+        const auto out = device.capturedOutput (0);
+        engine.stop();
+        device.render (512);
+        float peak = 0;
+        for (std::size_t i = 4800; i < out.size(); ++i)
+            peak = std::max (peak, std::abs (out[i]));
+        return peak;
+    }
+};
+} // namespace
+
+TEST_CASE ("AT-COL-31 a client without a plug-in gets a passthrough placeholder and never changes the plug-in's stored state", "[S][sync][AT-COL-31]")
+{
+    RelayProcess relay;
+    SharedProject project (relay);
+    auto b = project.join ("Ben");
+    auto& a = *project.owner;
+    Speaker speakerA (true), speakerB (false);
+
+    // A: an audio region at a steady 0.5 on a stereo track, through a plug-in only A has.
+    media::AudioData steady;
+    steady.sampleRate = 48000;
+    steady.channels.assign (1, std::vector<float> (48000, 0.5f));
+    speakerA.pool.add ("b3:steady", steady);
+    speakerB.pool.add ("b3:steady", steady);
+    model::MediaRef ref;
+    ref.hash = "b3:steady";
+    ref.lengthSamples = 48000;
+    REQUIRE (a.s().addMedia (ref));
+    const auto track = a.s().createTrack (TrackKind::audio, "Vocal", 2);
+    REQUIRE (a.s().createAudioRegion (*track, 0, ref.hash, 0, 48000));
+    model::PluginInstance plugin;
+    plugin.format = "vst3";
+    plugin.pluginUid = "test.half-gain";
+    plugin.name = "Half Gain";
+    plugin.vendor = "Weft Tests";
+    plugin.state = doc::Bytes { 7, 1, 2, 3, 250, 0, 9 };
+    plugin.params["gain"] = 0.25;
+    const auto pluginId = a.s().addInsert (*track, plugin);
+    REQUIRE (pluginId);
+    const auto stored = a.m().track (*track)->strip.inserts.front().toValue();
+    CHECK (a.m().track (*track)->strip.inserts.front().addedBy == a.account.userId);
+    waitConverged ({ &a, b.get() });
+
+    // A hears the plug-in; B hears the track without it, through a placeholder.
+    CHECK (speakerA.level (a.m()) == Catch::Approx (0.25f).margin (0.01));
+    CHECK (speakerB.level (b->m()) == Catch::Approx (0.5f).margin (0.01));
+    REQUIRE (speakerB.engine.processor (*pluginId) != nullptr);
+    CHECK (speakerB.engine.processor (*pluginId)->isPlaceholder());
+    CHECK_FALSE (speakerA.engine.processor (*pluginId)->isPlaceholder());
+    // B knows who added it (the notice names them: tests/ui/CollabUiTests.cpp).
+    CHECK (b->client->displayName (b->m().track (*track)->strip.inserts.front().addedBy) == "Owner");
+
+    // B moves the fader: the plug-in's stored state is byte-for-byte what A wrote.
+    for (int i = 0; i < 20; ++i)
+        REQUIRE (b->s().setTrackVolume (*track, -0.5 * i));
+    waitConverged ({ &a, b.get() });
+    CHECK (a.m().track (*track)->strip.volumeDb == Catch::Approx (-9.5));
+    CHECK (doc::encode (a.m().track (*track)->strip.inserts.front().toValue()) == doc::encode (stored));
+    CHECK (doc::encode (b->m().track (*track)->strip.inserts.front().toValue()) == doc::encode (stored));
 }
