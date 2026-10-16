@@ -12,6 +12,20 @@
 
 namespace weft::ui
 {
+class DeviceProvider;
+
+/** The No-audio banner (W-0 step 7): shown over the tracks area while no device is open. */
+class NoAudioBanner final : public juce::Component
+{
+public:
+    NoAudioBanner();
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    juce::Label message;
+    juce::TextButton setup { "Audio Setup..." };
+    static constexpr int height = 34;
+};
+
 /** H · Status bar: the last message, the tool, snap and the project name. */
 class StatusBar final : public juce::Component, private juce::ChangeListener
 {
@@ -65,10 +79,36 @@ public:
     /** Called when the panel layout changes, so the app can keep it (F-UI-1). */
     std::function<void (const PanelLayout&)> onLayoutChanged;
 
+    // Projects (M9) ------------------------------------------------------------------------
+    /** Where Audio & MIDI Settings gets its devices; the app sets JUCE's, tests their own. */
+    DeviceProvider* devices = nullptr;
+    /** Opens a project, asking about unsaved changes and crash recovery first (W-10). */
+    void openProject (const std::filesystem::path& picked);
+    /** File › Open Recent item `index`: opens it, or forgets it when it's gone (AT-PRJ-10). */
+    void openRecent (int index);
+    /** Runs `next` once unsaved changes are saved or dropped; not at all on Cancel. */
+    void whenSaved (std::function<void()> next);
+    /** The Welcome screen (W-0 step 6). */
+    void showWelcome();
+    /** A pending project question (save changes, recover) and its answer: 1 and 2 are the
+        first and second buttons ("Save" / "Don't Save", "Recover" / "Discard"), 0 is Cancel. */
+    bool projectQuestionPending() const noexcept { return projectAnswer != nullptr; }
+    const juce::String& projectQuestion() const noexcept { return projectAsked; }
+    void answerProject (int choice);
+    /** The last notice shown in an alert (missing plug-ins, open errors). */
+    const juce::String& lastAlert() const noexcept { return alertText; }
+    bool noAudioBannerShown() const { return banner.isVisible(); }
+    static constexpr int recentMenuBase = 10000;
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void handleUiCommand (Cmd command);
+    void ask (const juce::String& title, const juce::String& text, const juce::String& first, const juce::String& second,
+              std::function<void (int)> answer);
+    void alert (const juce::String& title, const juce::String& text);
+    void opened (const Studio::OpenResult& result);
+    void chooseProjectToOpen();
 
     Studio& studio;
     ControlBar control;
@@ -78,7 +118,11 @@ private:
     SidePanel sidePanel;
     StatusBar status;
     PluginWindows plugins;
-    std::unique_ptr<juce::AlertWindow> question;
+    NoAudioBanner banner;
+    std::unique_ptr<juce::AlertWindow> question, projectAlert;
+    std::function<void (int)> projectAnswer;
+    juce::String projectAsked, alertText;
+    std::unique_ptr<juce::FileChooser> openChooser;
     Id questionTrack;
     juce::String asked;
     juce::TooltipWindow tooltips { this, 600 };

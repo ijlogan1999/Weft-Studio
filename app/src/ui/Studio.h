@@ -13,13 +13,16 @@
 #include "weft/engine/arrange/Import.h"
 #include "weft/engine/arrange/OfflineRender.h"
 #include "weft/engine/devices/AudioDevice.h"
+#include "weft/engine/devices/NullDevice.h"
 #include "weft/engine/midi/KeyboardMidi.h"
+#include "weft/engine/midi/MidiInputs.h"
 #include "weft/engine/plugins/PluginCatalog.h"
 #include "weft/engine/plugins/Vst3Host.h"
 #include "weft/engine/render/Bounce.h"
 #include "weft/engine/transport/Engine.h"
 #include "weft/engine/transport/LiveAutomation.h"
 #include "weft/model/Automation.h"
+#include "weft/project/ProjectFiles.h"
 #include "weft/project/ProjectFolder.h"
 
 #include <juce_events/juce_events.h>
@@ -163,8 +166,62 @@ public:
     /** Applies a command result: on failure shows the session's message. */
     bool check (const commands::EditResult& result);
 
+    // Projects (M9, W-10) -------------------------------------------------------------
+    /** Ctrl+S: writes the document atomically, then the media index and this user's view. */
     bool save();
     bool dirty() const noexcept { return unsaved; }
+    /** The window title: the project name, with "*" while there are unsaved changes (AT-PRJ-5). */
+    juce::String windowTitle() const;
+
+    /** Where new projects go by default (Documents/Weft Studio). */
+    const std::filesystem::path& projectsFolder() const noexcept { return projectParent; }
+    /** File › New (F-PRJ-1): a saved project `<parent>/<name>.weft` ("<name> 2"... when taken).
+        A scratch project (the one Weft starts with) is deleted when it's replaced untouched. */
+    bool newProject (const std::filesystem::path& parent, const commands::NewProjectOptions& options, std::string* error = nullptr,
+                     bool scratchProject = false);
+
+    enum class Recovery
+    {
+        ask,     // stop and report it; the caller asks the user and opens again
+        recover, // apply the recovery log
+        discard  // keep the saved state and archive the log
+    };
+    struct OpenResult
+    {
+        bool ok = false;
+        std::string error;
+        std::filesystem::path root; // the project folder
+        /** The project has unsaved changes from a crash and `Recovery::ask` was given: nothing was opened. */
+        bool needsRecoveryChoice = false;
+        std::int64_t recoveryTimeMs = 0; // when the newest unsaved change was made
+        std::vector<std::string> missingMedia;   // hashes no media folder has
+        std::vector<std::string> missingPlugins; // names of plug-ins that became placeholders
+    };
+    /** File › Open (F-PRJ-5): a project folder or its project.automerge. Replaces the current project. */
+    OpenResult openProject (const std::filesystem::path& picked, Recovery recovery = Recovery::ask);
+    /** Save As (F-PRJ-4): the project moves to `newRoot` (`<name>.weft`) and takes its name. */
+    bool saveAs (const std::filesystem::path& newRoot, bool copyMedia, std::string* error = nullptr);
+    /** Media regions reference that isn't on disk (W-10 Open step 4). */
+    std::vector<std::string> missingMedia() const;
+    /** Locate…: copies files under `folder` whose hash matches missing media into Media/. Returns how many it found. */
+    int locateMedia (const std::filesystem::path& folder);
+    /** Names of the plug-ins in the project that aren't installed (placeholders, F-PLG-15). */
+    std::vector<std::string> missingPlugins() const;
+    /** File › Open Recent (F-PRJ-6). */
+    project::RecentProjects& recentProjects() noexcept { return recent; }
+    /** Don't Save: archives the recovery log, so the next open doesn't offer to recover these changes. */
+    void discardUnsavedChanges();
+    /** A new project nobody has edited or saved: it's deleted when replaced or on quit. */
+    bool untouched() const noexcept { return scratch && ! everEdited; }
+
+    // Audio device (W-0) -----------------------------------------------------------------
+    /** Replaces the audio device (Audio Setup). False when it can't be opened: Weft then runs in
+        No-audio mode, where the transport plays silently against the system clock and recording is off (W-0 step 7). */
+    bool setAudioDevice (std::unique_ptr<engine::AudioDevice> device, const engine::DeviceConfig& config);
+    /** Test (W-0 step 5): a 1 kHz sine at -18 dBFS for 1 s on outputs 1-2. */
+    void playTestTone();
+    /** Live MIDI from devices and the computer keyboard; disabled inputs are dropped (F-UI-8). */
+    engine::MidiInputRouter& midiInputs() noexcept { return *midiRouter; }
 
     /** Peak overview of a media file: max |sample| per `peakFrames` frames, all channels (cached). */
     static constexpr int peakFrames = 256;
@@ -270,6 +327,12 @@ public:
 
 private:
     void syncEngine();
+    void adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::unique_ptr<commands::Session> session, bool isScratch);
+    void releaseProject();
+    void resetViewState();
+    void loadProjectMedia();
+    void saveViewState() const;
+    void loadViewState();
     std::optional<bool> performNotes (Cmd command);
     void zoomToFit();
 
@@ -289,6 +352,7 @@ private:
     std::map<Id, int> heights;
     std::map<Id, std::vector<model::AutomationTarget>> lanesShown;
     std::unique_ptr<engine::LiveAutomation> live;
+    std::unique_ptr<engine::MidiInputRouter> midiRouter;
     std::unique_ptr<engine::BounceJob> bounceJob;
     Ticks bounceFrom = 0;
     void stepBounce();
@@ -296,7 +360,13 @@ private:
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
     std::int64_t locatedFrame = -1;
     bool audioOk = false;
+    void startSilentClock();
+    std::unique_ptr<engine::NullDevice> silentClock; // drives the engine in No-audio mode
+    double silentClockMs = 0;
     bool unsaved = false;
+    bool scratch = false, everEdited = false;
+    std::filesystem::path projectParent;
+    project::RecentProjects recent;
     std::uint64_t editCount = 0;
 };
 } // namespace weft::ui

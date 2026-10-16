@@ -26,7 +26,9 @@ enum class Cmd
     // Automation (M7).
     toggleAutomation,
     // Bounce (M8).
-    bounce
+    bounce,
+    // Projects and preferences (M9).
+    newProject, openProject, saveAs, projectSettings, audioSettings
 };
 
 struct CommandInfo

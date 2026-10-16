@@ -1,6 +1,8 @@
-// AT-PRJ-1, AT-PRJ-2, AT-PRJ-4, AT-PRJ-9 and the recovery log format.
+// AT-PRJ-1, AT-PRJ-2, AT-PRJ-4, AT-PRJ-9, AT-PRJ-13 (the commands), the recent projects
+// list and the recovery log format.
 
 #include "Fixtures.h"
+#include "weft/project/ProjectFiles.h"
 #include "weft/project/ProjectFolder.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -181,4 +183,87 @@ TEST_CASE ("crc32 matches the standard check value", "[U][project]")
 {
     const std::string check = "123456789";
     CHECK (project::crc32 ({ reinterpret_cast<const std::uint8_t*> (check.data()), check.size() }) == 0xCBF43926u);
+}
+
+TEST_CASE ("AT-PRJ-13 project settings: record bit depth, metronome defaults, sample rate only without media", "[U][project][AT-PRJ-13]")
+{
+    auto s = commands::Session::createNew ({}, "userA").value();
+    CHECK (s.renameProject ("Demo"));
+    CHECK (s.model().info.name == "Demo");
+
+    CHECK (s.setRecordBitDepth (16));
+    CHECK (s.model().info.recordBitDepth == 16);
+    CHECK_FALSE (s.setRecordBitDepth (20));
+    CHECK (s.model().info.recordBitDepth == 16);
+
+    model::MetronomeSettings m;
+    m.enabled = false;
+    m.during = "both";
+    m.countInBars = 2;
+    m.levelDb = -6;
+    CHECK (s.setMetronomeDefaults (m));
+    CHECK (s.model().info.metronomeDefaults.during == "both");
+    CHECK (s.model().info.metronomeDefaults.countInBars == 2);
+    m.during = "never";
+    CHECK_FALSE (s.setMetronomeDefaults (m));
+
+    CHECK (s.setSampleRate (96000));
+    CHECK (s.model().info.sampleRate == 96000);
+    CHECK_FALSE (s.setSampleRate (22050));
+    model::MediaRef media;
+    media.hash = "b3:" + std::string (64, 'a');
+    REQUIRE (s.addMedia (media));
+    const auto refused = s.setSampleRate (44100);
+    CHECK_FALSE (refused);
+    CHECK (refused.error == "The sample rate can't change once the project has audio.");
+    CHECK (s.model().info.sampleRate == 96000);
+
+    // Each change is its own undo step.
+    REQUIRE (s.undo().done); // media
+    REQUIRE (s.undo().done); // sample rate
+    CHECK (s.model().info.sampleRate == 48000);
+}
+
+TEST_CASE ("Recent projects keep the ten newest, newest first, and survive a restart", "[U][project][AT-PRJ-10]")
+{
+    TempDir dir;
+    const auto store = dir.path / "settings" / "recent-projects.txt";
+    project::RecentProjects recent (store);
+    recent.load();
+    CHECK (recent.items().empty());
+    for (int i = 1; i <= 11; ++i)
+        recent.add (dir.path / ("P" + std::to_string (i) + ".weft"));
+    REQUIRE (recent.items().size() == 10);
+    CHECK (recent.items().front() == dir.path / "P11.weft");
+    CHECK (recent.items().back() == dir.path / "P2.weft");
+
+    recent.add (dir.path / "P5.weft"); // reopened: back to the top, not twice
+    CHECK (recent.items().front() == dir.path / "P5.weft");
+    CHECK (std::count (recent.items().begin(), recent.items().end(), dir.path / "P5.weft") == 1);
+
+    // Non-ASCII names round-trip through the file.
+    const auto named = dir.path / project::fromUtf8 ("Caf\xc3\xa9 \xe6\x9b\xb2.weft");
+    recent.add (named);
+    project::RecentProjects reloaded (store);
+    reloaded.load();
+    CHECK (reloaded.items() == recent.items());
+    CHECK (reloaded.items().front() == named);
+    CHECK_FALSE (project::RecentProjects::available (named));
+
+    reloaded.remove (named);
+    CHECK (reloaded.items().front() == dir.path / "P5.weft");
+}
+
+TEST_CASE ("A picked project.automerge or its folder both name the project", "[U][project]")
+{
+    TempDir dir;
+    const auto root = dir.path / "Song.weft";
+    project::ProjectFolder folder (root);
+    REQUIRE (folder.create());
+    auto s = commands::Session::createNew ({}, "userA").value();
+    REQUIRE (folder.save (s.document()));
+    CHECK (project::projectRootFor (root / "project.automerge") == root);
+    CHECK (project::projectRootFor (root) == root);
+    CHECK (project::isProjectFolder (root));
+    CHECK_FALSE (project::isProjectFolder (dir.path));
 }

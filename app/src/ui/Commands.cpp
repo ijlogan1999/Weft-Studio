@@ -73,6 +73,11 @@ std::vector<CommandInfo> build()
         { Cmd::pluginManager, "Plug-in Manager", "", {} },
         { Cmd::toggleAutomation, "Automation", "A", { key ('A') } },
         { Cmd::bounce, "Bounce", "Ctrl+B", { key ('B', ctrl) } },
+        { Cmd::newProject, "New Project", "Ctrl+N", { key ('N', ctrl) } },
+        { Cmd::openProject, "Open", "Ctrl+O", { key ('O', ctrl) } },
+        { Cmd::saveAs, "Save As", "Ctrl+Shift+S", { key ('S', ctrl | shift) } },
+        { Cmd::projectSettings, "Project Settings", "", {} },
+        { Cmd::audioSettings, "Audio & MIDI Settings", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

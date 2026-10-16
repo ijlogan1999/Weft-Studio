@@ -74,6 +74,31 @@ EditResult Session::renameProject (const std::string& name)
     return run ("Rename Project", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "name" }), Value (name))); });
 }
 
+EditResult Session::setRecordBitDepth (int bits)
+{
+    if (! model::isValidBitDepth (bits))
+        return reject ("Recordings can be 16, 24 or 32-bit.");
+    return run ("Set Recording Bit Depth", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "recordBitDepth" }), Value (bits))); });
+}
+
+EditResult Session::setSampleRate (int rate)
+{
+    if (! model::isValidSampleRate (rate))
+        return reject ("The sample rate must be 44.1, 48, 88.2 or 96 kHz.");
+    if (! model().media.empty())
+        return reject ("The sample rate can't change once the project has audio.");
+    return run ("Set Sample Rate", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "sampleRate" }), Value (rate))); });
+}
+
+EditResult Session::setMetronomeDefaults (const model::MetronomeSettings& settings)
+{
+    if (settings.countInBars < 0 || settings.countInBars > 8)
+        return reject ("Count-in is 0 to 8 bars.");
+    if (settings.during != "record" && settings.during != "play" && settings.during != "both")
+        return reject ("The metronome plays during record, play or both.");
+    return run ("Set Metronome Defaults", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "metronomeDefaults" }), settings.toValue())); });
+}
+
 EditResult Session::setCycle (bool enabled, Ticks start, Ticks end)
 {
     if (start < 0 || end <= start)

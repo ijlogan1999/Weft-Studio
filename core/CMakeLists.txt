@@ -27,6 +27,7 @@ add_library(weft_core STATIC
     src/model/Automation.cpp
     src/model/Model.cpp
     src/model/Projector.cpp
+    src/project/ProjectFiles.cpp
     src/project/ProjectFolder.cpp
     src/rt/AudioThread.cpp
     src/time/Position.cpp

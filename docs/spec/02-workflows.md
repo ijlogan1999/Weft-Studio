@@ -25,6 +25,8 @@ Shortcuts are Weft defaults (see `00-README.md`).
 **Decisions**
 - **D-W0-1.** If the device cannot run at the project's sample rate, the system opens the project, warns, and plays through a high-quality resampler at the device rate. Recording is disabled until the rates match. (Simplest behavior that never blocks opening.)
 - **D-W0-2.** WASAPI shared is the default because it works on every Windows machine without exclusive access. ASIO is recommended in the dialog's help text for low latency.
+- **Decision D-W0-3 (M9, setup details):** the Audio & MIDI preferences are the Audio Setup dialog reopened from the File menu, with OK and Cancel instead of Continue; it also lists the MIDI inputs (F-UI-8). The choices are kept per user in `audio-device.json` in the settings folder, and that file's absence is what makes a launch the first one. The Welcome screen opens on every launch, since it carries the recent projects; closing it keeps the empty project Weft starts with. In No-audio mode the engine runs on the UI timer against the system clock, and pressing Record says that recording needs an audio device.
+- **Decision D-W0-4 (M9, MIDI inputs):** every connected MIDI input is opened, and inputs switched off in preferences are dropped by device name before they reach the engine. Inputs plugged in later open when the system reports the device list changed. Only channel messages are used for now.
 
 ---
 
@@ -387,6 +389,14 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 - Every committed change is appended to `Recovery/changes.log` within 1 s.
 - On open, if the log has changes newer than `project.automerge`, the system asks "Recover unsaved changes from <time>?" Recover applies them; Discard archives the log.
 
+### Decisions (M9)
+- **Decision D-W10-5 (Save As):** the new folder must not exist yet and the project takes its name. Plug-in state blobs and `Bounces/` are copied; `Cache/` and `Recovery/` start empty. Without "Copy media", the new project gets `media-links.txt`, listing the absolute media folders of the original, and media is looked up in `Media/` first and then in those folders. Undo history carries on in the new folder.
+- **Decision D-W10-6 (unsaved changes):** New, Open and Quit ask "Save changes to "<name>"?" with Save, Don't Save and Cancel. Don't Save archives the recovery log, so the next open doesn't offer those changes. Quitting no longer saves silently. The "Untitled" project Weft starts with is deleted if it's replaced or closed without any edit; projects made with File › New stay. Plain Save never asks for a name; Save As renames.
+- **Decision D-W10-7 (view state):** this user's playhead, scroll and zoom are kept in `Cache/view.txt` (local, safe to delete) and restored on open.
+- **Decision D-W10-8 (recent projects):** File › Open Recent keeps project folders in `recent-projects.txt` in the settings folder. A project joins it when opened, saved or saved as. A missing one reads "<name> (not found)", and clicking it removes it.
+- **Decision D-W10-9 (open reports):** missing plug-ins are listed in one message after open. Locate… looks at every file under the chosen folder but only hashes files whose size matches a missing file's recorded size.
+- **Decision D-W10-10 (Project Settings):** each changed setting is its own undo step. Metronome defaults take effect when the project is next opened; the control bar's metronome toggle stays per session.
+
 ---
 
 ## W-11 · Tempo and time signature changes
@@ -408,6 +418,8 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 |---|---|
 | D-W0-1 | Device/project sample-rate mismatch: open, warn, resample playback, disable recording. |
 | D-W0-2 | Default driver WASAPI shared. |
+| D-W0-3 | Audio & MIDI preferences reuse Audio Setup; settings file marks first launch; Welcome every launch; No-audio mode runs on the system clock. |
+| D-W0-4 | All MIDI inputs open; disabled ones dropped by name; hot-plug via device list changes. |
 | D-W1-1 | Auto input monitoring on armed tracks by default. |
 | D-W1-2 | R while recording stops recording, keeps playback. |
 | D-W1-3 | New recordings cover older overlapping regions without trimming them. |
@@ -461,3 +473,9 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W10-2 | Project is a folder. |
 | D-W10-3 | Plain Save doesn't create a history version. |
 | D-W10-4 | Refuse to open projects from newer versions. |
+| D-W10-5 | Save As copies blobs and bounces; without copying media it links the original media folders. |
+| D-W10-6 | Save / Don't Save / Cancel before New, Open, Quit; Don't Save archives the log; untouched startup project is deleted. |
+| D-W10-7 | Per-user playhead, scroll and zoom in `Cache/view.txt`. |
+| D-W10-8 | Open Recent stored in settings; missing entries removed when clicked. |
+| D-W10-9 | Missing plug-ins listed after open; Locate hashes only size matches. |
+| D-W10-10 | Each Project Settings change is one undo step; metronome defaults apply on next open. |

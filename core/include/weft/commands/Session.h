@@ -97,6 +97,12 @@ public:
 
     // Project -------------------------------------------------------------------
     EditResult renameProject (const std::string& name);
+    /** Project Settings (F-PRJ-9): 16, 24 or 32 (float) bits for new recordings. */
+    EditResult setRecordBitDepth (int bits);
+    /** Project Settings: 44.1, 48, 88.2 or 96 kHz, only while the project has no media (MVP). */
+    EditResult setSampleRate (int rate);
+    /** Project Settings: the metronome the project opens with. */
+    EditResult setMetronomeDefaults (const model::MetronomeSettings& settings);
     EditResult setCycle (bool enabled, Ticks start, Ticks end);
     EditResult setPunch (bool enabled, Ticks start, Ticks end);
     EditResult setEndMarker (std::optional<Ticks> end);
