@@ -80,7 +80,7 @@ void MediaSync::refresh()
     {
         if (const auto file = localFile (hash, want.media))
         {
-            if (mayUpload && ! uploaded.contains (hash) && ! transfer->busy (hash, true))
+            if (mayUpload && ! uploaded.contains (hash) && ! transfer->busy (hash, true) && ! transfer->busy (hash, false))
             {
                 transfer->upload (hash, *file);
                 pendingUploads.try_emplace (hash, std::pair<std::int64_t, std::int64_t> { 0, static_cast<std::int64_t> (fs::file_size (*file)) });
@@ -134,6 +134,7 @@ void MediaSync::poll()
                 break;
             case K::downloaded:
                 pendingDownloads.erase (e.hash);
+                uploaded.insert (e.hash); // it came from the relay, so there's nothing to send back
                 if (onDownloaded)
                     onDownloaded (e.hash, e.file);
                 break;
