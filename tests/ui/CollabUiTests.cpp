@@ -81,7 +81,7 @@ juce::Colour pixel (juce::Component& c, juce::Point<float> p)
     return image.getPixelAt (juce::roundToInt (p.x), juce::roundToInt (p.y));
 }
 
-bool near (juce::Colour a, juce::Colour b)
+bool similarColour (juce::Colour a, juce::Colour b)
 {
     return std::abs (a.getRed() - b.getRed()) + std::abs (a.getGreen() - b.getGreen()) + std::abs (a.getBlue() - b.getBlue()) < 60;
 }
@@ -183,7 +183,7 @@ TEST_CASE ("AT-COL-10 AT-COL-11 AT-COL-12 [UI] avatars, pointers, playheads, sel
     a.studio.view.originTick = 0;
     a.settle();
     const auto box = a.timeline().regionBounds (*a.m().region (*r2));
-    CHECK (near (pixel (a.timeline(), { box.getX(), box.getCentreY() }), colourOf (*other (a))));
+    CHECK (similarColour (pixel (a.timeline(), { box.getX(), box.getCentreY() }), colourOf (*other (a))));
     CHECK_FALSE (a.studio.selection.contains (*r2)); // B's selection isn't A's
 
     // B focuses track 3: B's badge on A's track 3 header; B records there: the badge turns red.
