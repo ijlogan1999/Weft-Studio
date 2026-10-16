@@ -158,6 +158,7 @@ public:
 
 private:
     void rebuildSlots();
+    std::map<juce::Component*, juce::String> tipsBeforeLock; // restored on unlock
     juce::String busName (const Id& busId) const;
     void setVolume (double db);
     juce::Rectangle<int> slotArea;

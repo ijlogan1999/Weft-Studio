@@ -20,6 +20,14 @@ float pointerAlpha (const Studio& studio, const collab::RemotePresence& who);
 void drawPointer (juce::Graphics& g, juce::Point<float> tip, juce::Colour c, const juce::String& name, float alpha);
 /** A round badge with initials; recording ones are red with a ring. */
 void drawBadge (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c, const juce::String& text, bool recording, bool dim = false);
+/** A member's collaborator colour (the accent for this user or someone unknown). */
+juce::Colour userColour (const Studio& studio, const UserId& user);
+
+/** A small padlock (locked tracks, 04 §9.6). */
+void drawLock (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c);
+/** A comment pin: a rounded speech mark, hollow once resolved (04 §9.3). */
+void drawCommentPin (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c, bool resolved);
+
 /** Avatar hover text: name, status and where they are (04 §9). */
 juce::String describe (const Studio& studio, const collab::RemotePresence& who);
 

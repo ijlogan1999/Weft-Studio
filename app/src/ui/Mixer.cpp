@@ -1,4 +1,5 @@
 #include "Mixer.h"
+#include "PresenceUi.h"
 
 #include <cmath>
 
@@ -623,6 +624,35 @@ void ChannelStrip::refresh()
     monitor.setToggleState (t->monitor == "on", juce::dontSendNotification);
     monitor.setButtonText (t->monitor == "off" ? "-" : "I");
     describe (monitor, "Input monitoring", "Input monitoring: " + juce::String (t->monitor));
+
+    // Locked by someone else (05 §7, 04 §9.6): everything but solo and record enable is disabled.
+    const bool locked = studio.lockedByOther (id);
+    const auto lockTip = studio.lockTooltip (id);
+    name.setEditable (false, ! master && ! locked, true);
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &name, &input, &output, &automation, &pan, &volume, &readout, &mute, &monitor })
+    {
+        if (c != &name)
+            c->setEnabled (! locked);
+        auto* tip = dynamic_cast<juce::SettableTooltipClient*> (c);
+        if (tip == nullptr)
+            continue;
+        if (locked)
+        {
+            if (! tipsBeforeLock.contains (c))
+                tipsBeforeLock[c] = tip->getTooltip();
+            tip->setTooltip (lockTip);
+        }
+        else if (auto it = tipsBeforeLock.find (c); it != tipsBeforeLock.end())
+        {
+            if (tip->getTooltip().startsWith ("Locked by"))
+                tip->setTooltip (it->second);
+            tipsBeforeLock.erase (it);
+        }
+    }
+    for (auto& slot : inserts)
+        slot->setEnabled (! locked);
+    for (auto& slot : sends)
+        slot->setEnabled (! locked);
     resized();
     repaint();
 }
@@ -668,6 +698,9 @@ void ChannelStrip::paint (juce::Graphics& g)
     }
     g.setColour (selected ? colour (Token::accent) : colour (Token::border));
     g.drawRect (getLocalBounds(), selected ? 2 : 1);
+    if (! isMaster() && ! studio.lockTooltip (id).isEmpty())
+        drawLock (g, juce::Rectangle<float> (static_cast<float> (getWidth()) - 16.0f, 9.0f, 10.0f, 13.0f),
+                  studio.lockedByOther (id) ? colour (Token::warning) : colour (Token::textDim));
     g.setColour (colour (Token::textDim));
     g.setFont (juce::FontOptions (10.0f));
     if (! slotArea.isEmpty())

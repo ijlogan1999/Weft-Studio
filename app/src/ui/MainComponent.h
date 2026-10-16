@@ -117,6 +117,7 @@ public:
     const juce::String& lastAlert() const noexcept { return alertText; }
     bool noAudioBannerShown() const { return banner.isVisible(); }
     bool readOnlyBannerShown() const { return readOnly.isVisible(); }
+    PreviewBanner& previewBanner() noexcept { return preview; }
     const ReadOnlyBanner& readOnlyBanner() const noexcept { return readOnly; }
     static constexpr int recentMenuBase = 10000;
 
@@ -142,6 +143,7 @@ private:
     PluginWindows plugins;
     NoAudioBanner banner;
     ReadOnlyBanner readOnly;
+    PreviewBanner preview;
     std::unique_ptr<juce::AlertWindow> question, projectAlert;
     std::function<void (int)> projectAnswer;
     juce::String projectAsked, alertText;

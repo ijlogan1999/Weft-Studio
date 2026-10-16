@@ -11,6 +11,7 @@
 #include "weft/collab/MediaSync.h"
 #include "weft/collab/Relay.h"
 #include "weft/collab/SyncClient.h"
+#include "weft/commands/Collab.h"
 #include "weft/commands/LocalView.h"
 #include "weft/commands/Session.h"
 #include "weft/engine/arrange/Import.h"
@@ -101,7 +102,8 @@ public:
     ~Studio() override;
 
     commands::Session& session() noexcept { return *sess; }
-    const model::ProjectModel& model() const noexcept { return sess->model(); }
+    /** The project as shown: the current state, or the version being previewed (read-only, 04 §9.5). */
+    const model::ProjectModel& model() const noexcept { return previewModel != nullptr ? *previewModel : sess->model(); }
     engine::Engine& engine() noexcept { return *eng; }
     engine::MediaPool& media() noexcept { return pool; }
     engine::AudioDevice& device() noexcept { return *audioDevice; }
@@ -351,6 +353,8 @@ public:
     bool online() const noexcept { return wantOnline; }
     /** Why the project is read-only here (a Viewer, removed from the project), or empty. */
     juce::String readOnlyReason() const;
+    /** The commands that edit the project, refused while previewing a version. */
+    static bool changesDocument (Cmd command);
     /** Calls the relay as this account; refreshed tokens are saved afterwards. */
     template <typename Fn>
     auto withRelay (Fn&& fn)
@@ -397,6 +401,64 @@ public:
     /** Plug-ins a collaborator's change brought in that aren't installed here (F-COL-20). */
     std::function<void (const std::vector<MissingPlugin>&)> onMissingPlugins;
 
+    // Comments, chat, locks and versions (M12, 05 §7 and §9) ------------------------------------
+    /** Members' display names by user id (this user included), for mentions and labels. */
+    std::map<UserId, std::string> memberNames() const;
+    juce::String nameOf (const UserId& user) const;
+    /** A comment; "@Name" in the text becomes a mention of that member (05 §9.1). */
+    std::optional<Id> addComment (const commands::CommentAnchor& anchor, const juce::String& text);
+    /** Shift+C (D-UI-2): where a new comment goes: the playhead, on the selected track. */
+    commands::CommentAnchor commentAnchorHere() const;
+    std::optional<Id> replyToComment (const Id& commentId, const juce::String& text);
+    bool editComment (const Id& commentId, const juce::String& text);
+    bool deleteComment (const Id& commentId);
+    bool resolveComment (const Id& commentId, bool resolved);
+    /** A comment's text as shown, mentions as "@Name". */
+    juce::String commentText (const model::Comment& comment) const;
+    /** The Comments tab's filter, and the thread it (or a pin's popover) shows. */
+    commands::CommentFilter commentFilter = commands::CommentFilter::open;
+    Id openThread;
+    /** A comment being written (Shift+C, Add Comment): where it will be pinned. */
+    std::optional<commands::CommentAnchor> draftComment;
+    /** Add Comment at a place: opens the Comments tab's composer there. */
+    void startComment (const commands::CommentAnchor& anchor);
+    /** Clicking a pin: the thread opens (a popover at screenArea, and the Comments tab). */
+    void showThread (const Id& threadId, juce::Rectangle<int> screenArea = {});
+    std::function<void (const Id& threadId, juce::Rectangle<int> screenArea)> onShowThread;
+    /** Break Lock asks the Owner first (04 §9.6); the window sets this. */
+    std::function<void (const Id& trackId)> confirmBreakLock;
+    /** The Comments tab's dot: comments from others since this user last looked. */
+    bool commentsUnread() const;
+    void markCommentsSeen();
+    /** Mentions of this user that arrived since they were last told (shown once on connect). */
+    std::vector<Id> mentionsShown;
+    bool sendChat (const juce::String& text);
+    bool deleteChat (const Id& messageId);
+    std::size_t unreadChat() const;
+    void markChatRead();
+    /** Lock or unlock a track for this user (F-COL-11). */
+    bool toggleLock (const Id& trackId);
+    /** The Owner breaks someone's lock (after the confirmation, 04 §9.6). */
+    bool breakLock (const Id& trackId);
+    /** Locked by someone else: the track's controls are disabled here. */
+    bool lockedByOther (const Id& trackId) const { return sess->lockedByOther (trackId); }
+    /** "Locked by Ana" (or "Locked by you"), empty when not locked. */
+    juce::String lockTooltip (const Id& trackId) const { return juce::String (sess->lockText (trackId)); }
+    /** Save Version… (Ctrl+Alt+S). */
+    std::optional<Id> saveVersion (const juce::String& name);
+    /** Selecting a version in History: the arrange view shows it read-only (04 §9.5). */
+    bool previewVersion (const Id& versionId);
+    void returnToCurrent();
+    /** Restore in the preview banner: a new change, undoable (D-COL-12). */
+    bool restorePreviewed();
+    bool previewing() const noexcept { return previewModel != nullptr; }
+    const Id& previewedVersion() const noexcept { return previewId; }
+    /** Collaborators' actions this user is told about (a lock broken, offline edits merged). */
+    std::vector<commands::Notice> notices;
+    std::function<void (const commands::Notice&)> onNotice;
+    /** 30 minutes without input ends a session for automatic versions (05 §9.3). */
+    static constexpr double idleSessionMs = 30.0 * 60 * 1000;
+
     /** "Remove bus and N sends?" (W-7 step 6) for a bus; empty when no question is needed. */
     juce::String deleteTrackQuestion (const Id& trackId) const;
     bool deleteTrack (const Id& trackId);
@@ -418,6 +480,15 @@ private:
     void mediaDownloaded (const std::string& hash);
     void updatePresence();
     void noticeMissingPlugins();
+    void collabNotices();
+    void endSessionVersion();
+    std::unique_ptr<model::ProjectModel> previewModel;
+    Id previewId;
+    commands::Session::Access accessBeforePreview = commands::Session::Access::full;
+    std::string accessReasonBeforePreview;
+    std::int64_t commentsSeenAt = 0, mentionsSeenAt = 0;
+    Id chatReadId;
+    double lastInputMs = 0;
     bool wantOnline = true;
 
     void syncEngine();
@@ -458,6 +529,7 @@ private:
     std::unique_ptr<engine::NullDevice> silentClock; // drives the engine in No-audio mode
     double silentClockMs = 0;
     bool unsaved = false;
+    bool changesDiscarded = false; // Don't Save was chosen: no automatic version on close
     bool scratch = false, everEdited = false;
     std::filesystem::path projectParent;
     project::RecentProjects recent;

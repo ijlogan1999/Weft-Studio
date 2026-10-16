@@ -114,6 +114,8 @@ void Ruler::paint (juce::Graphics& g)
             g.drawText (juce::String (marker->name), juce::Rectangle<float> (x + 5, lane.getY() + 3.0f, 64.0f, markerLane - 6.0f),
                         juce::Justification::centredLeft, true);
         }
+        for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
+            drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
     }
     g.setColour (colour (Token::border));
     g.drawHorizontalLine (getHeight() - 1, 0.0f, static_cast<float> (getWidth()));
@@ -124,6 +126,23 @@ void Ruler::paint (juce::Graphics& g)
     handle.addTriangle (px - 6, cycleStrip, px + 6, cycleStrip, px, cycleStrip + 8);
     g.fillPath (handle);
     g.drawVerticalLine (juce::roundToInt (px), static_cast<float> (cycleStrip), static_cast<float> (getHeight()));
+}
+
+juce::Rectangle<float> Ruler::pinBounds (const model::Comment& thread) const
+{
+    const auto x = static_cast<float> (studio.view.tickToX (static_cast<double> (thread.pos)));
+    return { x - 1.0f, rulerHeight + 3.0f, 14.0f, markerLane - 5.0f };
+}
+
+const model::Comment* Ruler::commentAt (juce::Point<float> p) const
+{
+    if (! studio.layout.globalTracks)
+        return nullptr;
+    const auto threads = commands::commentThreads (studio.model(), commands::CommentFilter::all, studio.session().user());
+    for (auto it = threads.rbegin(); it != threads.rend(); ++it)
+        if (pinBounds (**it).expanded (2.0f).contains (p))
+            return *it;
+    return nullptr;
 }
 
 void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
@@ -137,6 +156,11 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
     }
     if (p.y >= rulerHeight && studio.layout.globalTracks)
     {
+        if (const auto* c = commentAt (p))
+        {
+            studio.showThread (c->id, localAreaToGlobal (pinBounds (*c).toNearestInt()));
+            return;
+        }
         if (const auto* marker = markerAt (p.x))
         {
             if (mods.isPopupMenu())
@@ -247,8 +271,64 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
             studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
     };
     addChildComponent (mode);
+    juce::Path padlock;
+    padlock.addRoundedRectangle (0.0f, 6.0f, 10.0f, 8.0f, 1.5f);
+    padlock.addRectangle (1.5f, 0.0f, 1.6f, 6.0f);
+    padlock.addRectangle (6.9f, 0.0f, 1.6f, 6.0f);
+    padlock.addRectangle (1.5f, 0.0f, 7.0f, 1.6f);
+    lock.setShape (padlock, false, true, false);
+    lock.setWantsKeyboardFocus (false);
+    lock.onClick = [this] { lockClicked(); };
+    addChildComponent (lock);
     setTitle ("Track header");
     refresh();
+}
+
+void TrackHeader::lockClicked()
+{
+    if (studio.lockedByOther (trackId))
+    {
+        if (studio.session().isOwner() && studio.confirmBreakLock)
+            studio.confirmBreakLock (trackId);
+        else
+            studio.setStatus (studio.lockTooltip (trackId) + ".");
+        return;
+    }
+    studio.toggleLock (trackId);
+}
+
+juce::PopupMenu TrackHeader::menu() const
+{
+    juce::PopupMenu m;
+    const auto lockText = studio.lockTooltip (trackId);
+    const bool other = studio.lockedByOther (trackId);
+    m.addItem (itemLock, lockText.isEmpty() ? "Lock Track" : "Unlock Track", ! other && ! studio.previewing());
+    if (other && studio.session().isOwner() && ! studio.previewing())
+        m.addItem (itemBreakLock, "Break Lock (" + lockText + ")...");
+    m.addSeparator();
+    m.addItem (itemComment, "Add Comment", ! studio.previewing());
+    return m;
+}
+
+void TrackHeader::pickMenu (int item)
+{
+    switch (item)
+    {
+        case itemLock: studio.toggleLock (trackId); break;
+        case itemBreakLock:
+            if (studio.confirmBreakLock)
+                studio.confirmBreakLock (trackId);
+            break;
+        case itemComment:
+        {
+            commands::CommentAnchor a;
+            a.pos = studio.playhead();
+            a.trackId = trackId;
+            studio.startComment (a);
+            break;
+        }
+        default: break;
+    }
 }
 
 void TrackHeader::rebuildAutomation()
@@ -313,6 +393,41 @@ void TrackHeader::refresh()
     arm.setColour (juce::TextButton::buttonOnColourId, colour (Token::record));
     arm.setColour (juce::TextButton::textColourOnId, colour (Token::onRecord));
     rebuildAutomation();
+
+    // A lock (04 §6.1, §9.6): the icon shows; someone else's lock disables the shared controls.
+    const auto lockTip = studio.lockTooltip (trackId);
+    const bool locked = studio.lockedByOther (trackId);
+    lock.setVisible (lockTip.isNotEmpty());
+    const auto lockColour = locked ? colour (Token::warning) : colour (Token::textDim);
+    lock.setColours (lockColour, lockColour.brighter (0.3f), lockColour.darker (0.2f));
+    lock.setTooltip (lockTip.isEmpty() ? juce::String() : lockTip + (locked ? juce::String() : juce::String (" (click to unlock)")));
+    name.setEditable (false, ! locked, true);
+    std::vector<juce::Component*> shared { &name, &mute, &mode };
+    for (auto& p : parameters)
+        shared.push_back (p.get());
+    for (auto& b : addLane)
+        shared.push_back (b.get());
+    for (auto* c : shared)
+    {
+        if (c != &name)
+            c->setEnabled (! locked);
+        auto* tip = dynamic_cast<juce::SettableTooltipClient*> (c);
+        if (tip == nullptr)
+            continue;
+        if (locked)
+        {
+            if (! tipsBeforeLock.contains (c))
+                tipsBeforeLock[c] = tip->getTooltip();
+            tip->setTooltip (lockTip);
+        }
+        else if (auto it = tipsBeforeLock.find (c); it != tipsBeforeLock.end())
+        {
+            if (tip->getTooltip().startsWith ("Locked by"))
+                tip->setTooltip (it->second);
+            tipsBeforeLock.erase (it);
+        }
+    }
+    setTooltip (locked ? lockTip : juce::String());
     resized();
     repaint();
 }
@@ -359,6 +474,8 @@ void TrackHeader::resized()
     const auto trackPart = getLocalBounds().withHeight (studio.trackHeight (trackId));
     auto r = trackPart.reduced (4).withTrimmedLeft (32);
     auto row = r.removeFromTop (24);
+    if (lock.isVisible())
+        lock.setBounds (row.removeFromRight (16).withSizeKeepingCentre (11, 15));
     for (auto* b : { &arm, &solo, &mute })
     {
         b->setBounds (row.removeFromRight (24));
@@ -389,6 +506,16 @@ void TrackHeader::mouseMove (const juce::MouseEvent& e)
 
 void TrackHeader::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+    {
+        studio.selectTrack (trackId);
+        juce::Component::SafePointer<TrackHeader> self (this);
+        menu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self] (int item) {
+            if (self != nullptr)
+                self->pickMenu (item);
+        });
+        return;
+    }
     const auto bottom = studio.trackHeight (trackId);
     resizeFrom = e.y >= bottom - 4 && e.y <= bottom ? bottom : -1;
     studio.selectTrack (trackId);
@@ -1026,10 +1153,59 @@ void Timeline::paint (juce::Graphics& g)
         g.drawText ("Drop audio or MIDI files here, or press R to record.", getLocalBounds().withTrimmedTop (contentHeight()).withHeight (60),
                     juce::Justification::centred);
     }
+    for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
+        if (const auto box = pinBounds (*c))
+            drawCommentPin (g, *box, userColour (studio, c->author), c->resolved);
     paintCollaborators (g);
     const auto px = static_cast<float> (studio.view.tickToX (static_cast<double> (studio.playhead())));
     g.setColour (colour (Token::playhead));
     g.drawVerticalLine (juce::roundToInt (px), 0.0f, static_cast<float> (getHeight()));
+}
+
+std::optional<juce::Rectangle<float>> Timeline::pinBounds (const model::Comment& thread) const
+{
+    const auto& m = studio.model();
+    const auto track = commands::commentTrack (m, thread);
+    if (track.empty())
+        return std::nullopt;
+    const auto row = commands::trackRow (m, track);
+    if (row < 0)
+        return std::nullopt;
+    const auto lane = laneBounds (row);
+    const auto x = static_cast<float> (studio.view.tickToX (static_cast<double> (thread.pos)));
+    return juce::Rectangle<float> (x - 1.0f, lane.getY() + 2.0f, 12.0f, 14.0f);
+}
+
+const model::Comment* Timeline::commentPinAt (juce::Point<float> p) const
+{
+    const auto threads = commands::commentThreads (studio.model(), commands::CommentFilter::all, studio.session().user());
+    for (auto it = threads.rbegin(); it != threads.rend(); ++it)
+        if (const auto box = pinBounds (**it); box && box->expanded (2.0f).contains (p))
+            return *it;
+    return nullptr;
+}
+
+juce::PopupMenu Timeline::contextMenu (juce::Point<float> p) const
+{
+    juce::PopupMenu menu;
+    const auto* r = regionAt (p);
+    menu.addItem (1, r != nullptr ? "Add Comment on \"" + juce::String (r->name) + "\"" : juce::String ("Add Comment"), ! studio.previewing());
+    return menu;
+}
+
+void Timeline::pickContext (int item, juce::Point<float> p)
+{
+    if (item != 1)
+        return;
+    const auto& m = studio.model();
+    commands::CommentAnchor a;
+    a.pos = std::max<Ticks> (0, studio.snapped (tickAt (p.x)));
+    const auto row = rowAt (p.y);
+    if (row >= 0 && row < rows())
+        a.trackId = m.trackOrder[static_cast<std::size_t> (row)];
+    if (const auto* r = regionAt (p))
+        a.regionId = r->id;
+    studio.startComment (a);
 }
 
 void Timeline::paintCollaborators (juce::Graphics& g)
@@ -1112,11 +1288,31 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
     downAt = lastAt = p;
     auto& s = studio.session();
     const auto& m = studio.model();
+    if (const auto* c = commentPinAt (p); c != nullptr && ! mods.isPopupMenu())
+    {
+        studio.showThread (c->id, localAreaToGlobal (pinBounds (*c)->toNearestInt()));
+        return;
+    }
     const auto* r = regionAt (p);
     const auto row = rowAt (p.y);
     const auto trackId = row >= 0 && row < rows() ? m.trackOrder[static_cast<std::size_t> (row)] : Id {};
     if (! trackId.empty())
         studio.selectTrack (trackId);
+    if (mods.isPopupMenu())
+    {
+        juce::Component::SafePointer<Timeline> self (this);
+        contextMenu (p).showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self, p] (int item) {
+            if (self != nullptr)
+                self->pickContext (item, p);
+        });
+        return;
+    }
+    // Regions on a track someone else locked can't be picked up for editing (04 §9.6).
+    if (r != nullptr && clicks < 2 && studio.lockedByOther (m.effectiveTrackId (*r)))
+    {
+        studio.setStatus (studio.lockTooltip (m.effectiveTrackId (*r)) + ".");
+        return;
+    }
     if (const auto hit = automationLaneAt (p))
     {
         automationDown (*hit, p, mods);

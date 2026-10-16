@@ -96,7 +96,8 @@ endif()
 if(WEFT_WITH_JUCE)
     add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp
                                  ui/MixerUiTests.cpp ui/AutomationUiTests.cpp ui/BounceUiTests.cpp ui/ProjectUiTests.cpp ui/ShareUiTests.cpp
-                                 ui/CollabUiTests.cpp)
+                                 ui/CollabUiTests.cpp
+                                 ui/CollabPanelTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
     # The mixer and plug-in manager tests host the fixture plug-ins through the real scanner.
     add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3 weft-relay)
