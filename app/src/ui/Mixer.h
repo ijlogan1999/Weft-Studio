@@ -10,10 +10,12 @@
 
 namespace weft::ui
 {
-/** Fader positions: dB with a curve that gives 0 dB about three quarters of the travel (F-MIX-2). */
+/** Fader positions: the automation taper (D-ARCH-28), which puts 0 dB at about 79 % of the travel (F-MIX-2). */
 namespace fader
 {
 inline constexpr double minDb = -90.0, maxDb = 6.0;
+/** The fader's dB range with the taper as its proportion. */
+juce::NormalisableRange<double> range();
 /** Below minDb the fader is at the bottom: −inf (the model's −200). */
 inline constexpr double silentDb = -200.0;
 juce::String dbText (double db);
@@ -93,6 +95,8 @@ public:
     /** Reads the track again (the mixer calls it after every change). */
     void refresh();
     void updateMeter (double now);
+    /** Moves the fader, pan and mute with the automation the engine plays (the mixer's timer). */
+    void followAutomation();
 
     const Id& trackId() const noexcept { return id; }
     bool isMaster() const;
@@ -158,6 +162,8 @@ private:
     void setVolume (double db);
     juce::Rectangle<int> slotArea;
     Id id;
+    bool liveVolume = false, livePan = false; // the gesture in progress goes to live automation
+    bool followed = false;
     std::string shownSlots; // what the slot components were built from
 };
 

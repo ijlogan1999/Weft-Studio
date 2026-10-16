@@ -22,7 +22,9 @@ enum class Cmd
     // Piano roll (they act on notes while the piano roll has focus).
     muteNotes, quantize, transposeUp, transposeDown, octaveUp, octaveDown, notesLeft, notesRight, applyQuantize,
     // Mixer and plug-ins (M6).
-    deleteTrack, newBus, pluginManager
+    deleteTrack, newBus, pluginManager,
+    // Automation (M7).
+    toggleAutomation
 };
 
 struct CommandInfo

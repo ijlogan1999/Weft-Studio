@@ -1,6 +1,7 @@
 #include "weft/engine/transport/LiveAutomation.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace weft::engine
 {

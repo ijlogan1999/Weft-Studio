@@ -147,7 +147,8 @@ Shown in the bottom area (MVP; detachable window in v2).
 - Selecting a strip selects the track (and vice versa).
 - Disabled feedback edges (D-DM-6) show a warning badge on the affected send or output button.
 - Missing-plugin placeholders show the plugin name with a warning style and tooltip "Not installed on this computer".
-- **Decision D-UI-10:** the Monitor button cycles Auto, On, Off (lit when On, "-" when Off). The instrument slot of an instrument track with no instrument shows "Weft Keys", the default. The fader runs from −90 dB (shown "-inf", stored as −inf) to +6 dB with 0 dB about three quarters up; Shift-drag is fine adjustment. Typing in the readout accepts "-6", "-6 dB" or "-inf".
+- **Decision D-UI-10:** the Monitor button cycles Auto, On, Off (lit when On, "-" when Off). The instrument slot of an instrument track with no instrument shows "Weft Keys", the default. The fader runs from −90 dB (shown "-inf", stored as −inf) to +6 dB with 0 dB about three quarters up (D-UI-12 replaces the curve with the automation taper); Shift-drag is fine adjustment. Typing in the readout accepts "-6", "-6 dB" or "-inf".
+- **Decision D-UI-12:** automation lanes sit below their track, 60 px each. Each lane's header area shows its parameter selector and a "+" that adds a lane for the next parameter not shown; the first lane also shows the track's mode selector. Which lanes are shown is local view state. In a lane: click adds a point (time snapped, value at the click); drag moves the selected points (time snapped at the grabbed point, Shift keeps only the larger of the two movements); Shift+click adds or removes a point from the selection; dragging from an empty spot rubber-bands; Alt+drag on a segment bends it (up bulges the line up); Delete removes the selected points. A lane with no points shows the static value as a thin line. The mixer's fader, pan and mute follow automation while it plays and use the same taper as the lanes, so 0 dB is at about 79 % of the fader travel.
 - **Decision D-UI-11:** a plug-in window is titled "<plug-in> · <track>". It shows the plug-in's own editor, or a slider per parameter when it has none, or "Not installed on this computer" for a placeholder. Window positions are remembered per instance while the app runs, not saved in the project.
 
 ## 9. Collaboration UI
@@ -239,3 +240,4 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-9 | Inspector note fields set every selected note; velocity shows a range when mixed. |
 | D-UI-10 | Strip details: Monitor cycles Auto/On/Off; empty instrument slot shows Weft Keys; fader law and typed levels. |
 | D-UI-11 | Plug-in windows: title, editor choice, positions kept for the session. |
+| D-UI-12 | Automation lane layout and point editing; mixer controls follow automation. |

@@ -84,7 +84,7 @@ endif()
 # [UI] tests: the arrange window, headless. Linux needs a virtual X server (xvfb-run).
 if(WEFT_WITH_JUCE)
     add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp
-                                 ui/MixerUiTests.cpp)
+                                 ui/MixerUiTests.cpp ui/AutomationUiTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
     # The mixer and plug-in manager tests host the fixture plug-ins through the real scanner.
     add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3)

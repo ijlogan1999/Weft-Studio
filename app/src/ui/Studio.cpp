@@ -69,6 +69,7 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     : audioDevice (std::move (device))
 {
     eng = std::make_unique<engine::Engine> (pool, rack);
+    live = std::make_unique<engine::LiveAutomation> (*eng);
     catalog = std::make_unique<engine::PluginCatalog> (settingsFolder() / "plugins.json");
     catalog->load();
     host = std::make_unique<engine::Vst3Host> (*catalog);
@@ -181,6 +182,112 @@ void Studio::setTrackHeight (const Id& trackId, int height)
     sendChangeMessage();
 }
 
+int Studio::rowHeight (const Id& trackId) const
+{
+    return trackHeight (trackId) + (automationView ? static_cast<int> (shownLanes (trackId).size()) * automationLaneHeight : 0);
+}
+
+// Automation ---------------------------------------------------------------------------
+
+namespace
+{
+model::AutomationTarget volumeTarget()
+{
+    model::AutomationTarget t;
+    t.kind = "volume";
+    return t;
+}
+} // namespace
+
+std::vector<model::AutomationTarget> Studio::shownLanes (const Id& trackId) const
+{
+    std::vector<model::AutomationTarget> out;
+    if (const auto it = lanesShown.find (trackId); it != lanesShown.end())
+        for (const auto& t : it->second)
+            if (automation::targetExists (model(), trackId, t))
+                out.push_back (t);
+    if (out.empty())
+        out.push_back (volumeTarget());
+    return out;
+}
+
+void Studio::setShownLane (const Id& trackId, std::size_t index, const model::AutomationTarget& target)
+{
+    auto lanes = shownLanes (trackId);
+    if (index < lanes.size())
+        lanes[index] = target;
+    lanesShown[trackId] = lanes;
+    pointSelection = {};
+    sendChangeMessage();
+}
+
+void Studio::addShownLane (const Id& trackId)
+{
+    auto lanes = shownLanes (trackId);
+    for (const auto& choice : automationTargets (trackId))
+        if (std::none_of (lanes.begin(), lanes.end(), [&] (const auto& t) { return t.key() == choice.target.key(); }))
+        {
+            lanes.push_back (choice.target);
+            break;
+        }
+    lanesShown[trackId] = lanes;
+    sendChangeMessage();
+}
+
+std::vector<automation::TargetChoice> Studio::automationTargets (const Id& trackId) const
+{
+    return automation::targetsFor (model(), trackId, [this] (const model::PluginInstance& p) {
+        std::vector<std::pair<std::string, std::string>> out;
+        if (const auto proc = eng->processor (p.id))
+            for (const auto& info : proc->parameters())
+                out.emplace_back (info.id, info.name);
+        return out;
+    });
+}
+
+juce::String Studio::automationTargetName (const Id& trackId, const model::AutomationTarget& target) const
+{
+    for (const auto& c : automationTargets (trackId))
+        if (c.target.key() == target.key())
+            return juce::String (c.name);
+    return juce::String (automation::targetName (model(), trackId, target, {}));
+}
+
+bool Studio::automationLive (const Id& trackId, const model::AutomationTarget& target) const { return live->isLive (model(), trackId, target); }
+
+void Studio::touchControl (const Id& trackId, const model::AutomationTarget& target, double normalized)
+{
+    if (automationLive (trackId, target))
+    {
+        live->touch (model(), trackId, target, normalized);
+        return;
+    }
+    // Static value (mode Off, or nothing to follow while stopped).
+    auto& s = *sess;
+    if (target.kind == "volume")
+        check (s.setTrackVolume (trackId, automation::toDb (normalized)));
+    else if (target.kind == "pan")
+        check (s.setTrackPan (trackId, automation::toPan (normalized)));
+    else if (target.kind == "mute")
+        check (s.setTrackMute (trackId, automation::toMute (normalized)));
+    else if (target.kind == "sendLevel")
+        check (s.setSendLevel (trackId, target.sendId, automation::toDb (normalized)));
+    else if (target.kind == "pluginParam")
+        pluginParamsChanged (target.pluginId, { { target.paramId, normalized } });
+    edited();
+}
+
+void Studio::releaseControl (const Id& trackId, const model::AutomationTarget& target)
+{
+    live->release (model(), trackId, target);
+    sendChangeMessage();
+}
+
+std::optional<double> Studio::automationValue (const Id& trackId, const model::AutomationTarget& target) const
+{
+    return eng->automationValue (trackId, target);
+}
+
 void Studio::setAllTrackHeights (int height)
 {
     for (const auto& id : model().trackOrder)
@@ -215,6 +322,13 @@ void Studio::tick()
     if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
         endPluginGesture();
     eng->collectGarbage();
+    // A live automation pass that just stopped becomes one undo step (W-8).
+    if (auto pass = live->tick (model()))
+    {
+        if (check (sess->writeAutomation (pass->writes, pass->toLatch)))
+            status = pass->writes.empty() ? "Automation mode is now Latch." : "Wrote automation.";
+        edited();
+    }
     if (eng->recordingPending())
         if (const auto outcome = eng->finishRecording (*sess))
         {
@@ -370,6 +484,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::nextMarker: case Cmd::marker1: case Cmd::marker2: case Cmd::marker3: case Cmd::marker4: case Cmd::marker5: case Cmd::marker6:
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
+        case Cmd::toggleAutomation:
             break;
     }
     return std::nullopt;
@@ -460,6 +575,13 @@ bool Studio::perform (Cmd command)
             return ! pasted.empty();
         }
         case Cmd::deleteSelection:
+            if (! pointSelection.points.empty())
+            {
+                const auto points = std::vector<Id> (pointSelection.points.begin(), pointSelection.points.end());
+                const auto laneId = pointSelection.laneId;
+                pointSelection = {};
+                return check (s.deleteAutomationPoints (laneId, points));
+            }
             if (ids.empty())
                 return false;
             return check (s.deleteRegions (ids));
@@ -514,6 +636,10 @@ bool Studio::perform (Cmd command)
         case Cmd::toggleInspector: layout.inspector = ! layout.inspector; break;
         case Cmd::toggleSidePanel: layout.sidePanel = ! layout.sidePanel; break;
         case Cmd::toggleGlobalTracks: layout.globalTracks = ! layout.globalTracks; break;
+        case Cmd::toggleAutomation:
+            automationView = ! automationView;
+            pointSelection = {};
+            break;
         case Cmd::toggleMixer: toggleBottom (layout, BottomTab::mixer); break;
         case Cmd::togglePianoRoll: toggleBottom (layout, BottomTab::pianoRoll); break;
         case Cmd::toggleAudioEditor:

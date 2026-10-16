@@ -56,9 +56,15 @@ public:
     const Id trackId;
     juce::Label name;
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    // Automation view (W-8): the mode, and per lane the parameter selector and "+".
+    juce::ComboBox mode;
+    std::vector<std::unique_ptr<juce::ComboBox>> parameters;
+    std::vector<std::unique_ptr<juce::TextButton>> addLane;
 
 private:
+    void rebuildAutomation();
     Studio& studio;
+    std::vector<std::string> shownChoices; // what the parameter selectors were built from
     int number;
     int resizeFrom = -1;
 };
@@ -87,7 +93,22 @@ public:
     int scrollY = 0;
     int rowAt (float y) const;               // -1 above, rows() or more below the last track
     int rows() const;
+    /** A track's whole row: its lane, then its automation lanes in automation view. */
+    juce::Rectangle<float> rowBounds (int row) const;
+    /** The track lane where its regions are (the top of its row). */
     juce::Rectangle<float> laneBounds (int row) const;
+    /** An automation lane under a track (automation view). */
+    juce::Rectangle<float> automationBounds (int row, std::size_t index) const;
+    struct AutomationHit
+    {
+        Id trackId;
+        model::AutomationTarget target;
+        juce::Rectangle<float> box;
+    };
+    std::optional<AutomationHit> automationLaneAt (juce::Point<float> p) const;
+    /** Where a point of a lane is drawn, and the value for a height in the lane. */
+    juce::Point<float> pointPosition (const AutomationHit& lane, const model::AutoPoint& point) const;
+    static double valueAtY (juce::Rectangle<float> box, float y);
     juce::Rectangle<float> regionBounds (const model::Region& r) const;
     const model::Region* regionAt (juce::Point<float> p) const;
     int contentHeight() const;
@@ -120,6 +141,22 @@ public:
     std::function<void()> onScroll;
 
 private:
+    void paintAutomation (juce::Graphics&, const AutomationHit& lane);
+    std::vector<model::AutoPoint> previewPoints (const AutomationHit& lane) const;
+    void automationDown (const AutomationHit& hit, juce::Point<float> p, juce::ModifierKeys mods);
+    void automationDrag (juce::Point<float> p, juce::ModifierKeys mods);
+    void automationUp (juce::Point<float> p, juce::ModifierKeys mods);
+    /** The lane point within reach of p, if any. */
+    std::optional<model::AutoPoint> pointNear (const AutomationHit& lane, juce::Point<float> p) const;
+    /** The move a point drag makes now: ticks (snapped at the grabbed point) and value. */
+    std::pair<Ticks, double> pointDelta (juce::Point<float> p, juce::ModifierKeys mods) const;
+    enum class AutoDrag { none, add, band, move, bend } autoDrag = AutoDrag::none;
+    AutomationHit autoLane;
+    model::AutoPoint grabbed;      // move: the point under the mouse; bend: the segment's first point
+    double bendCurve = 0, bendSign = 1;
+    bool toggleOnUp = false;
+    juce::ModifierKeys dragMods;
+
     void paintGrid (juce::Graphics&, juce::Rectangle<float> area);
     void paintRegion (juce::Graphics&, const model::Region& r, juce::Rectangle<float> box, bool ghost);
     void startRegionDrag (const model::Region& r, Zone zone, juce::Point<float> p, juce::ModifierKeys mods);
