@@ -122,6 +122,8 @@ void SyncClient::setOnline (bool online)
         return;
     wantOnline = online;
     welcomed = false;
+    if (! online && disconnectedAt == 0)
+        disconnectedAt = options.clock();
     outbox.clear(); // the sync exchange on reconnect sends whatever the relay lacks
     if (conn != nullptr)
         weft_conn_set_online (conn, online ? 1 : 0);
@@ -607,12 +609,14 @@ void SyncClient::flushPresence (bool force)
     const bool pointerMoved = next.pointer != sentPresence.pointer;
     const bool startedOrStopped = next.playhead.playing != sentPresence.playhead.playing;
     const bool playheadDue = next.playhead.playing && now - lastPlayheadSend >= playheadEveryMs;
+    // A new anchor while playing (a locate): send it now rather than at the next refresh.
+    const bool jumped = next.playhead.playing && sentPresence.playhead.playing && ! (next.playhead == sentPresence.playhead);
     if (! otherChanged)
         dirtySince = 0;
     else if (dirtySince == 0)
         dirtySince = now;
     const bool gapOk = now - lastPresenceSend >= presenceMinGapMs;
-    const bool send = force || ! presenceEverSent || startedOrStopped || playheadDue || (pointerMoved && gapOk)
+    const bool send = force || ! presenceEverSent || startedOrStopped || playheadDue || ((pointerMoved || jumped) && gapOk)
                    || (otherChanged && gapOk && now - dirtySince >= presenceDebounceMs);
     if (! send)
         return;

@@ -64,6 +64,8 @@ public:
     std::function<void (const std::string& hash)> onUploaded;
     std::function<void (const std::string& message)> onMessage;
     std::function<void (const Account&)> onAccountChange;
+    /** Every transfer event, before it's handled (tests look at resumes and deduplication). */
+    std::function<void (const TransferEvent&)> onTransfer;
 
     Transfers& transfers() noexcept { return *transfer; }
     /** Where a downloaded media file goes, and where a blob does. */

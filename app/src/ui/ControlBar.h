@@ -3,6 +3,7 @@
 // B · Control bar (spec 04 §3): panel toggles, transport, the position/tempo/signature
 // display, mode buttons and the CPU meter.
 
+#include "PresenceUi.h"
 #include "Studio.h"
 #include "Widgets.h"
 
@@ -24,6 +25,7 @@ public:
     juce::Label& positionDisplay() noexcept { return position; }
     juce::Label& tempoDisplay() noexcept { return tempo; }
     juce::ComboBox& snapChoice() noexcept { return snapBox; }
+    Avatars& collaboratorAvatars() noexcept { return avatars; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
@@ -38,5 +40,7 @@ private:
         follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true }, theme { "Theme", Cmd::toggleTheme };
     juce::Label position, time, tempo, signature, cpu;
     juce::ComboBox countIn, snapBox;
+    Avatars avatars { studio };
+    int avatarsWidth = 0;
 };
 } // namespace weft::ui

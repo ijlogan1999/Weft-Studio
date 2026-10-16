@@ -54,6 +54,7 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void visibilityChanged() override;
 
@@ -148,7 +149,9 @@ private:
     void paintGrid (juce::Graphics&);
     void paintNotes (juce::Graphics&);
     void paintLane (juce::Graphics&);
+    void paintCollaborators (juce::Graphics&);
     juce::Colour trackColour() const;
+    Id shownTrack() const;
 
     Studio& studio;
     std::vector<Id> regions; // shown, by start

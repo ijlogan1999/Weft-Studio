@@ -89,6 +89,15 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
         addChildComponent (c);
     banner.setup.onClick = [this] { run (Cmd::audioSettings); };
     status.onSyncClicked = [this] { alert ("Sync", studio.syncDetails()); };
+    studio.onMissingPlugins = [this] (const std::vector<Studio::MissingPlugin>& missing) {
+        juce::StringArray lines;
+        for (const auto& m : missing)
+            lines.add (juce::String::fromUTF8 (m.name.c_str()) + (m.addedBy.empty() ? "" : ", added by " + juce::String::fromUTF8 (m.addedBy.c_str())));
+        alert ("Missing Plug-ins", "A collaborator used plug-ins that aren't installed here. Their slots keep their settings and pass audio through:\n\n"
+                                       + lines.joinIntoString ("\n"));
+    };
+    // Any input anywhere in the window keeps this user from showing as idle (05 §5).
+    addMouseListener (this, true);
     control.setVisible (true);
     tracksArea.setVisible (true);
     status.setVisible (true);
@@ -104,6 +113,7 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
 MainComponent::~MainComponent()
 {
     studio.uiCommand = nullptr;
+    studio.onMissingPlugins = nullptr;
     studio.removeChangeListener (this);
 }
 
@@ -144,6 +154,10 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void MainComponent::timerCallback() { studio.tick(); }
 
+void MainComponent::mouseMove (const juce::MouseEvent&) { studio.noteInput(); }
+void MainComponent::mouseDown (const juce::MouseEvent&) { studio.noteInput(); }
+void MainComponent::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) { studio.noteInput(); }
+
 void MainComponent::paint (juce::Graphics& g) { g.fillAll (colour (Token::background)); }
 
 void MainComponent::resized()
@@ -175,6 +189,7 @@ bool MainComponent::run (Cmd command)
 
 bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
+    studio.noteInput();
     // Keyboard MIDI gets letter keys first (AT-REC-20); key repeat is ignored by the mapper.
     if (studio.keyboardMidiKey (key, true))
     {
@@ -379,8 +394,8 @@ void MainComponent::opened (const Studio::OpenResult& result)
     if (! result.missingPlugins.empty())
     {
         juce::StringArray names;
-        for (const auto& n : result.missingPlugins)
-            names.add (juce::String::fromUTF8 (n.c_str()));
+        for (const auto& m : studio.missingPluginList())
+            names.add (juce::String::fromUTF8 (m.name.c_str()) + (m.addedBy.empty() ? "" : ", added by " + juce::String::fromUTF8 (m.addedBy.c_str())));
         alert ("Missing Plug-ins", "These plug-ins aren't installed. Their slots keep their settings and pass audio through:\n\n"
                                        + names.joinIntoString ("\n"));
     }

@@ -6,6 +6,7 @@ namespace weft::ui
 {
 ControlBar::ControlBar (Studio& s) : studio (s)
 {
+    addChildComponent (avatars);
     for (auto* b : commandButtons())
     {
         addAndMakeVisible (*b);
@@ -100,6 +101,9 @@ std::vector<CommandButton*> ControlBar::commandButtons()
 
 void ControlBar::refresh()
 {
+    if (avatars.preferredWidth() != avatarsWidth)
+        resized();
+    avatars.repaint();
     const auto& m = studio.model();
     const auto& l = studio.layout;
     inspector.setToggleState (l.inspector, juce::dontSendNotification);
@@ -191,6 +195,14 @@ void ControlBar::resized()
     items.push_back ({ &keyboard, 46 });
     items.push_back ({ &theme, 56 });
     items.push_back ({ &cpu, 80, 2 });
+    avatarsWidth = avatars.preferredWidth();
+    if (avatarsWidth > 0)
+    {
+        gap (8);
+        items.push_back ({ &avatars, avatarsWidth });
+    }
+    else
+        avatars.setVisible (false);
 
     const auto area = getLocalBounds().reduced (8, 8);
     constexpr int spacing = 4;

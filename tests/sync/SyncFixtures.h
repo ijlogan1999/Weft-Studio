@@ -197,7 +197,8 @@ struct Peer
     std::vector<std::string> messages; // status bar messages
     int remoteChanges = 0;
 
-    Peer (std::string n, Account a, Session s, const std::string& projectId, int oneWayDelayMs = 0, fs::path pendingFile = {})
+    Peer (std::string n, Account a, Session s, const std::string& projectId, int oneWayDelayMs = 0, fs::path pendingFile = {},
+          std::function<std::int64_t()> clock = {})
         : name (std::move (n)), account (std::move (a)), session (std::make_unique<Session> (std::move (s)))
     {
         collab::SyncOptions o;
@@ -206,6 +207,8 @@ struct Peer
         o.clientId = randomClientId();
         o.oneWayDelayMs = oneWayDelayMs;
         o.pendingFile = std::move (pendingFile);
+        if (clock)
+            o.clock = std::move (clock);
         client = std::make_unique<SyncClient> (*session, std::move (o));
         client->onMessage = [this] (const std::string& m) { messages.push_back (m); };
         client->onRemoteChange = [this] { ++remoteChanges; };
@@ -269,19 +272,21 @@ struct SharedProject
     std::string projectId;
     std::unique_ptr<Peer> owner;
 
-    explicit SharedProject (RelayProcess& r, int oneWayDelayMs = 0) : relay (r), ownerAccount (signUp (r, "Owner"))
+    explicit SharedProject (RelayProcess& r, int oneWayDelayMs = 0, std::function<std::int64_t()> clock = {})
+        : relay (r), ownerAccount (signUp (r, "Owner"))
     {
         auto s = Session::createNew ({}, ownerAccount.userId);
         REQUIRE (s.has_value());
         projectId = s->model().info.id;
         RelayApi api (ownerAccount);
         REQUIRE (api.shareProject (projectId, "Song"));
-        owner = std::make_unique<Peer> ("Owner", ownerAccount, std::move (*s), projectId, oneWayDelayMs);
+        owner = std::make_unique<Peer> ("Owner", ownerAccount, std::move (*s), projectId, oneWayDelayMs, fs::path(), std::move (clock));
         pumpUntil ({ owner.get() }, "the upload", [&] { return owner->synced(); });
     }
 
     /** A new member invited with `role`, who opens the project from the relay. */
-    std::unique_ptr<Peer> join (const std::string& name, const std::string& role = "editor", int oneWayDelayMs = 0, fs::path pendingFile = {})
+    std::unique_ptr<Peer> join (const std::string& name, const std::string& role = "editor", int oneWayDelayMs = 0, fs::path pendingFile = {},
+                                std::function<std::int64_t()> clock = {})
     {
         auto account = signUp (relay, name);
         RelayApi ownerApi (ownerAccount);
@@ -296,7 +301,7 @@ struct SharedProject
         auto document = doc::Document::load (*bytes);
         REQUIRE (document);
         auto peer = std::make_unique<Peer> (name, account, Session (std::move (*document), account.userId), projectId, oneWayDelayMs,
-                                            std::move (pendingFile));
+                                            std::move (pendingFile), std::move (clock));
         waitConverged ({ owner.get(), peer.get() });
         return peer;
     }

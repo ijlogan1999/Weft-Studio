@@ -33,8 +33,8 @@ Presence::View viewFrom (const std::string& s)
 doc::Value ids (const std::vector<Id>& v)
 {
     auto l = doc::Value::list();
-    for (const auto& id : v)
-        l.listRef().push_back (id);
+    for (std::size_t i = 0; i < std::min (v.size(), Presence::maxSelectionIds); ++i)
+        l.listRef().push_back (v[i]);
     return l;
 }
 

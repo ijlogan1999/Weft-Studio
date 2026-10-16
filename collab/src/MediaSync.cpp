@@ -104,6 +104,8 @@ void MediaSync::poll()
 {
     for (auto& e : transfer->poll())
     {
+        if (onTransfer)
+            onTransfer (e);
         using K = TransferEvent::Kind;
         switch (e.kind)
         {
@@ -168,6 +170,8 @@ void MediaSync::blobAvailable (const std::string& hash)
 
 void MediaSync::setRole (const std::string& r)
 {
+    if (r == role)
+        return;
     role = r;
     refresh();
 }
