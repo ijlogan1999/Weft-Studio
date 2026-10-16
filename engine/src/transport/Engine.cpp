@@ -309,7 +309,27 @@ void Engine::refresh()
     if (! lastModel)
         return;
     syncPlugins();
-    publish (compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, { rack, effects, mixer }, local, touchedTargets));
+    auto snap = compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, { rack, effects, mixer }, local, touchedTargets);
+    if (cycleSuppressed)
+        snap->cycleEnabled = false;
+    publish (std::move (snap));
+}
+
+void Engine::startCapture (std::shared_ptr<Capture> c)
+{
+    capture.store (nullptr, std::memory_order_release);
+    captureOwner = std::move (c);
+    capture.store (captureOwner.get(), std::memory_order_release);
+}
+
+void Engine::stopCapture() { capture.store (nullptr, std::memory_order_release); }
+
+void Engine::setCycleSuppressed (bool suppressed)
+{
+    if (cycleSuppressed == suppressed)
+        return;
+    cycleSuppressed = suppressed;
+    refresh();
 }
 
 void Engine::publish (std::unique_ptr<EngineSnapshot> snapshot)
@@ -965,6 +985,22 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
                 outputs[0][i] += mix[1][static_cast<std::size_t> (i)];
         if (snap->masterState)
             snap->masterState->meter.add (masterPeak);
+        if (auto* cap = capture.load (std::memory_order_acquire); cap != nullptr && rolling)
+        {
+            // Real-time bounce: the master output by timeline position (cycle is suppressed).
+            const auto capacity = static_cast<std::int64_t> (cap->left.size());
+            auto filled = cap->written.load (std::memory_order_relaxed);
+            for (int i = 0; i < numFrames; ++i)
+            {
+                const auto t = blockStart + i - cap->startSample;
+                if (t < 0 || t >= capacity)
+                    continue;
+                cap->left[static_cast<std::size_t> (t)] = mix[0][static_cast<std::size_t> (i)];
+                cap->right[static_cast<std::size_t> (t)] = mix[1][static_cast<std::size_t> (i)];
+                filled = std::max (filled, t + 1);
+            }
+            cap->written.store (filled, std::memory_order_release);
+        }
     }
 
     // File preview, after the master fader.

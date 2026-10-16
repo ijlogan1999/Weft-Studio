@@ -16,6 +16,7 @@
 #include "weft/engine/midi/KeyboardMidi.h"
 #include "weft/engine/plugins/PluginCatalog.h"
 #include "weft/engine/plugins/Vst3Host.h"
+#include "weft/engine/render/Bounce.h"
 #include "weft/engine/transport/Engine.h"
 #include "weft/engine/transport/LiveAutomation.h"
 #include "weft/model/Automation.h"
@@ -241,6 +242,28 @@ public:
     std::optional<double> automationValue (const Id& trackId, const model::AutomationTarget& target) const;
     engine::LiveAutomation& liveAutomation() noexcept { return *live; }
 
+    // Bounce (M8) ------------------------------------------------------------------------
+    /** The Bounce dialog's starting values (W-9 step 2): default range, 24-bit WAV at the project
+        rate, `<project folder>/Bounces/<project name>`, MP3 tags from the project and user. */
+    engine::BounceSettings defaultBounceSettings() const;
+    /** MP3 settings when MP3 is ticked: 320 kbps CBR, Title = project name, Artist = the user. */
+    engine::Mp3Format defaultMp3Format() const;
+    /** Stops the transport and starts a bounce; tick() renders it. False when one is running. */
+    bool startBounce (const engine::BounceSettings& settings);
+    void cancelBounce();
+    bool bouncing() const noexcept { return bounceJob != nullptr; }
+    double bounceProgress() const noexcept { return bounceJob != nullptr ? bounceJob->progress() : 0.0; }
+    /** Why the running bounce plays in real time, or empty. */
+    juce::String bounceNotice() const { return bounceJob != nullptr ? juce::String (bounceJob->notice()) : juce::String(); }
+    /** The last finished (or cancelled) bounce. */
+    std::optional<engine::BounceResult> lastBounce;
+    /** Called on the message thread when a bounce finishes or is cancelled. */
+    std::function<void()> onBounceDone;
+    /** "Add to project": imports a bounced file as a new muted audio track at the range start. */
+    bool addBounceToProject (const std::filesystem::path& file);
+    /** The user's name for MP3 tags until accounts arrive (M10). */
+    std::string userDisplayName;
+
     /** "Remove bus and N sends?" (W-7 step 6) for a bus; empty when no question is needed. */
     juce::String deleteTrackQuestion (const Id& trackId) const;
     bool deleteTrack (const Id& trackId);
@@ -266,6 +289,9 @@ private:
     std::map<Id, int> heights;
     std::map<Id, std::vector<model::AutomationTarget>> lanesShown;
     std::unique_ptr<engine::LiveAutomation> live;
+    std::unique_ptr<engine::BounceJob> bounceJob;
+    Ticks bounceFrom = 0;
+    void stepBounce();
     std::map<std::string, std::vector<float>> peakCache;
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
     std::int64_t locatedFrame = -1;

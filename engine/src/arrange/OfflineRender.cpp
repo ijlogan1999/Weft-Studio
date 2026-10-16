@@ -9,12 +9,9 @@
 
 namespace weft::engine
 {
-media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& media, const OfflineRenderOptions& options)
+OfflineRenderer::OfflineRenderer (const model::ProjectModel& model, MediaPool& media, const OfflineRenderOptions& options)
+    : engine (media, rack)
 {
-    media::AudioData out;
-    out.sampleRate = model.info.sampleRate;
-    InstrumentRack rack;
-    Engine engine (media, rack);
     TransportSettings settings;
     settings.metronomeOn = options.metronome;
     settings.metronomeDuring = ClickDuring::both;
@@ -28,28 +25,59 @@ media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& med
     config.maxBlockSize = std::max (options.blockSize, 32);
     config.numInputChannels = 0;
     config.numOutputChannels = 2;
-    NullDevice device;
-    if (options.frames <= 0 || ! device.open (config) || ! device.start (engine))
-        return out;
+    if (! device.open (config) || ! device.start (engine))
+        return;
     engine.setProject (model);
     engine.play (options.from);
-    const std::int64_t latency = engine.compensationLatency();
-    const auto total = options.frames + latency;
-    device.setCaptureCapacity (total);
+    compensation = toSkip = engine.compensationLatency();
+    started = true;
+}
+
+OfflineRenderer::~OfflineRenderer()
+{
+    if (started)
+        device.stop();
+}
+
+bool OfflineRenderer::render (std::int64_t frames, std::vector<float>& left, std::vector<float>& right)
+{
+    left.clear();
+    right.clear();
+    if (! started || frames <= 0)
+        return started;
+    left.reserve (static_cast<std::size_t> (frames));
+    right.reserve (static_cast<std::size_t> (frames));
     // Render a chunk at a time and load the streamed blocks ahead of each one.
     constexpr std::int64_t chunk = 8192;
-    for (std::int64_t done = 0; done < total; done += chunk)
+    while (static_cast<std::int64_t> (left.size()) < frames)
     {
+        const auto want = frames - static_cast<std::int64_t> (left.size()) + toSkip;
+        const auto n = std::min (chunk, want);
         engine.pumpDisk();
-        device.render (std::min (chunk, total - done));
+        device.setCaptureCapacity (n);
+        if (! device.render (n))
+            return false;
+        const auto l = device.capturedOutput (0), r = device.capturedOutput (1);
+        const auto skip = static_cast<std::size_t> (std::min<std::int64_t> (toSkip, static_cast<std::int64_t> (l.size())));
+        toSkip -= static_cast<std::int64_t> (skip);
+        left.insert (left.end(), l.begin() + static_cast<std::ptrdiff_t> (skip), l.end());
+        right.insert (right.end(), r.begin() + static_cast<std::ptrdiff_t> (skip), r.end());
     }
-    device.stop();
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        const auto c = device.capturedOutput (ch);
-        const auto skip = std::min<std::size_t> (static_cast<std::size_t> (latency), c.size());
-        out.channels.emplace_back (c.begin() + static_cast<std::ptrdiff_t> (skip), c.end());
-    }
+    return true;
+}
+
+media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& media, const OfflineRenderOptions& options)
+{
+    media::AudioData out;
+    out.sampleRate = model.info.sampleRate;
+    if (options.frames <= 0)
+        return out;
+    OfflineRenderer renderer (model, media, options);
+    std::vector<float> left, right;
+    if (! renderer.render (options.frames, left, right))
+        return out;
+    out.channels.push_back (std::move (left));
+    out.channels.push_back (std::move (right));
     return out;
 }
 

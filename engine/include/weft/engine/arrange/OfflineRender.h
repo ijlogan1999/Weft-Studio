@@ -1,9 +1,10 @@
 #pragma once
 
 // Rendering faster than real time through a private engine and null device: the
-// rendered join (D-ARR-3) uses it, and bounce (M9) will. Message thread only.
+// rendered join (D-ARR-3) and bounce (W-9) use it. Message thread only.
 
 #include "weft/commands/Session.h"
+#include "weft/engine/devices/NullDevice.h"
 #include "weft/engine/media/MediaPool.h"
 #include "weft/engine/transport/Engine.h"
 #include "weft/media/WavFile.h"
@@ -22,6 +23,32 @@ struct OfflineRenderOptions
     int blockSize = 512;
     Engine::PluginFactory plugins;      // hosted plug-ins; null: built-ins and placeholders only
     std::filesystem::path projectFolder; // where plug-in state blobs are
+};
+
+/**
+    Renders a model a slice at a time, from `options.from`, at the project rate (stereo).
+    Each slice continues the last; the compensated plug-in latency is skipped, so frame 0
+    is the timeline at `from`. `options.frames` is ignored.
+*/
+class OfflineRenderer
+{
+public:
+    OfflineRenderer (const model::ProjectModel& model, MediaPool& media, const OfflineRenderOptions& options);
+    ~OfflineRenderer();
+    OfflineRenderer (const OfflineRenderer&) = delete;
+    OfflineRenderer& operator= (const OfflineRenderer&) = delete;
+
+    bool ok() const noexcept { return started; }
+    /** The next `frames` frames into left and right (resized to fit). */
+    bool render (std::int64_t frames, std::vector<float>& left, std::vector<float>& right);
+    std::int64_t latency() const noexcept { return compensation; }
+
+private:
+    InstrumentRack rack;
+    Engine engine;
+    NullDevice device;
+    std::int64_t compensation = 0, toSkip = 0;
+    bool started = false;
 };
 
 /**

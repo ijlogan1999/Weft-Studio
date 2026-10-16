@@ -16,13 +16,18 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 include(cmake/WeftDeps.cmake)
 include(cmake/WeftWarnings.cmake)
 
-# Rust: the CRDT shim linked into the client (the relay builds with plain cargo).
+# Rust: weft-ffi bundles the CRDT shim and the MP3 codec into the one static library the
+# client links (the relay builds with plain cargo).
 weft_fetch(Corrosion)
-corrosion_import_crate(MANIFEST_PATH "${PROJECT_SOURCE_DIR}/Cargo.toml" CRATES weft-crdt CRATE_TYPES staticlib LOCKED)
+corrosion_import_crate(MANIFEST_PATH "${PROJECT_SOURCE_DIR}/Cargo.toml" CRATES weft-ffi CRATE_TYPES staticlib LOCKED)
 add_library(weft_crdt_c INTERFACE)
-target_link_libraries(weft_crdt_c INTERFACE weft_crdt)
+target_link_libraries(weft_crdt_c INTERFACE weft_ffi)
 target_include_directories(weft_crdt_c INTERFACE "${PROJECT_SOURCE_DIR}/crates/weft-crdt/include")
 add_library(weft::crdt ALIAS weft_crdt_c)
+add_library(weft_codec_c INTERFACE)
+target_link_libraries(weft_codec_c INTERFACE weft_ffi)
+target_include_directories(weft_codec_c INTERFACE "${PROJECT_SOURCE_DIR}/crates/weft-codec/include")
+add_library(weft::codec ALIAS weft_codec_c)
 
 if(WEFT_WITH_JUCE)
     weft_fetch(JUCE)

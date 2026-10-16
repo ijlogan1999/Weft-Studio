@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 
 #include "AboutPanel.h"
+#include "BounceDialog.h"
 #include "NewTrackDialog.h"
 
 namespace weft::ui
@@ -153,6 +154,8 @@ void MainComponent::handleUiCommand (Cmd command)
         PluginManager::show (studio, this);
     else if (command == Cmd::deleteTrack)
         deleteSelectedTrack();
+    else if (command == Cmd::bounce)
+        BounceDialog::show (studio, this);
 }
 
 void MainComponent::deleteSelectedTrack()
@@ -218,7 +221,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
     };
     switch (index)
     {
-        case 0: add (Cmd::save); break;
+        case 0:
+            add (Cmd::save);
+            menu.addSeparator();
+            add (Cmd::bounce);
+            break;
         case 1:
             for (auto c : { Cmd::undo, Cmd::redo })
                 add (c);

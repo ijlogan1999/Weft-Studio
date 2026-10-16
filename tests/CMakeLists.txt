@@ -29,6 +29,7 @@ add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
     engine/ArrangeEngineTests.cpp
     engine/AutomationEngineTests.cpp
+    engine/BounceTests.cpp
     engine/ImportTests.cpp
     engine/MixerEngineTests.cpp
     engine/NullDeviceTests.cpp
@@ -38,7 +39,7 @@ add_executable(weft_engine_tests
     engine/TrackEngineTests.cpp
     engine/TransportEngineTests.cpp
 )
-target_link_libraries(weft_engine_tests PRIVATE weft::engine Catch2::Catch2WithMain)
+target_link_libraries(weft_engine_tests PRIVATE weft::engine weft::codec Catch2::Catch2WithMain)
 catch_discover_tests(weft_engine_tests)
 
 # AT-SYS-1 (build check part): every linked dependency is in the license manifest
@@ -72,7 +73,7 @@ add_test(NAME cli.version COMMAND weft-cli version)
 set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "Weft Studio ${PROJECT_VERSION}")
 
 if(WEFT_WITH_JUCE)
-    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp engine/JuceImportTests.cpp)
+    add_executable(weft_juce_device_tests engine/JuceDeviceTests.cpp engine/JuceImportTests.cpp engine/JuceBounceTests.cpp)
     target_link_libraries(weft_juce_device_tests PRIVATE weft::engine_juce Catch2::Catch2WithMain)
     target_compile_definitions(weft_juce_device_tests PRIVATE WEFT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
     catch_discover_tests(weft_juce_device_tests)
@@ -84,7 +85,7 @@ endif()
 # [UI] tests: the arrange window, headless. Linux needs a virtual X server (xvfb-run).
 if(WEFT_WITH_JUCE)
     add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp
-                                 ui/MixerUiTests.cpp ui/AutomationUiTests.cpp)
+                                 ui/MixerUiTests.cpp ui/AutomationUiTests.cpp ui/BounceUiTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
     # The mixer and plug-in manager tests host the fixture plug-ins through the real scanner.
     add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3)

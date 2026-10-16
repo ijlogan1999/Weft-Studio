@@ -216,6 +216,21 @@ public:
     bool previewing() const noexcept { return published.previewing.load (std::memory_order_relaxed); }
     std::size_t pendingRetired() const noexcept { return retired.size(); }
 
+    // Real-time bounce (W-9) ------------------------------------------------------------
+    /** Master output captured while the transport plays: frame i is the master output at
+        timeline sample startSample + i. Preallocated; the audio thread only fills it. */
+    struct Capture
+    {
+        std::int64_t startSample = 0;
+        std::vector<float> left, right;
+        std::atomic<std::int64_t> written { 0 }; // frames filled so far
+    };
+    /** Starts capturing the master output (after the master fader, without click or preview). */
+    void startCapture (std::shared_ptr<Capture> capture);
+    void stopCapture();
+    /** Plays straight through the cycle range (a bounce plays its own range). Recompiles. */
+    void setCycleSuppressed (bool suppressed);
+
     // AudioCallback --------------------------------------------------------------------
     void prepare (const DeviceConfig& config) override;
     void process (const float* const* inputs, float* const* outputs, int numFrames) noexcept override;
@@ -270,6 +285,9 @@ private:
 
     // Message thread.
     std::optional<model::ProjectModel> lastModel;
+    bool cycleSuppressed = false;
+    std::shared_ptr<Capture> captureOwner; // kept until the next capture, so the audio thread never sees it freed
+    std::atomic<Capture*> capture { nullptr };
     std::unique_ptr<EngineSnapshot> live;
     struct Retired
     {

@@ -5,7 +5,7 @@ Sources of truth:
   * third_party/cpp-deps.json - every C++ dependency. CMake fetches C++
     dependencies only from this file, so nothing can be linked without an entry.
   * Cargo.lock / `cargo metadata` - every Rust crate linked into a shipped
-    binary (weft-crdt is linked into the app, weft-relay is the server).
+    binary (weft-ffi, which bundles weft-crdt and weft-codec, is linked into the app; weft-relay is the server).
 
 Commands:
   --write              regenerate THIRD_PARTY.md
@@ -31,7 +31,7 @@ SPDX_DIR = ROOT / "third_party" / "licenses"
 OUTPUT_MD = ROOT / "THIRD_PARTY.md"
 
 # Rust packages in this workspace whose dependency trees ship, and where.
-SHIPPED_RUST_ROOTS = {"weft-crdt": "app", "weft-relay": "relay"}
+SHIPPED_RUST_ROOTS = {"weft-ffi": "app", "weft-relay": "relay"}
 LICENSE_FILE_RE = re.compile(r"^(LICEN[CS]E|COPYING|NOTICE|UNLICENSE)", re.IGNORECASE)
 
 
@@ -112,7 +112,7 @@ def render_markdown(cpp: dict, rust: dict[str, dict]) -> str:
         for b in dep.get("bundled", []):
             note = f" {b['note']}" if b.get("note") else ""
             lines.append(f"| ↳ {b['name']} (inside {name}) | | {b['license']} | {ships} |{note} |")
-    for where, title in (("app", "Rust crates linked into the app (via weft-crdt)"), ("relay", "Rust crates in the relay server")):
+    for where, title in (("app", "Rust crates linked into the app (via weft-ffi)"), ("relay", "Rust crates in the relay server")):
         lines += ["", f"## {title}", "", "| Crate | Version | License |", "|---|---|---|"]
         for entry in sorted(rust.values(), key=lambda e: (e["pkg"]["name"], e["pkg"]["version"])):
             if where in entry["used_by"]:

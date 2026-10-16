@@ -24,7 +24,9 @@ enum class Cmd
     // Mixer and plug-ins (M6).
     deleteTrack, newBus, pluginManager,
     // Automation (M7).
-    toggleAutomation
+    toggleAutomation,
+    // Bounce (M8).
+    bounce
 };
 
 struct CommandInfo
