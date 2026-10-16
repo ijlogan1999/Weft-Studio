@@ -232,6 +232,7 @@ PluginInstance {
   bypass: bool
   state: BlobHash | bytes       // opaque plugin state; > 64 KB stored as blob (§4.5 style)
   params: Map<ParamId, Normalized>   // last-known values for automation display; source of truth is `state`
+  addedBy?: UserId              // who inserted it, for the Missing Plug-ins notice (D-COL-34); absent before M11
   editorOpen: bool              // LOCAL ONLY
 }
 ```

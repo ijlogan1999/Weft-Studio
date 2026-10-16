@@ -103,11 +103,11 @@ Messages are binary frames: 1-byte type + payload (CBOR for envelopes, raw bytes
 ### 3.6 Decisions made while building the relay (M10)
 - **Decision D-COL-14:** invites are links. The Share dialog creates a link for a role (Editor or Viewer) to copy and send; the relay sends no email in MVP, so the "invite by email" field of 04 §9.2 is the link field. Links are random 256-bit tokens stored on the relay with their role and expiry (7 days), which makes them unguessable, revocable and checkable without a signing key on clients.
 - **Decision D-COL-15:** a drag is one change. A gesture (fader, region drag) is one CRDT transaction committed on release (D-ARCH-6), so collaborators see the final value rather than the drag in progress, and a 2 s drag is one change (AT-COL-6). Remote changes that arrive during your own drag are applied after release (D-COL-3).
-- **Decision D-COL-16:** M10 shares the document only. Media upload and download, and the "N MB of audio" in the share question, arrive with blob sync in M11; until then the Share dialog says audio stays on this computer.
+- **Decision D-COL-16 (superseded in M11 by §8):** M10 shared the document only. Since M11 the share question gives the size of the audio the project's regions use ("This uploads the project and its 12.4 MB of audio to …"), and audio uploads in the background after sharing.
 - **Decision D-COL-17:** un-ACKed changes are remembered by hash in `<project>/Cache/sync-pending.txt`. The changes themselves are in the document (or the recovery log after a crash), and the sync exchange on reconnect sends whatever the relay lacks; the pending list drives "Offline – N changes pending". The status is "Synced" once the relay has acknowledged every local change and the client holds every head the relay last reported.
 - **Decision D-COL-18:** a reconnect that brings in more than one collaborator change shows "Merged N changes from collaborators" (§13).
 - **Decision D-COL-19:** the signed-in account (relay, email, display name and tokens) is kept in the per-user settings folder. New edits are attributed to the account's user id once signed in (03 §1.2); signing out keeps the project working locally.
-- **Decision D-COL-20:** Share dialog calls to the relay block the window for at most their timeout in M10; they move to the background transfer thread with M11.
+- **Decision D-COL-20:** Share dialog calls to the relay block the window for at most their timeout. (Audio transfers run on background threads since M11; the dialog's own calls are still on the window's thread.)
 - **Decision D-COL-21:** clients send their own changes through the `SYNC` exchange (batched at most every 50 ms) rather than as bare `CHANGE` frames; the relay still fans changes out to other clients as `CHANGE`. A bare change can reach the relay before one it depends on (made before a reconnect, say), and then waits there unapplied; the sync exchange always sends dependencies first. A client that receives a `CHANGE` it can't apply yet resumes the sync exchange to fetch what it's missing.
 
 ---
@@ -179,6 +179,13 @@ Presence {
 
 **Offline:** when the relay is unreachable, collaborators' presence is cleared after 45 s and the local client shows "Offline".
 
+**Build decisions (M11)**
+- **Decision D-COL-30:** "input" for idle is any mouse movement, click, wheel or key press in the window. A client that has connected but not sent its presence yet shows as an avatar with "Joining" in its hover text.
+- **Decision D-COL-31:** the header badge follows `focus.trackId`: the track the collaborator selected, or while they record, the armed track they're recording on. This stands in for 04 §6.1's "last edit or selection within 10 s".
+- **Decision D-COL-32:** a pointer is fully shown for 4 s after it last moved and fades out by 5 s. A playhead jump while playing (a locate) is sent at once, at the pointer's rate, rather than waiting for the 2 s refresh.
+- **Decision D-COL-33:** collaborator colours are 12 fixed colours; the relay gives each member of a project an index, so a user keeps their colour in that project. Clicking an avatar scrolls the arrange view to the first region they selected, or to their playhead.
+- **Decision D-COL-34:** when a collaborator's change brings in a plug-in that isn't installed here, the Missing Plug-ins notice opens once for that plug-in, listing it with who added it ("Phantom EQ, added by Ana"), and the status bar says the track plays without it. Opening a project lists the same way. Who added an insert or instrument is the `addedBy` field of 03 §5.2.
+
 ---
 
 ## 6. Undo/redo in collaboration
@@ -224,11 +231,21 @@ Presence {
 4. Downloaded bytes are verified against the hash when complete; a mismatch discards the file and retries once, then reports an error.
 5. Peak (waveform overview) files are generated locally after download; they are not synced.
 
-### 8.4 Large-file and quota behavior
+### 8.4 Build decisions (M11)
+- **Decision D-COL-22:** downloads are limited like uploads: at most 2 at once. Each goes in 1 MB `Range` requests into `<project>/Cache/Downloads/<hex>.part`, so an interrupted download continues from what is on disk. The finished file is hashed before it moves into `Media/` (or `Blobs/` for plug-in state); a mismatch deletes it and starts again once, and a second mismatch is reported in the status bar ("Couldn't download audio: …") and not retried.
+- **Decision D-COL-23:** a playhead's `at` is the sender's clock. Viewers extrapolate from it, but when it is more than 5 s from the time the update arrived (by the viewer's clock), the sender's clock is taken to be wrong and the viewer counts from the arrival time instead.
+- **Decision D-COL-24:** blob requests name their project: `/v1/blobs/<hash>?project=<id>`. Someone who isn't a member gets 403 whether or not the blob exists. A member asking for a blob the project doesn't reference yet gets 404 (the client waits for `BLOB_AVAILABLE`, and asks again every 30 s in case it was missed). `HEAD` by an Owner or Editor links a blob that the project's Owner already stores to this project and answers 200, which is the D-COL-9 dedupe: no bytes are sent.
+- **Decision D-COL-25:** the relay checks each `PUT` against the upload's current offset: a chunk at the wrong offset gets 409 with the offset it expects, so a client that lost track resumes from there. `complete` hashes the stored bytes: a match makes the blob available and broadcasts `BLOB_AVAILABLE`, a mismatch gets 422 and the upload is deleted. `GET` answers a `Range` with 206 (at most 16 MB per range) and streams the file without one.
+- **Decision D-COL-26:** only Owners and Editors upload; a Viewer's client only downloads. The relay refuses uploads from Viewers.
+- **Decision D-COL-27:** download priority (§8.3 step 2) is the distance in ticks from the region to the nearest playhead, this user's or a collaborator's (0 when a playhead is inside it); with no playhead known, the region's start. Plug-in state blobs come after all audio.
+- **Decision D-COL-28:** a partly downloaded file is loaded in whole blocks of 32,768 frames as they arrive (the last one once the file is complete), so a block that is in memory never changes under the audio thread. Frames not downloaded yet play as silence and don't count as disk underruns. A partly downloaded region counts as missing media for the bounce warning (D-W9-1).
+- **Decision D-COL-29:** downloads go to the project's own `Media/` folder; nothing is shared between projects on one computer.
+
+### 8.5 Large-file and quota behavior
 - Max blob size: 4 GB (WAV limit; BWF/RF64 > 4 GB is v2).
 - Status bar shows transfer progress (04 §10).
 
-### 8.5 Plugin state blobs
+### 8.6 Plugin state blobs
 Plugin state larger than 64 KB is stored as a blob with the same mechanism (03 §5.2).
 
 ---
@@ -359,9 +376,22 @@ Conclusion: with optimistic local overhead (~5 ms, uncompressed PCM, tiny jitter
 | D-COL-13 | Track input assignments are shared. |
 | D-COL-14 | Invites are unguessable stored links with a role and expiry; no email delivery in MVP. |
 | D-COL-15 | A drag is one change, sent on release. |
-| D-COL-16 | M10 shares the document only; media sync is M11. |
+| D-COL-16 | Superseded by M11: the share question gives the audio size; audio uploads after sharing. |
 | D-COL-17 | Pending changes are tracked by hash in Cache/sync-pending.txt; "Synced" means ACKed and caught up. |
 | D-COL-18 | "Merged N changes from collaborators" after a reconnect with more than one remote change. |
 | D-COL-19 | The account lives in the settings folder; edits are attributed to it once signed in. |
 | D-COL-20 | Share dialog relay calls block briefly in M10. |
 | D-COL-21 | Clients send their changes through the sync exchange; the relay fans out CHANGE frames. |
+| D-COL-22 | At most 2 downloads at once, in 1 MB ranges to a .part file; hash mismatch retried once, then reported. |
+| D-COL-23 | Playhead extrapolation falls back to arrival time when the sender's clock is over 5 s off. |
+| D-COL-24 | Blob routes take ?project=; non-members get 403; HEAD links the owner's existing blob (dedupe). |
+| D-COL-25 | PUT at the wrong offset is 409 with the expected one; complete verifies (422 on mismatch); GET supports Range. |
+| D-COL-26 | Only Owners and Editors upload. |
+| D-COL-27 | Download priority is the distance to the nearest playhead; plug-in state blobs last. |
+| D-COL-28 | Partial files load in whole blocks; not-yet-downloaded audio is silence, not an underrun. |
+| D-COL-29 | Downloads go to the project's own Media/ folder. |
+| D-COL-30 | Idle input is any mouse or key input in the window; a joined client without presence shows as "Joining". |
+| D-COL-31 | Header badges follow focus.trackId (the selected or recording track). |
+| D-COL-32 | Pointers fade from 4 s to 5 s; playhead jumps while playing are sent at once. |
+| D-COL-33 | 12 collaborator colours by relay-assigned index; clicking an avatar scrolls to their selection or playhead. |
+| D-COL-34 | Missing plug-ins from a collaborator's change are announced once, with who added them. |
