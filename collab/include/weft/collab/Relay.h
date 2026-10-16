@@ -6,6 +6,7 @@
 #include "weft/doc/Document.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -23,13 +24,29 @@ struct HttpResult
     Value json;
     Bytes bytes;
     std::string error;
+    std::map<std::string, std::string> headers; // names in lower case
 
     bool ok() const noexcept { return status >= 200 && status < 300; }
+    std::string header (const std::string& name) const
+    {
+        const auto it = headers.find (name);
+        return it == headers.end() ? std::string() : it->second;
+    }
 };
 
 /** One request to the relay; json is sent as the body when not null. */
 HttpResult httpRequest (std::string_view method, const std::string& url, const std::string& token = {},
                         const Value& json = {}, int timeoutMs = 30000);
+
+struct HttpBody
+{
+    Value json;  // sent when not null
+    Bytes bytes; // sent when json is null and this isn't empty
+    std::vector<std::pair<std::string, std::string>> headers;
+    int timeoutMs = 30000;
+};
+/** A request with a binary body and extra headers (blob transfers). */
+HttpResult httpRequest (std::string_view method, const std::string& url, const std::string& token, const HttpBody& body);
 
 /** A signed-in relay account and its tokens (access 15 min, refresh 30 days). */
 struct Account

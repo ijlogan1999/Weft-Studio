@@ -127,6 +127,7 @@ void Studio::edited()
         it = commands::findNote (model(), *it) == nullptr ? piano.selection.erase (it) : std::next (it);
     syncEngine();
     ++editCount;
+    mediaDirty = true;
     sendChangeMessage();
 }
 
@@ -326,7 +327,28 @@ void Studio::tick()
         }
     }
     if (syncClient != nullptr)
+    {
+        updatePresence();
         syncClient->poll();
+    }
+    if (mediaSyncer != nullptr)
+    {
+        mediaSyncer->setRecording (recording());
+        std::vector<Ticks> heads { playhead() };
+        for (const auto* who : collaborators())
+            if (who->hasState)
+                heads.push_back (collaboratorPlayhead (*who));
+        mediaSyncer->setPlayheads (std::move (heads));
+        // Edits can bring in audio to send or fetch: look again at most once a second.
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        if (mediaDirty && now - lastMediaRefresh >= 1000.0)
+        {
+            mediaDirty = false;
+            lastMediaRefresh = now;
+            mediaSyncer->refresh();
+        }
+        mediaSyncer->poll();
+    }
     stepBounce();
     flushPluginStates();
     if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
@@ -1119,7 +1141,11 @@ void Studio::releaseProject()
 {
     if (sess == nullptr)
         return;
+    mediaSyncer.reset();
     syncClient.reset();
+    missingSeen.clear();
+    pointerAt.reset();
+    localPresence = {};
     if (bounceJob != nullptr)
         cancelBounce();
     eng->stop();
@@ -1514,6 +1540,7 @@ void Studio::signedInAs (const collab::Account& account)
 
 void Studio::signOut()
 {
+    mediaSyncer.reset();
     syncClient.reset();
     relayAccount = {};
     saveAccount();
@@ -1527,6 +1554,7 @@ bool Studio::shared() const { return ! sess->relayUrl().empty(); }
 
 void Studio::startSync()
 {
+    mediaSyncer.reset();
     syncClient.reset();
     if (! shared() || ! signedIn() || ! sameRelay (sess->relayUrl(), relayAccount.relayUrl))
         return;
@@ -1536,16 +1564,225 @@ void Studio::startSync()
     o.clientId = "c" + juce::Uuid().toDashedString().removeCharacters ("-").toStdString();
     o.pendingFile = folder->root() / "Cache" / "sync-pending.txt";
     o.startOnline = wantOnline;
+    if (syncClock)
+        o.clock = syncClock;
     syncClient = std::make_unique<collab::SyncClient> (*sess, std::move (o));
     syncClient->onRemoteChange = [this] { remoteChanged(); };
     syncClient->onMessage = [this] (const std::string& m) { setStatus (m); };
-    syncClient->onStatusChange = [this] { sendChangeMessage(); };
+    syncClient->onStatusChange = [this] {
+        // A role change (made Editor, say) can start uploads.
+        if (mediaSyncer != nullptr && ! syncClient->role().empty())
+            mediaSyncer->setRole (syncClient->role());
+        sendChangeMessage();
+    };
     syncClient->onAccountChange = [this] (const collab::Account& a) {
         if (a.userId != relayAccount.userId)
             return;
         relayAccount = a;
         saveAccount();
+        if (mediaSyncer != nullptr)
+            mediaSyncer->setAccount (a);
     };
+    syncClient->onJoined = [this] {
+        if (mediaSyncer != nullptr)
+            mediaSyncer->setRole (syncClient->role());
+        sendChangeMessage();
+    };
+    syncClient->onBlobAvailable = [this] (const std::string& hash, std::int64_t) {
+        if (mediaSyncer != nullptr)
+            mediaSyncer->blobAvailable (hash);
+    };
+    syncClient->onPresenceChange = [this] { sendChangeMessage(); };
+    startMediaSync();
+}
+
+void Studio::startMediaSync()
+{
+    collab::MediaSyncOptions o;
+    o.account = relayAccount;
+    o.projectId = model().info.id;
+    o.projectRoot = folder->root();
+    o.transfer = transferOptions;
+    mediaSyncer = std::make_unique<collab::MediaSync> (*sess, std::move (o));
+    mediaSyncer->onDownloadProgress = [this] (const std::string& hash, const collab::MediaSync::Download& d) {
+        // Play what has arrived (D-COL-11): the engine picks up a new source; an existing one grows.
+        const auto* ref = model().mediaRef (hash);
+        if (ref == nullptr || d.partFile.empty())
+            return;
+        const bool fresh = pool.find (hash) == nullptr;
+        if (pool.loadPartial (d.partFile, hash, ref->lengthSamples) && fresh)
+            syncEngine();
+        peakCache.erase (hash);
+        sendChangeMessage();
+    };
+    mediaSyncer->onDownloaded = [this] (const std::string& hash, const fs::path&) { mediaDownloaded (hash); };
+    mediaSyncer->onMessage = [this] (const std::string& m) { setStatus (juce::String::fromUTF8 (m.c_str())); };
+    mediaSyncer->onUploaded = [this] (const std::string&) { sendChangeMessage(); };
+    mediaSyncer->onAccountChange = [this] (const collab::Account& a) {
+        if (a.userId != relayAccount.userId)
+            return;
+        relayAccount = a;
+        saveAccount();
+    };
+    if (! syncClient->role().empty())
+        mediaSyncer->setRole (syncClient->role());
+}
+
+void Studio::mediaDownloaded (const std::string& hash)
+{
+    if (model().media.contains (hash))
+    {
+        std::string error;
+        if (! pool.completeDownload (mediaDir(), hash, &error))
+            setStatus ("Couldn't open downloaded audio: " + juce::String::fromUTF8 (error.c_str()));
+    }
+    peakCache.erase (hash);
+    syncEngine();
+    sendChangeMessage();
+}
+
+std::optional<Studio::DownloadState> Studio::downloadState (const std::string& hash) const
+{
+    if (mediaSyncer == nullptr)
+        return std::nullopt;
+    const auto& downloads = mediaSyncer->downloads();
+    const auto it = downloads.find (hash);
+    if (it == downloads.end())
+        return std::nullopt;
+    DownloadState d;
+    d.fraction = it->second.total > 0 ? std::clamp (static_cast<double> (it->second.done) / static_cast<double> (it->second.total), 0.0, 1.0) : 0.0;
+    d.waiting = it->second.waiting;
+    d.failed = ! it->second.error.empty();
+    return d;
+}
+
+void Studio::setPointer (std::optional<collab::Presence::Pointer> pointer)
+{
+    pointerAt = std::move (pointer);
+    noteInput();
+}
+
+void Studio::noteInput()
+{
+    if (syncClient != nullptr)
+        syncClient->noteInput();
+}
+
+std::vector<const collab::RemotePresence*> Studio::collaborators() const
+{
+    std::vector<const collab::RemotePresence*> out;
+    if (syncClient == nullptr)
+        return out;
+    for (const auto& [id, who] : syncClient->collaborators())
+        out.push_back (&who);
+    // Stable order: by name, then client.
+    std::sort (out.begin(), out.end(), [] (auto* a, auto* b) { return std::tie (a->displayName, a->clientId) < std::tie (b->displayName, b->clientId); });
+    return out;
+}
+
+Ticks Studio::collaboratorPlayhead (const collab::RemotePresence& who) const
+{
+    const auto now = syncClient != nullptr ? syncClient->now() : 0;
+    return collab::extrapolatePlayhead (who.state.playhead, model().tempo, now, who.receivedAt);
+}
+
+void Studio::updatePresence()
+{
+    if (syncClient == nullptr)
+        return;
+    collab::Presence p;
+    p.status = recording() ? collab::Presence::Status::recording : collab::Presence::Status::active;
+    switch (layout.bottom)
+    {
+        case BottomTab::pianoRoll: p.view = collab::Presence::View::pianoRoll; break;
+        case BottomTab::audioEditor: p.view = collab::Presence::View::audioEditor; break;
+        case BottomTab::mixer: p.view = collab::Presence::View::mixer; break;
+        case BottomTab::none: p.view = collab::Presence::View::arrange; break;
+    }
+    p.focusTrack = local.selectedTrack;
+    // While recording, the badge goes on the track being recorded.
+    if (recording() && ! local.armed.empty() && ! local.armed.contains (p.focusTrack))
+        p.focusTrack = *local.armed.begin();
+    if (selection.regions().size() == 1)
+        p.focusRegion = *selection.regions().begin();
+    else if (layout.bottom == BottomTab::audioEditor)
+        p.focusRegion = editorRegion;
+    // The playhead's `at` only changes when it jumps or the transport starts or stops, so a
+    // steady play doesn't count as a change (the 2 s refresh sends it, 05 §5).
+    p.playhead.playing = playing();
+    p.playhead.pos = playhead();
+    p.playhead.at = syncClient->now();
+    const auto& last = localPresence.playhead;
+    if (last.playing == p.playhead.playing)
+    {
+        const auto expected = last.playing ? collab::extrapolatePlayhead (last, model().tempo, p.playhead.at, p.playhead.at) : last.pos;
+        if (std::abs (expected - p.playhead.pos) < 480)
+            p.playhead = last;
+    }
+    p.pointer = pointerAt;
+    const auto take = [] (auto begin, auto end, std::vector<Id>& out, std::int64_t& count, auto id) {
+        for (auto it = begin; it != end; ++it, ++count)
+            if (out.size() < collab::Presence::maxSelectionIds)
+                out.push_back (id (*it));
+    };
+    std::int64_t count = 0;
+    take (selection.regions().begin(), selection.regions().end(), p.regions, count, [] (const Id& id) { return id; });
+    take (piano.selection.begin(), piano.selection.end(), p.notes, count, [] (const commands::NoteRef& n) { return n.noteId; });
+    take (pointSelection.points.begin(), pointSelection.points.end(), p.points, count, [] (const Id& id) { return id; });
+    p.selectionCount = count;
+    localPresence = p;
+    syncClient->setPresence (p);
+}
+
+std::vector<Studio::MissingPlugin> Studio::missingPluginList() const
+{
+    std::vector<MissingPlugin> out;
+    auto check = [&] (const model::PluginInstance& p) {
+        const auto proc = eng->processor (p.id);
+        if (proc == nullptr || ! proc->isPlaceholder())
+            return;
+        MissingPlugin m { p.name.empty() ? p.pluginUid : p.name, {} };
+        if (! p.addedBy.empty())
+            m.addedBy = syncClient != nullptr ? syncClient->displayName (p.addedBy) : p.addedBy;
+        if (std::none_of (out.begin(), out.end(), [&] (const MissingPlugin& o) { return o.name == m.name && o.addedBy == m.addedBy; }))
+            out.push_back (std::move (m));
+    };
+    for (const auto& [id, t] : model().tracks)
+    {
+        if (t->strip.instrument)
+            check (*t->strip.instrument);
+        for (const auto& p : t->strip.inserts)
+            check (p);
+    }
+    std::sort (out.begin(), out.end(), [] (const MissingPlugin& a, const MissingPlugin& b) { return std::tie (a.name, a.addedBy) < std::tie (b.name, b.addedBy); });
+    return out;
+}
+
+void Studio::noticeMissingPlugins()
+{
+    // Plug-ins a collaborator just added that aren't installed here: say so once each (F-COL-20).
+    std::vector<MissingPlugin> fresh;
+    auto check = [&] (const model::PluginInstance& p) {
+        const auto proc = eng->processor (p.id);
+        if (proc == nullptr || ! proc->isPlaceholder() || ! missingSeen.insert (p.id).second)
+            return;
+        fresh.push_back ({ p.name.empty() ? p.pluginUid : p.name, p.addedBy.empty() || syncClient == nullptr ? p.addedBy : syncClient->displayName (p.addedBy) });
+    };
+    for (const auto& [id, t] : model().tracks)
+    {
+        if (t->strip.instrument)
+            check (*t->strip.instrument);
+        for (const auto& p : t->strip.inserts)
+            check (p);
+    }
+    if (fresh.empty())
+        return;
+    const auto& first = fresh.front();
+    status = juce::String::fromUTF8 (first.name.c_str()) + (first.addedBy.empty() ? "" : " (added by " + juce::String::fromUTF8 (first.addedBy.c_str()) + ")")
+             + (fresh.size() > 1 ? " and " + juce::String (fresh.size() - 1) + " more aren't installed here." : juce::String (" isn't installed here."))
+             + " The track plays without it.";
+    if (onMissingPlugins)
+        onMissingPlugins (fresh);
 }
 
 void Studio::remoteChanged()
@@ -1558,6 +1795,7 @@ void Studio::remoteChanged()
     unsaved = true;
     everEdited = true;
     edited();
+    noticeMissingPlugins();
 }
 
 bool Studio::shareProject (std::string* error)
@@ -1664,7 +1902,11 @@ juce::String Studio::syncStatus() const
         return juce::String::fromUTF8 ("Signed out \xe2\x80\x93 sign in to sync");
     if (syncClient == nullptr)
         return "On another relay";
-    return juce::String::fromUTF8 (syncClient->statusText().c_str());
+    auto text = juce::String::fromUTF8 (syncClient->statusText().c_str());
+    if (mediaSyncer != nullptr)
+        if (const auto transfers = mediaSyncer->statusText(); ! transfers.empty())
+            text << juce::String::fromUTF8 (" \xc2\xb7 ") << juce::String::fromUTF8 (transfers.c_str());
+    return text;
 }
 
 juce::String Studio::syncDetails() const

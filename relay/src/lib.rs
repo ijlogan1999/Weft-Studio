@@ -6,15 +6,17 @@
 //! TLS-terminating proxy in front of it (05 §11, D-ARCH-38).
 
 pub mod auth;
+pub mod blobs;
 pub mod room;
 pub mod store;
 
 use automerge::sync::SyncDoc;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::DefaultBodyLimit;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -52,6 +54,7 @@ pub struct AppState {
     rooms: Mutex<HashMap<String, Arc<Mutex<Room>>>>,
     next_conn: AtomicU64,
     test_clock: bool,
+    blob_dir: blobs::BlobDir,
 }
 
 /// Builds the relay's state and routes.
@@ -77,6 +80,10 @@ pub fn build(config: &Config) -> Result<Router, String> {
             auth::random_token(48).into_bytes(),
         ),
     };
+    let blob_dir = match &config.data_dir {
+        Some(dir) => blobs::BlobDir::new(dir.clone(), false)?,
+        None => blobs::BlobDir::temporary()?,
+    };
     let state = Arc::new(AppState {
         store: Mutex::new(store),
         tokens: Tokens::new(secret),
@@ -85,6 +92,7 @@ pub fn build(config: &Config) -> Result<Router, String> {
         rooms: Mutex::new(HashMap::new()),
         next_conn: AtomicU64::new(1),
         test_clock: config.test_clock,
+        blob_dir,
     });
     Ok(Router::new()
         .route("/healthz", get(healthz))
@@ -104,6 +112,19 @@ pub fn build(config: &Config) -> Result<Router, String> {
         .route("/v1/invites/{token}", get(get_invite))
         .route("/v1/invites/{token}/accept", post(accept_invite))
         .route("/v1/projects/{id}/ws", get(ws_upgrade))
+        .route(
+            "/v1/blobs/{hash}",
+            get(blobs::get_blob).head(blobs::head_blob),
+        )
+        .route("/v1/blobs/{hash}/uploads", post(blobs::start_upload))
+        .route(
+            "/v1/blobs/{hash}/uploads/{upload}",
+            put(blobs::put_chunk).layer(DefaultBodyLimit::max(blobs::CHUNK_BYTES as usize + 4096)),
+        )
+        .route(
+            "/v1/blobs/{hash}/uploads/{upload}/complete",
+            post(blobs::complete_upload),
+        )
         .route("/v1/test/clock", post(advance_clock))
         .with_state(state))
 }

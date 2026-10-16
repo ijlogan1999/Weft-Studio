@@ -6,6 +6,7 @@
 
 #include "weft/engine/dsp/BuiltinEffects.h"
 #include "weft/engine/render/Bounce.h"
+#include "weft/media/MediaStore.h"
 #include "weft/rt/AudioThread.h"
 
 #include <weft_codec.h>
@@ -525,6 +526,37 @@ TEST_CASE ("A bounce can be cancelled, and D-W9-1 counts regions without media",
     REQUIRE (rig.session.addMedia (ghost));
     REQUIRE (rig.session.createAudioRegion (track, 9 * barTicks, ghost.hash, 0, 1000));
     CHECK (regionsMissingMedia (rig.session.model(), rig.media) == 1);
+}
+
+TEST_CASE ("AT-COL-18 regions whose media is still downloading count as not yet downloaded for the bounce warning", "[E][bounce][AT-COL-18]")
+{
+    Rig rig (256);
+    const auto track = rig.audioTrack();
+    // A collaborator's recording, half of it here so far.
+    const auto frames = 4 * barSamples;
+    const auto hash = media::storeMedia (rampMedia (frames), media::SampleFormat::int24, rig.folder.path / "Media");
+    REQUIRE (hash);
+    const auto whole = rig.mediaFile (*hash);
+    const auto part = rig.folder.path / "part.wav";
+    {
+        std::ifstream in (whole, std::ios::binary);
+        std::vector<char> bytes ((std::istreambuf_iterator<char> (in)), {});
+        std::ofstream out (part, std::ios::binary);
+        out.write (bytes.data(), static_cast<std::streamsize> (bytes.size() / 2));
+    }
+    model::MediaRef ref;
+    ref.hash = *hash;
+    ref.lengthSamples = frames;
+    ref.channels = 1;
+    REQUIRE (rig.session.addMedia (ref));
+    REQUIRE (rig.session.createAudioRegion (track, 0, *hash, 0, frames));
+    REQUIRE (rig.session.createAudioRegion (track, 8 * barTicks, *hash, 0, frames));
+    REQUIRE (rig.media.loadPartial (part, *hash, frames));
+    CHECK (rig.media.find (*hash)->partial());
+    // The dialog says "2 regions have media not yet downloaded" from this count (D-W9-1).
+    CHECK (regionsMissingMedia (rig.session.model(), rig.media) == 2);
+    REQUIRE (rig.media.completeDownload (rig.folder.path / "Media", *hash));
+    CHECK (regionsMissingMedia (rig.session.model(), rig.media) == 0);
 }
 
 TEST_CASE ("AT-RT-1 (bounce) capturing a real-time bounce allocates nothing on the audio thread", "[E][rt][bounce]")

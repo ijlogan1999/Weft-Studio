@@ -1,5 +1,7 @@
 #include "PianoRoll.h"
 
+#include "PresenceUi.h"
+
 #include "weft/time/Position.h"
 #include "weft/time/Quantize.h"
 
@@ -211,7 +213,12 @@ void PianoRoll::visibilityChanged()
 void PianoRoll::timerCallback()
 {
     if (! studio.playing())
+    {
+        // Collaborators' pointers move and fade without anything else changing.
+        if (! studio.collaborators().empty())
+            repaint();
         return;
+    }
     if (studio.piano.follow)
     {
         const auto x = tickToX (static_cast<double> (studio.playhead()));
@@ -411,6 +418,11 @@ void PianoRoll::mouseUp (const juce::MouseEvent&) { pointerUp(); }
 void PianoRoll::mouseMove (const juce::MouseEvent& e)
 {
     auto shape = juce::MouseCursor::NormalCursor;
+    if (gridArea().toFloat().contains (e.position) && ! regions.empty())
+        studio.setPointer (collab::Presence::Pointer { collab::Presence::View::pianoRoll, static_cast<Ticks> (std::llround (xToTick (e.position.x))),
+                                                       shownTrack(), yToPitch (e.position.y) });
+    else
+        studio.setPointer (std::nullopt);
     if (gridArea().toFloat().contains (e.position))
     {
         if (tool == NoteTool::pencil)
@@ -843,6 +855,40 @@ void PianoRoll::laneDown (juce::Point<float> p, juce::ModifierKeys mods)
 
 // Painting -------------------------------------------------------------------------------------
 
+Id PianoRoll::shownTrack() const
+{
+    const auto& m = studio.model();
+    if (! regions.empty())
+        if (const auto* r = m.region (regions.front()))
+            return m.effectiveTrackId (*r);
+    return {};
+}
+
+void PianoRoll::paintCollaborators (juce::Graphics& g)
+{
+    // Collaborators with this track's notes open: their note selections and pointers (04 §7).
+    const auto track = shownTrack();
+    const auto notes = shownNotes();
+    for (const auto* who : studio.collaborators())
+    {
+        if (! who->hasState)
+            continue;
+        const auto c = colourOf (*who);
+        for (const auto& n : notes)
+            if (std::find (who->state.notes.begin(), who->state.notes.end(), n.ref.noteId) != who->state.notes.end())
+            {
+                g.setColour (c);
+                g.drawRect (n.bounds.expanded (1.0f), 1.5f);
+            }
+        const auto& ptr = who->state.pointer;
+        if (ptr && ptr->area == collab::Presence::View::pianoRoll && ptr->track == track && ptr->pitch >= 0)
+            drawPointer (g, { static_cast<float> (tickToX (static_cast<double> (ptr->pos))), pitchToY (ptr->pitch) + rowHeight * 0.5f }, c,
+                         juce::String::fromUTF8 (who->displayName.c_str()), pointerAlpha (studio, *who));
+    }
+}
+
+void PianoRoll::mouseExit (const juce::MouseEvent&) { studio.setPointer (std::nullopt); }
+
 juce::Colour PianoRoll::trackColour() const
 {
     const auto& m = studio.model();
@@ -869,6 +915,7 @@ void PianoRoll::paint (juce::Graphics& g)
         g.reduceClipRegion (gridArea());
         paintGrid (g);
         paintNotes (g);
+        paintCollaborators (g);
     }
     paintKeyboard (g);
     if (laneShown)

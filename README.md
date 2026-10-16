@@ -6,11 +6,12 @@ online or offline, and every change merges.
 
 A weft is the thread woven across a loom; Weft weaves many people's ideas into one song.
 
-> **Status:** early development. Milestones 0 to 10 are done: recording, arranging, the
+> **Status:** early development. Milestones 0 to 11 are done: recording, arranging, the
 > piano roll, a mixer with buses, built-in effects and VST3 plug-ins, automation,
 > bouncing to WAV and MP3, opening, saving and setting up projects and audio devices,
-> and live collaboration through a relay: accounts, sharing, invites, roles and offline
-> merge. Presence and media sync come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
+> and live collaboration through a relay: accounts, sharing, invites, roles, offline
+> merge, collaborators' pointers, playheads and selections, and audio files that upload
+> and download in the background. Comments, chat and version history come next. See [the milestone plan](docs/ARCHITECTURE.md#7-milestone-plan)
 > and [the milestone reports](docs/reports).
 
 ## Support Weft

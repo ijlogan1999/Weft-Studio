@@ -187,10 +187,15 @@ void ShareDialog::layoutMode()
     for (auto* c : std::initializer_list<juce::Component*> { &link, &role, &createLink, &copy, &removalNote })
         c->setVisible (shared);
     if (! shared)
-        uploadNote.setText ("This uploads the project to " + text (studio.account().relayUrl)
-                                + " so you can invite others to it. Edits sync live from then on. Audio files stay on this computer for now: "
-                                  "media sync arrives in a later version.",
+    {
+        // 04 §9.2: "This uploads the project and its N MB of audio to the relay."
+        const auto bytes = collab::localMediaBytes (studio.model(), studio.projectRoot());
+        const auto mb = static_cast<double> (bytes) / (1024.0 * 1024.0);
+        const auto size = bytes == 0 ? juce::String() : " and its " + (mb < 10.0 ? juce::String (mb, 1) : juce::String (juce::roundToInt (mb))) + " MB of audio";
+        uploadNote.setText ("This uploads the project" + size + " to " + text (studio.account().relayUrl)
+                                + " so you can invite others to it. Edits sync live from then on; audio uploads in the background.",
                             juce::dontSendNotification);
+    }
     else
         refreshMembers();
     resized();

@@ -1,5 +1,7 @@
 #include "TracksArea.h"
 
+#include "PresenceUi.h"
+
 #include "weft/time/Position.h"
 
 #include <cmath>
@@ -328,10 +330,28 @@ void TrackHeader::paint (juce::Graphics& g)
     g.setColour (colour (Token::textDim));
     g.setFont (juce::FontOptions (12.0f));
     g.drawText (juce::String (number), 14, 4, 22, 20, juce::Justification::centredLeft);
+    // Collaborators working on this track (04 §6.1): a badge each, red while they record on it.
+    auto badge = juce::Rectangle<float> (static_cast<float> (getWidth()) - 22.0f, 30.0f, 18.0f, 18.0f);
+    for (const auto* who : badges())
+    {
+        if (badge.getX() < 36.0f || badge.getBottom() > static_cast<float> (studio.trackHeight (trackId)))
+            break;
+        drawBadge (g, badge, colourOf (*who), initials (who->displayName), who->state.status == collab::Presence::Status::recording);
+        badge.translate (-21.0f, 0.0f);
+    }
     g.setColour (colour (Token::border));
     g.drawHorizontalLine (getHeight() - 1, 0.0f, static_cast<float> (getWidth()));
     for (std::size_t i = 0; i < parameters.size(); ++i)
         g.drawHorizontalLine (studio.trackHeight (trackId) + static_cast<int> (i) * Studio::automationLaneHeight, 32.0f, static_cast<float> (getWidth()));
+}
+
+std::vector<const collab::RemotePresence*> TrackHeader::badges() const
+{
+    std::vector<const collab::RemotePresence*> out;
+    for (const auto* who : studio.collaborators())
+        if (who->hasState && who->state.focusTrack == trackId)
+            out.push_back (who);
+    return out;
 }
 
 void TrackHeader::resized()
@@ -855,10 +875,32 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
         if (r.audio.fadeOut.length > 0)
             g.drawLine (box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom(), 1.5f);
     }
+    // Audio still on its way (F-COL-10): the part not here yet is hatched, with how far it got.
+    juce::String transfer;
+    if (! r.isMidi && ! ghost)
+        if (const auto d = studio.downloadState (r.audio.media))
+        {
+            const auto* ref = m.mediaRef (r.audio.media);
+            const auto total = ref != nullptr ? static_cast<double> (ref->lengthSamples) : 0.0;
+            // Where the downloaded prefix ends, in the region's own coordinates.
+            const auto have = d->fraction * total - static_cast<double> (r.audio.sourceOffset);
+            const auto split = total > 0 && r.length > 0 ? std::clamp (static_cast<float> (have / static_cast<double> (r.length)), 0.0f, 1.0f) : 0.0f;
+            const auto missing = body.withTrimmedLeft (body.getWidth() * split);
+            const juce::Graphics::ScopedSaveState save (g);
+            g.reduceClipRegion (missing.toNearestInt());
+            g.setColour (colour (Token::lane).withAlpha (0.45f));
+            g.fillRect (missing);
+            g.setColour (colour (Token::regionText).withAlpha (0.25f));
+            for (auto x = missing.getX() - missing.getHeight(); x < missing.getRight(); x += 8.0f)
+                g.drawLine (x, missing.getBottom(), x + missing.getHeight(), missing.getY(), 1.0f);
+            transfer = d->failed ? "Download failed" : d->waiting ? "Waiting for upload" : "Downloading " + juce::String (juce::roundToInt (d->fraction * 100.0)) + "%";
+        }
     // Name bar.
     g.setColour (colour (Token::regionText));
     g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     auto label = juce::String (r.name);
+    if (transfer.isNotEmpty())
+        label << "  (" << transfer << ")";
     if (r.muted)
         label = "(muted) " + label;
     // Keep the name readable when the region starts left of the view.
@@ -878,6 +920,17 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
         g.setColour (colour (Token::accent));
         g.drawRoundedRectangle (box.reduced (1.0f), 6.0f, 2.5f);
     }
+    if (ghost)
+        return;
+    // Collaborators' selections, in their colours; several stack 1 px apart (05 §5).
+    float offset = 0.0f;
+    for (const auto* who : studio.collaborators())
+        if (std::find (who->state.regions.begin(), who->state.regions.end(), r.id) != who->state.regions.end())
+        {
+            g.setColour (colourOf (*who));
+            g.drawRoundedRectangle (box.expanded (offset), 6.0f + offset, 1.5f);
+            offset += 1.5f;
+        }
 }
 
 void Timeline::paint (juce::Graphics& g)
@@ -973,10 +1026,55 @@ void Timeline::paint (juce::Graphics& g)
         g.drawText ("Drop audio or MIDI files here, or press R to record.", getLocalBounds().withTrimmedTop (contentHeight()).withHeight (60),
                     juce::Justification::centred);
     }
+    paintCollaborators (g);
     const auto px = static_cast<float> (studio.view.tickToX (static_cast<double> (studio.playhead())));
     g.setColour (colour (Token::playhead));
     g.drawVerticalLine (juce::roundToInt (px), 0.0f, static_cast<float> (getHeight()));
 }
+
+void Timeline::paintCollaborators (juce::Graphics& g)
+{
+    const auto& m = studio.model();
+    for (const auto* who : studio.collaborators())
+    {
+        if (! who->hasState)
+            continue;
+        const auto c = colourOf (*who);
+        // Playheads only while that collaborator plays.
+        if (who->state.playhead.playing)
+        {
+            const auto x = static_cast<float> (studio.view.tickToX (static_cast<double> (studio.collaboratorPlayhead (*who))));
+            g.setColour (c.withAlpha (0.8f));
+            g.drawLine (x, 0.0f, x, static_cast<float> (getHeight()), 1.5f);
+        }
+        // Pointers over the arrange view, at their bar and track whatever our zoom (D-COL-5).
+        const auto& ptr = who->state.pointer;
+        if (! ptr || ptr->area != collab::Presence::View::arrange)
+            continue;
+        const auto row = commands::trackRow (m, ptr->track);
+        if (row < 0 || row >= rows())
+            continue;
+        const auto lane = laneBounds (row);
+        const auto tip = juce::Point<float> (static_cast<float> (studio.view.tickToX (static_cast<double> (ptr->pos))), lane.getCentreY() - 7.0f);
+        if (getLocalBounds().toFloat().contains (tip))
+            drawPointer (g, tip, c, juce::String::fromUTF8 (who->displayName.c_str()), pointerAlpha (studio, *who));
+    }
+}
+
+std::optional<juce::Point<float>> Timeline::collaboratorPointer (const std::string& clientId) const
+{
+    for (const auto* who : studio.collaborators())
+        if (who->clientId == clientId && who->state.pointer && who->state.pointer->area == collab::Presence::View::arrange)
+        {
+            const auto row = commands::trackRow (studio.model(), who->state.pointer->track);
+            if (row < 0 || row >= rows())
+                return std::nullopt;
+            return juce::Point<float> (static_cast<float> (studio.view.tickToX (static_cast<double> (who->state.pointer->pos))), laneBounds (row).getCentreY());
+        }
+    return std::nullopt;
+}
+
+void Timeline::mouseExit (const juce::MouseEvent&) { studio.setPointer (std::nullopt); }
 
 void Timeline::resized() { studio.timelineWidth = getWidth(); }
 
@@ -1293,6 +1391,13 @@ void Timeline::itemDropped (const SourceDetails& details)
 
 void Timeline::mouseMove (const juce::MouseEvent& e)
 {
+    // Shared with collaborators in musical coordinates: the bar and the track under the pointer.
+    const auto row = rowAt (e.position.y);
+    if (row >= 0 && row < rows())
+        studio.setPointer (collab::Presence::Pointer { collab::Presence::View::arrange, tickAt (e.position.x),
+                                                       studio.model().trackOrder[static_cast<std::size_t> (row)], -1 });
+    else
+        studio.setPointer (std::nullopt);
     const auto* r = studio.tool == Tool::pointer ? regionAt (e.position) : nullptr;
     auto shape = juce::MouseCursor::NormalCursor;
     if (r != nullptr)
@@ -1383,6 +1488,10 @@ void TracksArea::timerCallback()
     }
     rulerComponent.repaint();
     lanes.repaint();
+    if (! studio.collaborators().empty() || hadCollaborators)
+        for (auto& h : trackHeaders)
+            h->repaint();
+    hadCollaborators = ! studio.collaborators().empty();
 }
 
 void TracksArea::scrollBarMoved (juce::ScrollBar* bar, double start)

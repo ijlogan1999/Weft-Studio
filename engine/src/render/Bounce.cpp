@@ -453,7 +453,7 @@ int regionsMissingMedia (const model::ProjectModel& model, const MediaPool& medi
         if (r->isMidi)
             continue;
         const auto* ref = model.mediaRef (r->audio.media);
-        if (ref == nullptr || media.find (ref->hash) == nullptr)
+        if (ref == nullptr || ! media.available (ref->hash))
             ++missing;
     }
     return missing;

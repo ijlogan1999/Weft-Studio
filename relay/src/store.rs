@@ -36,6 +36,15 @@ pub struct MemberRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct Upload {
+    pub id: String,
+    pub hash: String,
+    pub project_id: String,
+    pub size: i64,
+    pub received: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct Invite {
     pub project_id: String,
     pub role: String,
@@ -62,6 +71,16 @@ CREATE TABLE IF NOT EXISTS changes(
 CREATE UNIQUE INDEX IF NOT EXISTS changes_by_hash ON changes(project_id, hash);
 CREATE TABLE IF NOT EXISTS snapshots(
     project_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS blobs(
+    hash TEXT PRIMARY KEY, size INTEGER NOT NULL, created_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS blob_owners(
+    hash TEXT NOT NULL, owner_id TEXT NOT NULL, PRIMARY KEY(hash, owner_id));
+CREATE TABLE IF NOT EXISTS blob_projects(
+    hash TEXT NOT NULL, project_id TEXT NOT NULL, PRIMARY KEY(hash, project_id));
+CREATE TABLE IF NOT EXISTS uploads(
+    id TEXT PRIMARY KEY, hash TEXT NOT NULL, project_id TEXT NOT NULL, size INTEGER NOT NULL,
+    received INTEGER NOT NULL, created_ms INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS uploads_by_hash ON uploads(hash, project_id);
 ";
 
 /// Collaborator colors cycle through this many palette entries (05 §5).
@@ -196,7 +215,14 @@ impl Store {
     }
 
     pub fn delete_project(&self, id: &str) -> DbResult<()> {
-        for table in ["members", "invites", "changes", "snapshots"] {
+        for table in [
+            "members",
+            "invites",
+            "changes",
+            "snapshots",
+            "blob_projects",
+            "uploads",
+        ] {
             self.db
                 .execute(&format!("DELETE FROM {table} WHERE project_id = ?1"), [id])?;
         }
@@ -357,6 +383,120 @@ impl Store {
              ON CONFLICT(project_id) DO UPDATE SET seq = excluded.seq, data = excluded.data",
             params![project_id, seq, data],
         )?;
+        Ok(())
+    }
+
+    // Media blobs (05 §8) ---------------------------------------------------------
+
+    /// The blob's size if it's stored and linked to the project.
+    pub fn blob_in_project(&self, hash: &str, project_id: &str) -> DbResult<Option<i64>> {
+        self.db
+            .query_row(
+                "SELECT b.size FROM blobs b JOIN blob_projects p ON p.hash = b.hash
+                 WHERE b.hash = ?1 AND p.project_id = ?2",
+                params![hash, project_id],
+                |r| r.get(0),
+            )
+            .optional()
+    }
+
+    /// The blob's size if it's stored for this owner's account (D-COL-9).
+    pub fn blob_of_owner(&self, hash: &str, owner_id: &str) -> DbResult<Option<i64>> {
+        self.db
+            .query_row(
+                "SELECT b.size FROM blobs b JOIN blob_owners o ON o.hash = b.hash
+                 WHERE b.hash = ?1 AND o.owner_id = ?2",
+                params![hash, owner_id],
+                |r| r.get(0),
+            )
+            .optional()
+    }
+
+    /// Records a verified blob for an owner's account and links it to a project.
+    pub fn add_blob(
+        &self,
+        hash: &str,
+        size: i64,
+        owner_id: &str,
+        project_id: &str,
+        now_ms: i64,
+    ) -> DbResult<()> {
+        self.db.execute(
+            "INSERT OR IGNORE INTO blobs(hash, size, created_ms) VALUES(?1,?2,?3)",
+            params![hash, size, now_ms],
+        )?;
+        self.db.execute(
+            "INSERT OR IGNORE INTO blob_owners(hash, owner_id) VALUES(?1,?2)",
+            params![hash, owner_id],
+        )?;
+        self.link_blob(hash, project_id)
+    }
+
+    pub fn link_blob(&self, hash: &str, project_id: &str) -> DbResult<()> {
+        self.db.execute(
+            "INSERT OR IGNORE INTO blob_projects(hash, project_id) VALUES(?1,?2)",
+            params![hash, project_id],
+        )?;
+        Ok(())
+    }
+
+    fn upload_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Upload> {
+        Ok(Upload {
+            id: r.get(0)?,
+            hash: r.get(1)?,
+            project_id: r.get(2)?,
+            size: r.get(3)?,
+            received: r.get(4)?,
+        })
+    }
+
+    /// An unfinished upload of this blob for this project, to resume.
+    pub fn open_upload(&self, hash: &str, project_id: &str) -> DbResult<Option<Upload>> {
+        self.db
+            .query_row(
+                "SELECT id, hash, project_id, size, received FROM uploads
+                 WHERE hash = ?1 AND project_id = ?2 ORDER BY created_ms LIMIT 1",
+                params![hash, project_id],
+                Self::upload_from_row,
+            )
+            .optional()
+    }
+
+    pub fn upload(&self, id: &str) -> DbResult<Option<Upload>> {
+        self.db
+            .query_row(
+                "SELECT id, hash, project_id, size, received FROM uploads WHERE id = ?1",
+                [id],
+                Self::upload_from_row,
+            )
+            .optional()
+    }
+
+    pub fn create_upload(&self, upload: &Upload, now_ms: i64) -> DbResult<()> {
+        self.db.execute(
+            "INSERT INTO uploads(id, hash, project_id, size, received, created_ms) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                upload.id,
+                upload.hash,
+                upload.project_id,
+                upload.size,
+                upload.received,
+                now_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_upload_received(&self, id: &str, received: i64) -> DbResult<()> {
+        self.db.execute(
+            "UPDATE uploads SET received = ?2 WHERE id = ?1",
+            params![id, received],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_upload(&self, id: &str) -> DbResult<()> {
+        self.db.execute("DELETE FROM uploads WHERE id = ?1", [id])?;
         Ok(())
     }
 }

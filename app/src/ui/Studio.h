@@ -8,6 +8,7 @@
 
 #include "weft/arrange/Grid.h"
 #include "weft/arrange/Selection.h"
+#include "weft/collab/MediaSync.h"
 #include "weft/collab/Relay.h"
 #include "weft/collab/SyncClient.h"
 #include "weft/commands/LocalView.h"
@@ -362,6 +363,40 @@ public:
     /** Where the account is kept (the settings folder). */
     std::filesystem::path accountFile() const { return settingsFolder() / "relay-account.bin"; }
 
+    // Audio file sync and presence (M11, 05 §5 and §8) ----------------------------------------
+    /** Uploads and downloads of the project's audio, or null while not syncing. */
+    collab::MediaSync* mediaSync() noexcept { return mediaSyncer.get(); }
+    /** Transfer limits and test hooks; set before the project starts syncing. */
+    collab::TransferOptions transferOptions;
+    /** The sync client's clock (Unix ms) for presence timing; tests set it before syncing starts. */
+    std::function<std::int64_t()> syncClock;
+    /** How far a region's audio has downloaded; nullopt when it's here (or not being fetched). */
+    struct DownloadState
+    {
+        double fraction = 0.0;
+        bool waiting = false; // the relay doesn't have it yet: still uploading from its author
+        bool failed = false;
+    };
+    std::optional<DownloadState> downloadState (const std::string& hash) const;
+    /** Where this user's pointer is in musical coordinates (the timeline and piano roll set it); nullopt when outside. */
+    void setPointer (std::optional<collab::Presence::Pointer> pointer);
+    /** Any keyboard or mouse input: 2 minutes without any shows this user as idle. */
+    void noteInput();
+    /** Other clients connected to the project now. */
+    std::vector<const collab::RemotePresence*> collaborators() const;
+    /** Where a collaborator's playhead is now (moved on while they play). */
+    Ticks collaboratorPlayhead (const collab::RemotePresence& who) const;
+    /** This client's presence as last sent to the relay (tests). */
+    const collab::Presence& presence() const noexcept { return localPresence; }
+    /** A plug-in this computer doesn't have: its name and who added it. */
+    struct MissingPlugin
+    {
+        std::string name, addedBy;
+    };
+    std::vector<MissingPlugin> missingPluginList() const;
+    /** Plug-ins a collaborator's change brought in that aren't installed here (F-COL-20). */
+    std::function<void (const std::vector<MissingPlugin>&)> onMissingPlugins;
+
     /** "Remove bus and N sends?" (W-7 step 6) for a bus; empty when no question is needed. */
     juce::String deleteTrackQuestion (const Id& trackId) const;
     bool deleteTrack (const Id& trackId);
@@ -373,6 +408,16 @@ private:
     void loadAccount();
     collab::Account relayAccount;
     std::unique_ptr<collab::SyncClient> syncClient;
+    std::unique_ptr<collab::MediaSync> mediaSyncer;
+    bool mediaDirty = false;
+    double lastMediaRefresh = 0;
+    collab::Presence localPresence;
+    std::optional<collab::Presence::Pointer> pointerAt;
+    std::set<std::string> missingSeen; // plug-in ids already announced as missing
+    void startMediaSync();
+    void mediaDownloaded (const std::string& hash);
+    void updatePresence();
+    void noticeMissingPlugins();
     bool wantOnline = true;
 
     void syncEngine();

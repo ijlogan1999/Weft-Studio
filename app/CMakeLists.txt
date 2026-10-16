@@ -13,6 +13,7 @@ add_library(weft_app_lib STATIC
     src/ui/BottomArea.cpp
     src/ui/BounceDialog.cpp
     src/ui/PianoRoll.cpp
+    src/ui/PresenceUi.cpp
     src/ui/Commands.cpp
     src/ui/ControlBar.cpp
     src/ui/Inspector.cpp

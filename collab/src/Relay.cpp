@@ -9,11 +9,28 @@ namespace weft::collab
 {
 HttpResult httpRequest (std::string_view method, const std::string& url, const std::string& token, const Value& json, int timeoutMs)
 {
-    auto req = Value::map().set ("method", method).set ("url", url).set ("timeoutMs", timeoutMs);
+    HttpBody body;
+    body.json = json;
+    body.timeoutMs = timeoutMs;
+    return httpRequest (method, url, token, body);
+}
+
+HttpResult httpRequest (std::string_view method, const std::string& url, const std::string& token, const HttpBody& body)
+{
+    auto req = Value::map().set ("method", method).set ("url", url).set ("timeoutMs", body.timeoutMs);
     if (! token.empty())
         req.set ("token", token);
-    if (! json.isNull())
-        req.set ("json", json);
+    if (! body.json.isNull())
+        req.set ("json", body.json);
+    else if (! body.bytes.empty())
+        req.set ("bytes", body.bytes);
+    if (! body.headers.empty())
+    {
+        auto h = Value::map();
+        for (const auto& [k, v] : body.headers)
+            h.set (k, v);
+        req.set ("headers", h);
+    }
     const auto bytes = doc::encode (req);
     WeftBytes out {};
     HttpResult r;
@@ -33,6 +50,8 @@ HttpResult httpRequest (std::string_view method, const std::string& url, const s
     r.json = (*v)["json"];
     r.bytes = (*v)["bytes"].asBytes();
     r.error = (*v)["error"].asString();
+    for (const auto& [k, hv] : (*v)["headers"].asMap())
+        r.headers[k] = hv.asString();
     return r;
 }
 

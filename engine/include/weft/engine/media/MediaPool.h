@@ -26,6 +26,12 @@ public:
     Audio load (const std::filesystem::path& mediaDir, const std::string& hash, std::string* error = nullptr);
 
     Audio find (const std::string& hash) const;
+    /** A file still downloading to `partFile` (05 §8.3): opened, or extended with what has arrived. */
+    Audio loadPartial (const std::filesystem::path& partFile, const std::string& hash, std::int64_t totalFrames);
+    /** A download finished: the partial source makes way for the file in mediaDir. */
+    Audio completeDownload (const std::filesystem::path& mediaDir, const std::string& hash, std::string* error = nullptr);
+    /** Not here at all, or only partly downloaded. */
+    bool available (const std::string& hash) const;
     void remove (const std::string& hash) { pool.erase (hash); }
     void clear() { pool.clear(); }
     std::size_t size() const noexcept { return pool.size(); }

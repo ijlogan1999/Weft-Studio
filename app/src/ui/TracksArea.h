@@ -61,6 +61,9 @@ public:
     std::vector<std::unique_ptr<juce::ComboBox>> parameters;
     std::vector<std::unique_ptr<juce::TextButton>> addLane;
 
+    /** Collaborators whose focus is this track (their badges, AT-COL-12). */
+    std::vector<const collab::RemotePresence*> badges() const;
+
 private:
     void rebuildAutomation();
     Studio& studio;
@@ -82,7 +85,10 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    /** Where a collaborator's pointer is drawn (its lane's centre), when it's on a track (AT-COL-11). */
+    std::optional<juce::Point<float>> collaboratorPointer (const std::string& clientId) const;
 
     bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
     void filesDropped (const juce::StringArray& files, int x, int y) override;
@@ -141,6 +147,7 @@ public:
     std::function<void()> onScroll;
 
 private:
+    void paintCollaborators (juce::Graphics&);
     void paintAutomation (juce::Graphics&, const AutomationHit& lane);
     std::vector<model::AutoPoint> previewPoints (const AutomationHit& lane) const;
     void automationDown (const AutomationHit& hit, juce::Point<float> p, juce::ModifierKeys mods);
@@ -194,6 +201,7 @@ private:
     Studio& studio;
     Ruler rulerComponent;
     Timeline lanes;
+    bool hadCollaborators = false;
     juce::Component headerColumn;
     std::vector<std::unique_ptr<TrackHeader>> trackHeaders;
     std::vector<Id> shownTracks;

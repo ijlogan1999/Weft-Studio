@@ -150,6 +150,7 @@ PluginInstance PluginInstance::fromValue (const Value& v)
     p.state = v["state"];
     for (const auto& [k, value] : v["params"].asMap())
         p.params[k] = std::clamp (value.asDouble(), 0.0, 1.0);
+    p.addedBy = v["addedBy"].asString();
     return p;
 }
 
@@ -158,16 +159,19 @@ Value PluginInstance::toValue() const
     Value paramsValue = Value::map();
     for (const auto& [k, value] : params)
         paramsValue.set (k, value);
-    return Value::map()
-        .set ("id", id)
-        .set ("format", format)
-        .set ("pluginUid", pluginUid)
-        .set ("name", name)
-        .set ("vendor", vendor)
-        .set ("version", version)
-        .set ("bypass", bypass)
-        .set ("state", state)
-        .set ("params", std::move (paramsValue));
+    auto v = Value::map()
+                 .set ("id", id)
+                 .set ("format", format)
+                 .set ("pluginUid", pluginUid)
+                 .set ("name", name)
+                 .set ("vendor", vendor)
+                 .set ("version", version)
+                 .set ("bypass", bypass)
+                 .set ("state", state)
+                 .set ("params", std::move (paramsValue));
+    if (! addedBy.empty())
+        v.set ("addedBy", addedBy);
+    return v;
 }
 
 Send Send::fromValue (const Value& v)
