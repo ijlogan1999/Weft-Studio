@@ -41,8 +41,10 @@ public:
                 }
     }
 
-    int pick (int n) { return std::uniform_int_distribution<int> (0, n - 1) (rng); }
-    double unit() { return std::uniform_real_distribution<double> (0.0, 1.0) (rng); }
+    // Straight from the engine's bits rather than std distributions, so a seed replays the same
+    // edits with every standard library.
+    int pick (int n) { return static_cast<int> (rng() % static_cast<std::uint32_t> (n)); }
+    double unit() { return static_cast<double> (rng()) / 4294967296.0; }
     bool coin() { return pick (2) == 0; }
 
     template <typename Map>
@@ -78,12 +80,13 @@ public:
             return std::nullopt;
         return ts[static_cast<std::size_t> (pick (static_cast<int> (ts.size())))];
     }
-    const model::Region* anyRegion (std::optional<bool> midi = {})
+    /** Shared, so it outlives the edit that replaces the model's copy. */
+    std::shared_ptr<const model::Region> anyRegion (std::optional<bool> midi = {})
     {
-        std::vector<const model::Region*> rs;
+        std::vector<std::shared_ptr<const model::Region>> rs;
         for (const auto& [id, r] : session.model().regions)
             if (! midi || r->isMidi == *midi)
-                rs.push_back (r.get());
+                rs.push_back (r);
         return rs.empty() ? nullptr : rs[static_cast<std::size_t> (pick (static_cast<int> (rs.size())))];
     }
     Ticks anyPos (int bars = 12) { return pick (bars * 16) * 240; }
@@ -96,23 +99,23 @@ public:
         switch (pick (24))
         {
             case 0:
-                if (const auto* r = anyRegion())
+                if (const auto r = anyRegion())
                 {
                     auto to = coin() ? std::optional<Id> {} : anyTrack (r->isMidi ? model::TrackKind::instrument : model::TrackKind::audio);
                     (void) s.moveRegion (r->id, anyPos(), to);
                 }
                 return "move region";
             case 1:
-                if (const auto* r = anyRegion())
+                if (const auto r = anyRegion())
                     (void) s.trimRegionLength (r->id, r->isMidi ? 240 + pick (32) * 240 : 4800 + pick (40) * 4800);
                 return "trim region";
             case 2:
-                if (const auto* r = anyRegion())
+                if (const auto r = anyRegion())
                     (void) s.splitRegion (r->id, r->start + 240 + pick (8) * 240);
                 return "split region";
             case 3:
                 if (m.regions.size() > 6)
-                    if (const auto* r = anyRegion())
+                    if (const auto r = anyRegion())
                         (void) s.deleteRegions ({ r->id });
                 return "delete region";
             case 4:
@@ -125,7 +128,7 @@ public:
                     (void) s.createMidiRegion (*t, anyPos(), 960 + pick (16) * 240);
                 return "create region";
             case 5:
-                if (const auto* r = anyRegion())
+                if (const auto r = anyRegion())
                 {
                     (void) s.setRegionGain (r->id, -24.0 + unit() * 30.0);
                     if (coin())
@@ -133,7 +136,7 @@ public:
                 }
                 return "region gain/mute";
             case 6:
-                if (const auto* r = anyRegion (false))
+                if (const auto r = anyRegion (false))
                 {
                     model::Fade in, out;
                     static const char* curves[] = { "linear", "equalPower", "sCurve" };
@@ -145,11 +148,11 @@ public:
                 }
                 return "region fades";
             case 7:
-                if (const auto* r = anyRegion())
+                if (const auto r = anyRegion())
                     (void) s.setRegionLoop (r->id, coin() ? std::optional<Ticks> {} : std::optional<Ticks> (r->start + r->length * (1 + pick (3))));
                 return "region loop";
             case 8:
-                if (const auto* r = anyRegion (true))
+                if (const auto r = anyRegion (true))
                     for (int i = 0, n = 1 + pick (8); i < n; ++i)
                     {
                         model::Note n2;
@@ -161,7 +164,7 @@ public:
                     }
                 return "add notes";
             case 9:
-                if (const auto* r = anyRegion (true); r != nullptr && m.sequence (r->midi.sequenceId) != nullptr
+                if (const auto r = anyRegion (true); r != nullptr && m.sequence (r->midi.sequenceId) != nullptr
                                                       && ! m.sequence (r->midi.sequenceId)->notes.empty())
                 {
                     const auto& notes = m.sequence (r->midi.sequenceId)->notes;
@@ -190,14 +193,14 @@ public:
                     if (track->strip.inserts.size() < 3 || coin())
                         (void) s.addInsert (*t, builtinPlugin (effects[static_cast<std::size_t> (pick (static_cast<int> (effects.size())))]));
                     else
-                        (void) s.removeInsert (*t, track->strip.inserts[static_cast<std::size_t> (pick (static_cast<int> (track->strip.inserts.size())))].id);
+                        (void) s.removeInsert (*t, Id (track->strip.inserts[static_cast<std::size_t> (pick (static_cast<int> (track->strip.inserts.size())))].id));
                 }
                 return "inserts";
             case 12:
                 if (const auto t = anyMixable())
                     if (const auto* track = m.track (*t); track != nullptr && ! track->strip.inserts.empty())
                     {
-                        const auto& p = track->strip.inserts[static_cast<std::size_t> (pick (static_cast<int> (track->strip.inserts.size())))];
+                        const auto p = track->strip.inserts[static_cast<std::size_t> (pick (static_cast<int> (track->strip.inserts.size())))];
                         const auto& ids = params[p.pluginUid];
                         if (coin() && ! ids.empty())
                             (void) s.setPluginParam (*t, p.id, ids[static_cast<std::size_t> (pick (static_cast<int> (ids.size())))], unit());
@@ -215,7 +218,7 @@ public:
                     const auto* track = m.track (*t);
                     if (track != nullptr && ! track->strip.sends.empty() && coin())
                     {
-                        const auto& send = track->strip.sends[static_cast<std::size_t> (pick (static_cast<int> (track->strip.sends.size())))];
+                        const auto send = track->strip.sends[static_cast<std::size_t> (pick (static_cast<int> (track->strip.sends.size())))];
                         if (coin())
                             (void) s.setSendLevel (*t, send.id, -30.0 + unit() * 36.0);
                         else
@@ -252,7 +255,7 @@ public:
                     case 0: (void) s.addTempoPoint (anyPos() + 240, 60.0 + unit() * 140.0); break;
                     case 1:
                         if (const auto& points = m.tempo.points(); points.size() > 1)
-                            (void) s.deleteTempoPoint (points[static_cast<std::size_t> (1 + pick (static_cast<int> (points.size()) - 1))].id);
+                            (void) s.deleteTempoPoint (Id (points[static_cast<std::size_t> (1 + pick (static_cast<int> (points.size()) - 1))].id));
                         break;
                     default: (void) s.setTempoAt (0, 80.0 + unit() * 80.0); break;
                 }
@@ -291,7 +294,7 @@ public:
                     (void) s.addMarker (anyPos(), "M");
                 return "cycle/marker";
             case 22:
-                if (const auto* r = anyRegion (true))
+                if (const auto r = anyRegion (true))
                 {
                     model::CcEvent cc;
                     cc.pos = pick (32) * 60;
