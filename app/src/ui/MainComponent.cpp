@@ -5,6 +5,7 @@
 #include "BounceDialog.h"
 #include "NewTrackDialog.h"
 #include "ProjectDialogs.h"
+#include "ShareDialogs.h"
 
 namespace weft::ui
 {
@@ -29,9 +30,34 @@ void StatusBar::paint (juce::Graphics& g)
     const auto right = juce::String (studio.model().info.name) + (studio.dirty() ? " (edited)" : "") + "   ·   Tool: " + toolName (studio.tool)
                        + "   ·   Snap: " + (studio.snapEnabled ? arrange::snapLabel (studio.snap) : juce::String ("Off"));
     g.drawText (right, r.removeFromRight (420), juce::Justification::centredRight);
+    const auto sync = syncArea();
+    g.setColour (studio.shared() && studio.sync() != nullptr && studio.sync()->state() == collab::SyncState::synced ? colour (Token::text)
+                                                                                                                  : colour (Token::textDim));
+    g.drawText (studio.syncStatus(), sync, juce::Justification::centred, true);
+    r.setRight (std::min (r.getRight(), sync.getX() - 8));
     g.setColour (colour (Token::text));
     g.drawText (studio.status, r, juce::Justification::centredLeft, true);
 }
+
+juce::Rectangle<int> StatusBar::syncArea() const { return { getWidth() / 2 - 140, 0, 280, getHeight() }; }
+
+void StatusBar::mouseUp (const juce::MouseEvent& e)
+{
+    if (syncArea().contains (e.getPosition()) && onSyncClicked)
+        onSyncClicked();
+}
+
+// Read-only banner ------------------------------------------------------------------------------
+
+ReadOnlyBanner::ReadOnlyBanner()
+{
+    setTitle ("Read-only");
+    addAndMakeVisible (message);
+}
+
+void ReadOnlyBanner::paint (juce::Graphics& g) { g.fillAll (colour (Token::accent).withAlpha (0.22f)); }
+
+void ReadOnlyBanner::resized() { message.setBounds (getLocalBounds().reduced (10, 2)); }
 
 // No-audio banner -------------------------------------------------------------------------------
 
@@ -59,9 +85,10 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s), plugins (s)
 {
     setTitle ("Weft Studio");
-    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner })
+    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly })
         addChildComponent (c);
     banner.setup.onClick = [this] { run (Cmd::audioSettings); };
+    status.onSyncClicked = [this] { alert ("Sync", studio.syncDetails()); };
     control.setVisible (true);
     tracksArea.setVisible (true);
     status.setVisible (true);
@@ -94,6 +121,14 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         banner.setVisible (! studio.audioRunning());
         resized();
     }
+    const auto readOnlyText = studio.readOnlyReason();
+    if (readOnly.message.getText() != readOnlyText)
+        readOnly.message.setText (readOnlyText, juce::dontSendNotification);
+    if (readOnly.isVisible() == readOnlyText.isEmpty())
+    {
+        readOnly.setVisible (readOnlyText.isNotEmpty());
+        resized();
+    }
     inspectorPanel.setVisible (studio.layout.inspector);
     sidePanel.setVisible (studio.layout.sidePanel);
     bottomArea.setVisible (studio.layout.bottom != BottomTab::none);
@@ -118,6 +153,8 @@ void MainComponent::resized()
     status.setBounds (r.removeFromBottom (StatusBar::height));
     if (banner.isVisible())
         banner.setBounds (r.removeFromTop (NoAudioBanner::height));
+    if (readOnly.isVisible())
+        readOnly.setBounds (r.removeFromTop (ReadOnlyBanner::height));
     const auto& l = studio.layout;
     if (l.inspector)
         inspectorPanel.setBounds (r.removeFromLeft (std::clamp (l.inspectorWidth, 180, 420)));
@@ -210,8 +247,36 @@ void MainComponent::handleUiCommand (Cmd command)
         if (desktopWindows())
             launchDialog (std::make_unique<ProjectSettingsDialog> (studio), "Project Settings", this);
     }
+    else if (command == Cmd::signIn)
+        whenSignedIn ([] {});
+    else if (command == Cmd::shareProject)
+        whenSignedIn ([this] {
+            if (desktopWindows())
+                launchDialog (std::make_unique<ShareDialog> (studio), studio.shared() ? "Invite" : "Share Project", this);
+        });
+    else if (command == Cmd::joinProject)
+        whenSignedIn ([this] {
+            whenSaved ([this] {
+                if (desktopWindows())
+                    launchDialog (std::make_unique<JoinDialog> (studio), "Join Project", this);
+            });
+        });
     else if (command == Cmd::audioSettings && devices != nullptr && desktopWindows())
         launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
+}
+
+void MainComponent::whenSignedIn (std::function<void()> next)
+{
+    if (studio.signedIn())
+    {
+        next();
+        return;
+    }
+    if (! desktopWindows())
+        return;
+    auto* dialog = launchDialog (std::make_unique<SignInDialog> (studio), "Sign In", this);
+    // The next dialog opens once this window has closed.
+    dialog->onSignedIn = [next = std::move (next)] { juce::MessageManager::callAsync (next); };
 }
 
 // Projects ------------------------------------------------------------------------------------
@@ -396,7 +461,7 @@ void MainComponent::pickTool (int menuItemId)
     studio.sendChangeMessage();
 }
 
-juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Edit", "Track", "Mix", "Navigate", "View", "Help" }; }
+juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Edit", "Track", "Mix", "Navigate", "View", "Share", "Help" }; }
 
 juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 {
@@ -470,7 +535,30 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::keyboardMidi, Cmd::toggleTheme })
                 add (c);
             break;
-        case 6: add (Cmd::about); break;
+        case 6:
+        {
+            juce::PopupMenu::Item share (studio.shared() ? "Invite..." : commandInfo (Cmd::shareProject).name);
+            share.itemID = static_cast<int> (Cmd::shareProject) + 1;
+            menu.addItem (share);
+            add (Cmd::joinProject);
+            menu.addSeparator();
+            if (studio.signedIn())
+            {
+                juce::PopupMenu::Item out ("Sign Out (" + juce::String (studio.account().displayName) + ")");
+                out.itemID = static_cast<int> (Cmd::signOut) + 1;
+                menu.addItem (out);
+            }
+            else
+                add (Cmd::signIn);
+            menu.addSeparator();
+            juce::PopupMenu::Item offline (commandInfo (Cmd::goOffline).name);
+            offline.itemID = static_cast<int> (Cmd::goOffline) + 1;
+            offline.isTicked = ! studio.online();
+            offline.isEnabled = studio.shared();
+            menu.addItem (offline);
+            break;
+        }
+        case 7: add (Cmd::about); break;
         default: break;
     }
     return menu;

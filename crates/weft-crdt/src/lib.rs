@@ -22,8 +22,8 @@
 //! `weft_doc_free`. Functions check for null; they cannot check anything else.
 #![allow(clippy::missing_safety_doc)] // covered once by the crate-level Safety section
 
-mod codec;
-mod ops;
+pub mod codec;
+pub mod ops;
 
 use automerge::{transaction::CommitOptions, ActorId, AutoCommit, ChangeHash};
 use ops::OpError;
@@ -60,14 +60,14 @@ pub struct WeftBytes {
 }
 
 impl WeftBytes {
-    fn empty() -> Self {
+    pub fn empty() -> Self {
         WeftBytes {
             data: ptr::null_mut(),
             len: 0,
         }
     }
 
-    fn from_vec(v: Vec<u8>) -> Self {
+    pub fn from_vec(v: Vec<u8>) -> Self {
         let mut boxed = v.into_boxed_slice();
         let out = WeftBytes {
             data: boxed.as_mut_ptr(),
@@ -589,6 +589,141 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
+// Sync (spec 05 §3.3): Automerge's sync protocol, one state per connection.
+
+/// Opaque per-peer sync state; free with `weft_sync_state_free`.
+pub struct WeftSyncState(automerge::sync::State);
+
+#[no_mangle]
+pub extern "C" fn weft_sync_state_new() -> *mut WeftSyncState {
+    Box::into_raw(Box::new(WeftSyncState(automerge::sync::State::new())))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weft_sync_state_free(state: *mut WeftSyncState) {
+    if !state.is_null() {
+        drop(Box::from_raw(state));
+    }
+}
+
+/// Writes the next sync message for the peer, or returns `NotFound` when there is nothing to send.
+#[no_mangle]
+pub unsafe extern "C" fn weft_doc_sync_generate(
+    doc: *mut WeftDoc,
+    state: *mut WeftSyncState,
+    out: *mut WeftBytes,
+) -> WeftStatus {
+    let (Some(doc), Some(state), Some(out)) = (doc.as_mut(), state.as_mut(), out.as_mut()) else {
+        return WeftStatus::InvalidArgument;
+    };
+    *out = WeftBytes::empty();
+    guard(|| {
+        use automerge::sync::SyncDoc;
+        match doc.inner.sync().generate_sync_message(&mut state.0) {
+            Some(m) => {
+                *out = WeftBytes::from_vec(m.encode());
+                WeftStatus::Ok
+            }
+            None => WeftStatus::NotFound,
+        }
+    })
+}
+
+/// Applies a sync message from the peer (changes in it are verified and applied).
+#[no_mangle]
+pub unsafe extern "C" fn weft_doc_sync_receive(
+    doc: *mut WeftDoc,
+    state: *mut WeftSyncState,
+    data: *const u8,
+    len: usize,
+) -> WeftStatus {
+    let (Some(doc), Some(state)) = (doc.as_mut(), state.as_mut()) else {
+        return WeftStatus::InvalidArgument;
+    };
+    let Some(bytes) = bytes_arg(data, len) else {
+        return WeftStatus::InvalidArgument;
+    };
+    guard(|| {
+        use automerge::sync::SyncDoc;
+        let Ok(message) = automerge::sync::Message::decode(bytes) else {
+            return WeftStatus::CorruptData;
+        };
+        match doc.inner.sync().receive_sync_message(&mut state.0, message) {
+            Ok(()) => WeftStatus::Ok,
+            Err(_) => WeftStatus::CorruptData,
+        }
+    })
+}
+
+/// Describes the changes made since `heads` (all changes for empty heads) as a codec list of
+/// maps `{hash: bytes, actor: str (hex), message: str, time: int}`, in causal order.
+#[no_mangle]
+pub unsafe extern "C" fn weft_doc_changes_info(
+    doc: *mut WeftDoc,
+    heads: *const u8,
+    heads_len: usize,
+    out: *mut WeftBytes,
+) -> WeftStatus {
+    let (Some(doc), Some(out)) = (doc.as_mut(), out.as_mut()) else {
+        return WeftStatus::InvalidArgument;
+    };
+    *out = WeftBytes::empty();
+    let Some(raw) = bytes_arg(heads, heads_len) else {
+        return WeftStatus::InvalidArgument;
+    };
+    let Ok(before) = ops::parse_heads(raw) else {
+        return WeftStatus::InvalidArgument;
+    };
+    guard(|| {
+        let list = doc
+            .inner
+            .get_changes(&before)
+            .iter()
+            .map(|c| {
+                codec::Value::Map(vec![
+                    (
+                        "actor".into(),
+                        codec::Value::Str(c.actor_id().to_hex_string()),
+                    ),
+                    ("hash".into(), codec::Value::Bytes(c.hash().0.to_vec())),
+                    (
+                        "message".into(),
+                        codec::Value::Str(c.message().unwrap_or_default().to_string()),
+                    ),
+                    ("time".into(), codec::Value::Int(c.timestamp())),
+                ])
+            })
+            .collect();
+        let mut w = codec::Writer::default();
+        w.value(&codec::Value::List(list));
+        *out = WeftBytes::from_vec(w.buf);
+        WeftStatus::Ok
+    })
+}
+
+/// Writes the 32-byte hash of one encoded change chunk to `out32`.
+#[no_mangle]
+pub unsafe extern "C" fn weft_change_hash(
+    data: *const u8,
+    len: usize,
+    out32: *mut u8,
+) -> WeftStatus {
+    let Some(bytes) = bytes_arg(data, len) else {
+        return WeftStatus::InvalidArgument;
+    };
+    if out32.is_null() {
+        return WeftStatus::InvalidArgument;
+    }
+    guard(|| match automerge::Change::from_bytes(bytes.to_vec()) {
+        Ok(c) => {
+            ptr::copy_nonoverlapping(c.hash().0.as_ptr(), out32, 32);
+            WeftStatus::Ok
+        }
+        Err(_) => WeftStatus::CorruptData,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // BLAKE3 content hashing for media blobs (spec 03 §4.5, 05 §8). Lives here so
 // the client links one Rust library.
 
@@ -633,6 +768,96 @@ pub unsafe extern "C" fn weft_hasher_finish_hex(
 pub unsafe extern "C" fn weft_hasher_free(hasher: *mut WeftHasher) {
     if !hasher.is_null() {
         drop(Box::from_raw(hasher));
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    fn put_str(doc: *mut WeftDoc, key: &str, v: &str) {
+        let mut p = codec::Writer::default();
+        p.tag(0);
+        p.raw_str(key);
+        let mut val = codec::Writer::default();
+        val.value(&codec::Value::Str(v.into()));
+        unsafe {
+            assert_eq!(
+                weft_doc_put(
+                    doc,
+                    p.buf.as_ptr(),
+                    p.buf.len(),
+                    val.buf.as_ptr(),
+                    val.buf.len()
+                ),
+                WeftStatus::Ok
+            );
+            assert!(weft_doc_commit(doc, b"m".as_ptr(), 1, 0) > 0);
+        }
+    }
+
+    fn heads(doc: *mut WeftDoc) -> Vec<u8> {
+        let mut out = WeftBytes::empty();
+        unsafe {
+            weft_doc_heads(doc, &mut out);
+            let v = slice::from_raw_parts(out.data, out.len).to_vec();
+            weft_bytes_free(out);
+            v
+        }
+    }
+
+    #[test]
+    fn two_documents_converge_through_sync_messages() {
+        let a = weft_doc_new();
+        let b = weft_doc_new();
+        put_str(a, "x", "from a");
+        put_str(b, "y", "from b");
+        let (sa, sb) = (weft_sync_state_new(), weft_sync_state_new());
+        unsafe {
+            for _ in 0..10 {
+                let mut progressed = false;
+                for (from, state_from, to, state_to) in [(a, sa, b, sb), (b, sb, a, sa)] {
+                    let mut m = WeftBytes::empty();
+                    if weft_doc_sync_generate(from, state_from, &mut m) == WeftStatus::Ok {
+                        progressed = true;
+                        assert_eq!(
+                            weft_doc_sync_receive(to, state_to, m.data, m.len),
+                            WeftStatus::Ok
+                        );
+                        weft_bytes_free(m);
+                    }
+                }
+                if !progressed {
+                    break;
+                }
+            }
+            assert_eq!(heads(a), heads(b));
+            let mut info = WeftBytes::empty();
+            assert_eq!(
+                weft_doc_changes_info(a, ptr::null(), 0, &mut info),
+                WeftStatus::Ok
+            );
+            let v = codec::decode_value(slice::from_raw_parts(info.data, info.len)).unwrap();
+            weft_bytes_free(info);
+            let codec::Value::List(items) = v else {
+                panic!()
+            };
+            assert_eq!(items.len(), 2);
+
+            let mut last = WeftBytes::empty();
+            assert_eq!(weft_doc_last_local_change(a, &mut last), WeftStatus::Ok);
+            let mut hash = [0u8; 32];
+            assert_eq!(
+                weft_change_hash(last.data, last.len, hash.as_mut_ptr()),
+                WeftStatus::Ok
+            );
+            weft_bytes_free(last);
+            assert_eq!(weft_doc_has_change(b, hash.as_ptr()), 1);
+            weft_sync_state_free(sa);
+            weft_sync_state_free(sb);
+            weft_doc_free(a);
+            weft_doc_free(b);
+        }
     }
 }
 

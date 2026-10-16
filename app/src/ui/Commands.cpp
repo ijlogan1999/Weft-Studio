@@ -78,6 +78,11 @@ std::vector<CommandInfo> build()
         { Cmd::saveAs, "Save As", "Ctrl+Shift+S", { key ('S', ctrl | shift) } },
         { Cmd::projectSettings, "Project Settings", "", {} },
         { Cmd::audioSettings, "Audio & MIDI Settings", "", {} },
+        { Cmd::shareProject, "Share Project...", "", {} },
+        { Cmd::joinProject, "Join from Invite Link...", "", {} },
+        { Cmd::signIn, "Sign In...", "", {} },
+        { Cmd::signOut, "Sign Out", "", {} },
+        { Cmd::goOffline, "Go Offline", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

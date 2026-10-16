@@ -28,7 +28,9 @@ enum class Cmd
     // Bounce (M8).
     bounce,
     // Projects and preferences (M9).
-    newProject, openProject, saveAs, projectSettings, audioSettings
+    newProject, openProject, saveAs, projectSettings, audioSettings,
+    // Collaboration (M10).
+    shareProject, joinProject, signIn, signOut, goOffline
 };
 
 struct CommandInfo

@@ -67,16 +67,35 @@ public:
     doc::Document& document() noexcept { return doc; }
     const doc::Document& document() const noexcept { return doc; }
     const UserId& user() const noexcept { return userId; }
+    /** The user new changes are attributed to: the relay account once signed in (03 §1.2:
+        a local project's user is linked to the account when it's shared). */
+    void setUser (UserId user) { userId = std::move (user); }
     Id newId() { return ids.next(); }
 
     /** Called with each local change's bytes after commit (the recovery log listens here). */
     std::function<void (const doc::Bytes& change, std::int64_t timeMs)> onLocalChange;
+    /** More listeners for local changes (the sync client). Returns a handle for removal. */
+    int addLocalChangeListener (std::function<void (const doc::Bytes& change)> fn);
+    void removeLocalChangeListener (int handle);
+
+    /** What this user may change in a shared project (spec 05 §3.2). */
+    enum class Access
+    {
+        full,         // Owner and Editor
+        commentsOnly, // Viewer: only collab.comments and collab.chat (D-COL-2)
+        none          // removed from the project: read-only
+    };
+    void setAccess (Access a, std::string reason = {});
+    Access access() const noexcept { return accessLevel; }
+    const std::string& accessMessage() const noexcept { return accessReason; }
 
     // Remote/merged changes ---------------------------------------------------
     /** Applies changes from elsewhere and refreshes the projection. Not undoable. */
     doc::Status applyChanges (std::span<const std::uint8_t> changes);
     /** Re-reads the whole document (after a merge or load). */
     void reproject();
+    /** Applies a sync message from the relay and refreshes the projection. Not undoable. */
+    doc::Status receiveSyncMessage (doc::SyncState& state, std::span<const std::uint8_t> message);
 
     // Undo ----------------------------------------------------------------------
     bool canUndo() const noexcept { return ! undoStack.empty() && ! gesture; }
@@ -91,6 +110,11 @@ public:
     bool inGesture() const noexcept { return gesture.has_value(); }
     void endGesture();
     void cancelGesture();
+
+    /** Writes collab.relayUrl (03 §9) when the project is shared; empty clears it. Not undoable. */
+    EditResult setRelayUrl (const std::string& url);
+    /** collab.relayUrl, or empty for a project that was never shared. */
+    std::string relayUrl() const;
 
     /** Runs fn as one undoable change. fn returns false to reject (its writes are rolled back). */
     EditResult edit (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn);
@@ -317,7 +341,9 @@ private:
 
     EditResult run (std::string_view name, const std::function<EditResult (TxnWriter&)>& fn);
     std::optional<Id> runCreate (std::string_view name, Id id, const std::function<EditResult (TxnWriter&)>& fn);
-    void finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo);
+    /** Commits txn; false (and rolled back) when this user's access doesn't allow it. */
+    bool finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo);
+    bool allowed (const Txn& txn) const;
     void refreshFor (const Txn& txn);
     UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
     void stamp (TxnWriter& w, const Id& regionId);
@@ -342,5 +368,9 @@ private:
     std::string resolveOpId (std::string opId) const;
     std::optional<Gesture> gesture;
     std::string error;
+    Access accessLevel = Access::full;
+    std::string accessReason;
+    std::map<int, std::function<void (const doc::Bytes&)>> changeListeners;
+    int nextListener = 1;
 };
 } // namespace weft::commands

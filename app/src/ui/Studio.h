@@ -8,6 +8,8 @@
 
 #include "weft/arrange/Grid.h"
 #include "weft/arrange/Selection.h"
+#include "weft/collab/Relay.h"
+#include "weft/collab/SyncClient.h"
 #include "weft/commands/LocalView.h"
 #include "weft/commands/Session.h"
 #include "weft/engine/arrange/Import.h"
@@ -321,11 +323,58 @@ public:
     /** The user's name for MP3 tags until accounts arrive (M10). */
     std::string userDisplayName;
 
+    // Collaboration (M10, 05 §3) ---------------------------------------------------------------
+    /** The relay account, kept in the settings folder; empty while signed out. */
+    const collab::Account& account() const noexcept { return relayAccount; }
+    bool signedIn() const noexcept { return relayAccount.signedIn(); }
+    /** After Sign In / Create Account: keeps the account; new edits are attributed to it and a shared project starts syncing. */
+    void signedInAs (const collab::Account& account);
+    /** Share › Sign Out: forgets the tokens and stops syncing (the project keeps working locally). */
+    void signOut();
+    /** The project is on a relay (collab.relayUrl is set). */
+    bool shared() const;
+    /** Share Project (04 §9.2): registers the project on the relay with this user as Owner and starts syncing. */
+    bool shareProject (std::string* error = nullptr);
+    /** Opens a project from an invite link: accepts the invite, downloads the project into
+        `parent` (the projects folder by default) as `<name>.weft` and opens it, syncing. */
+    bool joinProject (const std::string& inviteLink, std::string* error = nullptr, std::filesystem::path parent = {});
+    /** The live connection to the relay, or null (local project, signed out). */
+    collab::SyncClient* sync() noexcept { return syncClient.get(); }
+    const collab::SyncClient* sync() const noexcept { return syncClient.get(); }
+    /** Status bar sync state (04 §10): "Local only", "Synced", "Offline – 3 changes pending"... */
+    juce::String syncStatus() const;
+    /** Clicking the sync state (04 §10): relay URL, last sync time and pending change count. */
+    juce::String syncDetails() const;
+    /** Share › Go Offline: edits keep working and are sent when going back online. */
+    void setOnline (bool online);
+    bool online() const noexcept { return wantOnline; }
+    /** Why the project is read-only here (a Viewer, removed from the project), or empty. */
+    juce::String readOnlyReason() const;
+    /** Calls the relay as this account; refreshed tokens are saved afterwards. */
+    template <typename Fn>
+    auto withRelay (Fn&& fn)
+    {
+        collab::RelayApi api (relayAccount);
+        auto result = fn (api);
+        saveAccount();
+        return result;
+    }
+    /** Where the account is kept (the settings folder). */
+    std::filesystem::path accountFile() const { return settingsFolder() / "relay-account.bin"; }
+
     /** "Remove bus and N sends?" (W-7 step 6) for a bus; empty when no question is needed. */
     juce::String deleteTrackQuestion (const Id& trackId) const;
     bool deleteTrack (const Id& trackId);
 
 private:
+    void startSync();
+    void remoteChanged();
+    void saveAccount();
+    void loadAccount();
+    collab::Account relayAccount;
+    std::unique_ptr<collab::SyncClient> syncClient;
+    bool wantOnline = true;
+
     void syncEngine();
     void adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::unique_ptr<commands::Session> session, bool isScratch);
     void releaseProject();

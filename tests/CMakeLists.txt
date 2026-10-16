@@ -43,6 +43,13 @@ add_executable(weft_engine_tests
 target_link_libraries(weft_engine_tests PRIVATE weft::engine weft::codec Catch2::Catch2WithMain)
 catch_discover_tests(weft_engine_tests)
 
+# [S] sync tests: clients with real Sessions against a weft-relay process on localhost.
+add_executable(weft_sync_tests sync/SyncTests.cpp)
+target_link_libraries(weft_sync_tests PRIVATE weft::collab weft::engine Catch2::Catch2WithMain)
+target_compile_definitions(weft_sync_tests PRIVATE WEFT_RELAY_EXE="$<TARGET_FILE:weft-relay>")
+add_dependencies(weft_sync_tests weft-relay)
+catch_discover_tests(weft_sync_tests PROPERTIES TIMEOUT 600)
+
 # AT-SYS-1 (build check part): every linked dependency is in the license manifest
 # and THIRD_PARTY.md is up to date.
 get_property(fetched GLOBAL PROPERTY WEFT_FETCHED_DEPS)
@@ -86,12 +93,13 @@ endif()
 # [UI] tests: the arrange window, headless. Linux needs a virtual X server (xvfb-run).
 if(WEFT_WITH_JUCE)
     add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp
-                                 ui/MixerUiTests.cpp ui/AutomationUiTests.cpp ui/BounceUiTests.cpp ui/ProjectUiTests.cpp)
+                                 ui/MixerUiTests.cpp ui/AutomationUiTests.cpp ui/BounceUiTests.cpp ui/ProjectUiTests.cpp ui/ShareUiTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
     # The mixer and plug-in manager tests host the fixture plug-ins through the real scanner.
-    add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3)
+    add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3 weft-relay)
     target_compile_definitions(weft_ui_tests PRIVATE
         "WEFT_SCANNER=\"$<TARGET_FILE:weft-plugin-scanner>\""
+        "WEFT_RELAY_EXE=\"$<TARGET_FILE:weft-relay>\""
         "WEFT_FIXTURE_TESTGAIN=\"$<GENEX_EVAL:$<TARGET_PROPERTY:TestGain_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\""
         "WEFT_FIXTURE_TESTSYNTH=\"$<GENEX_EVAL:$<TARGET_PROPERTY:TestSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\"")
     if(WIN32 OR APPLE)

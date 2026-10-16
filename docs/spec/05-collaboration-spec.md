@@ -100,6 +100,16 @@ Messages are binary frames: 1-byte type + payload (CBOR for envelopes, raw bytes
 - Relay handles ≥ 50 concurrent rooms × 8 clients on a 2-vCPU instance.
 - Document load for a 200-track, 5,000-region, 200,000-note project ≤ 3 s on a mid-range laptop.
 
+### 3.6 Decisions made while building the relay (M10)
+- **Decision D-COL-14:** invites are links. The Share dialog creates a link for a role (Editor or Viewer) to copy and send; the relay sends no email in MVP, so the "invite by email" field of 04 §9.2 is the link field. Links are random 256-bit tokens stored on the relay with their role and expiry (7 days), which makes them unguessable, revocable and checkable without a signing key on clients.
+- **Decision D-COL-15:** a drag is one change. A gesture (fader, region drag) is one CRDT transaction committed on release (D-ARCH-6), so collaborators see the final value rather than the drag in progress, and a 2 s drag is one change (AT-COL-6). Remote changes that arrive during your own drag are applied after release (D-COL-3).
+- **Decision D-COL-16:** M10 shares the document only. Media upload and download, and the "N MB of audio" in the share question, arrive with blob sync in M11; until then the Share dialog says audio stays on this computer.
+- **Decision D-COL-17:** un-ACKed changes are remembered by hash in `<project>/Cache/sync-pending.txt`. The changes themselves are in the document (or the recovery log after a crash), and the sync exchange on reconnect sends whatever the relay lacks; the pending list drives "Offline – N changes pending". The status is "Synced" once the relay has acknowledged every local change and the client holds every head the relay last reported.
+- **Decision D-COL-18:** a reconnect that brings in more than one collaborator change shows "Merged N changes from collaborators" (§13).
+- **Decision D-COL-19:** the signed-in account (relay, email, display name and tokens) is kept in the per-user settings folder. New edits are attributed to the account's user id once signed in (03 §1.2); signing out keeps the project working locally.
+- **Decision D-COL-20:** Share dialog calls to the relay block the window for at most their timeout in M10; they move to the background transfer thread with M11.
+- **Decision D-COL-21:** clients send their own changes through the `SYNC` exchange (batched at most every 50 ms) rather than as bare `CHANGE` frames; the relay still fans changes out to other clients as `CHANGE`. A bare change can reach the relay before one it depends on (made before a reconnect, say), and then waits there unapplied; the sync exchange always sends dependencies first. A client that receives a `CHANGE` it can't apply yet resumes the sync exchange to fetch what it's missing.
+
 ---
 
 ## 4. Document and merge semantics
@@ -347,3 +357,11 @@ Conclusion: with optimistic local overhead (~5 ms, uncompressed PCM, tiny jitter
 | D-COL-11 | Partially downloaded media plays its available prefix; missing parts are silent. |
 | D-COL-12 | Restore is a forward change; history is never rewritten. |
 | D-COL-13 | Track input assignments are shared. |
+| D-COL-14 | Invites are unguessable stored links with a role and expiry; no email delivery in MVP. |
+| D-COL-15 | A drag is one change, sent on release. |
+| D-COL-16 | M10 shares the document only; media sync is M11. |
+| D-COL-17 | Pending changes are tracked by hash in Cache/sync-pending.txt; "Synced" means ACKed and caught up. |
+| D-COL-18 | "Merged N changes from collaborators" after a reconnect with more than one remote change. |
+| D-COL-19 | The account lives in the settings folder; edits are attributed to it once signed in. |
+| D-COL-20 | Share dialog relay calls block briefly in M10. |
+| D-COL-21 | Clients send their changes through the sync exchange; the relay fans out CHANGE frames. |

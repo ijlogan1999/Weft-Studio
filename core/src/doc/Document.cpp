@@ -194,4 +194,51 @@ std::optional<OpStamp> OpStamp::parse (std::string_view opId)
     s.actor = std::string (opId.substr (at + 1));
     return s;
 }
+
+SyncState::SyncState() : state (weft_sync_state_new()) {}
+SyncState::SyncState (SyncState&& other) noexcept : state (std::exchange (other.state, nullptr)) {}
+SyncState& SyncState::operator= (SyncState&& other) noexcept
+{
+    if (this != &other)
+    {
+        weft_sync_state_free (state);
+        state = std::exchange (other.state, nullptr);
+    }
+    return *this;
+}
+SyncState::~SyncState() { weft_sync_state_free (state); }
+
+std::optional<Bytes> changeHash (std::span<const std::uint8_t> change)
+{
+    Bytes out (32);
+    if (weft_change_hash (change.data(), change.size(), out.data()) != WEFT_OK)
+        return std::nullopt;
+    return out;
+}
+
+std::optional<Bytes> Document::generateSyncMessage (SyncState& state)
+{
+    WeftBytes out {};
+    if (weft_doc_sync_generate (doc, state.handle(), &out) != WEFT_OK)
+        return std::nullopt;
+    return takeBytes (out);
+}
+
+Status Document::receiveSyncMessage (SyncState& state, std::span<const std::uint8_t> message)
+{
+    return toStatus (weft_doc_sync_receive (doc, state.handle(), message.data(), message.size()));
+}
+
+std::vector<ChangeInfo> Document::changesSince (std::span<const std::uint8_t> since) const
+{
+    WeftBytes out {};
+    if (weft_doc_changes_info (doc, since.data(), since.size(), &out) != WEFT_OK)
+        return {};
+    const auto bytes = takeBytes (out);
+    std::vector<ChangeInfo> result;
+    if (const auto v = decode (bytes))
+        for (const auto& item : v->asList())
+            result.push_back ({ item["hash"].asBytes(), item["actor"].asString(), item["message"].asString(), item["time"].asInt() });
+    return result;
+}
 } // namespace weft::doc
