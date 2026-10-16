@@ -7,6 +7,14 @@
 
 namespace weft::ui
 {
+/** False in the headless UI tests: plug-in windows and questions are built but never put on
+    the desktop (a virtual X server without a window manager rejects them). */
+inline bool& desktopWindows()
+{
+    static bool on = true;
+    return on;
+}
+
 /** Names the control for accessibility and gives it "Name (Shortcut)" as its tooltip. */
 inline void describe (juce::Component& c, const juce::String& name, const juce::String& tooltip = {})
 {

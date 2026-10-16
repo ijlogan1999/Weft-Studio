@@ -1,7 +1,9 @@
 #include "weft/engine/transport/Engine.h"
 
 #include "weft/commands/Session.h"
+#include "weft/engine/dsp/BuiltinEffects.h"
 #include "weft/engine/dsp/WeftKeys.h"
+#include "weft/media/Blobs.h"
 #include "weft/media/Resample.h"
 #include "weft/engine/record/RecordLayout.h"
 #include "weft/media/Hash.h"
@@ -11,10 +13,29 @@
 #include <cmath>
 #include <ctime>
 
+#if defined(__SSE__) || defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__)
+    #include <xmmintrin.h>
+    #define WEFT_HAS_MXCSR 1
+#endif
+
 namespace weft::engine
 {
 namespace
 {
+/** Flushes denormals to zero while the audio thread processes a block (AT-PLG-9). */
+struct ScopedNoDenormals
+{
+#if WEFT_HAS_MXCSR
+    ScopedNoDenormals() noexcept : saved (_mm_getcsr()) { _mm_setcsr (saved | 0x8040); } // FTZ | DAZ
+    ~ScopedNoDenormals() { _mm_setcsr (saved); }
+    unsigned saved;
+#endif
+};
+
+bool same (double a, double b) noexcept { return ! (a < b) && ! (b < a); }
+
+bool nearly (float a, float b) noexcept { return std::abs (a - b) < 1.0e-9f; }
+
 ClickDuring duringFromString (const std::string& s)
 {
     if (s == "play")
@@ -43,12 +64,149 @@ Engine::Engine (MediaPool& media, InstrumentRack& instruments)
                   [this] { return running.load(); } })
 {
     setSettings (currentSettings);
-    instrumentFactory = [] (const model::Track& track) -> std::shared_ptr<Instrument> {
+    instrumentFactory = [this] (const model::Track& track) -> std::shared_ptr<Instrument> {
         const auto& inst = track.strip.instrument;
-        if (! inst || (inst->format == "builtin" && inst->pluginUid == WeftKeys::pluginUid))
+        if (! inst)
             return std::make_shared<WeftKeys>();
-        return nullptr; // hosted instruments: M6
+        return makeProcessor (*inst, true, pluginFactory);
     };
+}
+
+std::shared_ptr<Processor> Engine::makeProcessor (const model::PluginInstance& plugin, bool instrument, const PluginFactory& hosted)
+{
+    if (plugin.format == "builtin")
+    {
+        if (auto p = createBuiltin (plugin.pluginUid))
+            return p;
+    }
+    else if (hosted)
+    {
+        if (auto p = hosted (plugin, instrument))
+            return p;
+    }
+    return std::make_shared<PlaceholderProcessor> (instrument);
+}
+
+std::shared_ptr<Processor> Engine::processor (const Id& pluginId) const
+{
+    if (const auto slot = effects.find (pluginId))
+        return slot->processor;
+    if (lastModel)
+        for (const auto& [id, track] : lastModel->tracks)
+            if (track->strip.instrument && track->strip.instrument->id == pluginId)
+                if (const auto slot = rack.find (id))
+                    return slot->shared();
+    return nullptr;
+}
+
+InstrumentSlot::Applied* Engine::appliedFor (const Id& pluginId)
+{
+    if (const auto slot = effects.find (pluginId))
+        return &slot->applied;
+    if (lastModel)
+        for (const auto& [id, track] : lastModel->tracks)
+            if (track->strip.instrument && track->strip.instrument->id == pluginId)
+                if (const auto slot = rack.find (id))
+                    return &slot->applied;
+    return nullptr;
+}
+
+void Engine::adoptPluginParams (const Id& pluginId, const std::vector<std::pair<std::string, double>>& values)
+{
+    if (auto* applied = appliedFor (pluginId))
+        for (const auto& [id, v] : values)
+            applied->params[id] = v;
+}
+
+void Engine::adoptPluginState (const Id& pluginId, std::vector<std::uint8_t> state)
+{
+    if (auto* applied = appliedFor (pluginId))
+        applied->state = std::move (state);
+}
+
+void Engine::applyPlugin (Processor& p, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin)
+{
+    if (p.isPlaceholder())
+        return; // keeps the document's state untouched (F-PLG-15)
+    // The state chunk is the source of truth (03 §5.2); params are applied on top as they change.
+    auto bytes = media::pluginStateBytes (plugin.state, projectFolder / "Blobs");
+    if (bytes != applied.state)
+    {
+        if (bytes)
+            p.setState (*bytes);
+        applied.state = std::move (bytes);
+        applied.params.clear();
+    }
+    std::vector<ParameterInfo> infos;
+    // A parameter that left the model (undoing its first change) goes back to what the state
+    // chunk says, or to its default when there is none.
+    std::vector<std::string> removed;
+    for (const auto& [paramId, value] : applied.params)
+        if (! plugin.params.contains (paramId))
+            removed.push_back (paramId);
+    if (! removed.empty())
+    {
+        if (applied.state)
+            p.setState (*applied.state);
+        else
+        {
+            infos = p.parameters();
+            for (const auto& paramId : removed)
+                for (std::size_t i = 0; i < infos.size(); ++i)
+                    if (infos[i].id == paramId)
+                        p.setParameter (static_cast<int> (i), infos[i].defaultValue);
+        }
+        applied.params.clear();
+    }
+    if (plugin.params.empty())
+        return;
+    for (const auto& [paramId, value] : plugin.params)
+    {
+        const auto it = applied.params.find (paramId);
+        if (it != applied.params.end() && same (it->second, value))
+            continue;
+        if (infos.empty())
+            infos = p.parameters();
+        for (std::size_t i = 0; i < infos.size(); ++i)
+            if (infos[i].id == paramId)
+                p.setParameter (static_cast<int> (i), value);
+        applied.params[paramId] = value;
+    }
+}
+
+void Engine::syncPlugins()
+{
+    std::set<Id> instrumentTracks, pluginIds;
+    std::vector<Id> trackIds;
+    for (const auto& [id, track] : lastModel->tracks)
+    {
+        trackIds.push_back (id);
+        if (track->kind == model::TrackKind::instrument && instrumentFactory)
+        {
+            instrumentTracks.insert (id);
+            const auto& inst = track->strip.instrument;
+            const auto key = inst ? inst->id + "|" + inst->format + "|" + inst->pluginUid : std::string ("default");
+            auto slot = rack.find (id);
+            // Slots set by hand (empty key) stay; a different plug-in in the slot replaces the instrument (F-MIX-7).
+            if (! slot || (! slot->key.empty() && slot->key != key))
+                if (auto instrument = instrumentFactory (*track))
+                    slot = rack.set (id, std::move (instrument), key);
+            if (slot && ! slot->key.empty() && inst)
+                applyPlugin (slot->instrument(), slot->applied, *inst);
+        }
+        for (const auto& plugin : track->strip.inserts)
+        {
+            pluginIds.insert (plugin.id);
+            const auto key = plugin.format + "|" + plugin.pluginUid;
+            auto slot = effects.find (plugin.id);
+            if (! slot || slot->key != key)
+                slot = effects.set (plugin.id, makeProcessor (plugin, false, pluginFactory), key);
+            applyPlugin (*slot->processor, slot->applied, plugin);
+        }
+    }
+    rack.prune (instrumentTracks);
+    effects.prune (pluginIds);
+    mixer.prune (trackIds);
 }
 
 Engine::~Engine()
@@ -69,13 +227,10 @@ void Engine::setProject (const model::ProjectModel& model)
 
 void Engine::refresh()
 {
-    if (lastModel && instrumentFactory)
-        for (const auto& [id, track] : lastModel->tracks)
-            if (track->kind == model::TrackKind::instrument && ! rack.find (id))
-                if (auto instrument = instrumentFactory (*track))
-                    rack.set (id, std::move (instrument));
-    if (lastModel)
-        publish (compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, rack, local));
+    if (! lastModel)
+        return;
+    syncPlugins();
+    publish (compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, { rack, effects, mixer }, local));
 }
 
 void Engine::publish (std::unique_ptr<EngineSnapshot> snapshot)
@@ -454,15 +609,17 @@ void Engine::setSelectedTrack (const Id& trackId)
 
 Engine::Meter Engine::takeMeter (const Id& trackId)
 {
-    if (! live)
+    const auto state = trackId.empty() ? (live ? live->masterState : nullptr) : mixer.find (trackId);
+    if (! state)
         return {};
-    if (trackId.empty())
-        return { live->masterMeter.output.exchange (0), 0 };
-    const auto i = live->channelIndex (trackId);
-    if (i < 0)
-        return {};
-    auto& m = live->meters[static_cast<std::size_t> (i)];
-    return { m.output.exchange (0), m.input.exchange (0) };
+    auto& m = state->meter;
+    return { m.peak.exchange (0), m.input.exchange (0), m.clip.load() };
+}
+
+void Engine::resetClip (const Id& trackId)
+{
+    if (const auto state = trackId.empty() ? (live ? live->masterState : nullptr) : mixer.find (trackId))
+        state->meter.clip.store (false);
 }
 
 void Engine::setRecordCapacitySeconds (double seconds) { recordSeconds = std::max (0.0, seconds); }
@@ -483,8 +640,11 @@ void Engine::prepare (const DeviceConfig& config)
     deviceLatency = config.inputLatency + config.outputLatency;
     events.clear();
     events.reserve (1024);
+    scratchLeft.assign (block, 0.0f);
+    scratchRight.assign (block, 0.0f);
     metronome.prepare (rate);
     rack.prepare (rate, maxBlock);
+    effects.prepare (rate, maxBlock);
 
     if (oldRate != rate)
     {
@@ -593,6 +753,7 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
 void Engine::process (const float* const* inputs, float* const* outputs, int numFrames) noexcept
 {
     const auto started = std::chrono::steady_clock::now();
+    const ScopedNoDenormals noDenormals;
     for (int ch = 0; ch < numOutputs; ++ch)
         std::fill_n (outputs[ch], numFrames, 0.0f);
     if (numFrames <= 0 || numFrames > maxBlock)
@@ -667,21 +828,30 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
             }
         }
 
-        const float master = snap->masterGain;
+        // Master (F-MIX-11): inserts process the whole mix, then the fader, ramped over the block.
+        runInserts (snap->masterInserts, mix[0].data(), mix[1].data(), numFrames);
+        const float target = snap->masterGain;
+        const float start = masterGainSet ? masterGainNow : target;
+        masterGainNow = target;
+        masterGainSet = true;
         float masterPeak = 0;
+        for (int i = 0; i < numFrames; ++i)
+        {
+            const float g = start + (target - start) * static_cast<float> (i + 1) / static_cast<float> (numFrames);
+            const auto k = static_cast<std::size_t> (i);
+            mix[0][k] *= g;
+            mix[1][k] *= g;
+            masterPeak = std::max ({ masterPeak, std::abs (mix[0][k]), std::abs (mix[1][k]) });
+        }
         for (std::size_t ch = 0; ch < 2; ++ch)
-            for (int i = 0; i < numFrames; ++i)
-            {
-                const float v = mix[ch][static_cast<std::size_t> (i)] * master;
-                masterPeak = std::max (masterPeak, std::abs (v));
-                if (static_cast<int> (ch) < numOutputs)
-                    outputs[ch][i] = v + mix[2][static_cast<std::size_t> (i)];
-            }
+            if (static_cast<int> (ch) < numOutputs)
+                for (int i = 0; i < numFrames; ++i)
+                    outputs[ch][i] = mix[ch][static_cast<std::size_t> (i)] + mix[2][static_cast<std::size_t> (i)];
         if (numOutputs == 1) // mono device: fold right into left
             for (int i = 0; i < numFrames; ++i)
-                outputs[0][i] += mix[1][static_cast<std::size_t> (i)] * master;
-        if (masterPeak > snap->masterMeter.output.load (std::memory_order_relaxed))
-            snap->masterMeter.output.store (masterPeak, std::memory_order_relaxed);
+                outputs[0][i] += mix[1][static_cast<std::size_t> (i)];
+        if (snap->masterState)
+            snap->masterState->meter.add (masterPeak);
     }
 
     // File preview, after the master fader.
@@ -843,6 +1013,13 @@ bool Engine::monitoring (const ChannelPlan& channel) const noexcept
     return channel.armed && transport != TransportState::playing;
 }
 
+void Engine::runInserts (const std::vector<InsertPlan>& inserts, float* left, float* right, int frames) noexcept
+{
+    float* io[2] = { left, right };
+    for (const auto& insert : inserts)
+        insert.slot->processor->process ({}, io, 2, frames);
+}
+
 void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs, std::int64_t from, int offset, int frames, bool timeline) noexcept
 {
     const auto count = snap.channels.size();
@@ -852,6 +1029,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
     for (std::size_t i = 0; i < count; ++i)
     {
         const auto& ch = snap.channels[i];
+        auto& state = *ch.state;
         float* left = snap.buffers[2 * i].data();
         float* right = snap.buffers[2 * i + 1].data();
         const bool mono = ch.sourceChannels == 1;
@@ -870,7 +1048,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                 float p = 0;
                 for (int k = 0; k < frames; ++k)
                     p = std::max ({ p, std::abs (inL[k]), std::abs (inR[k]) });
-                auto& m = snap.meters[i].input;
+                auto& m = state.meter.input;
                 if (p > m.load (std::memory_order_relaxed))
                     m.store (p, std::memory_order_relaxed);
             }
@@ -882,26 +1060,66 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                         right[k] += inR[k];
                 }
         }
+
+        // Inserts (W-6). A mono channel runs them in stereo and folds the result back to mono (D-W6-4).
+        if (! ch.inserts.empty())
+        {
+            if (mono)
+                std::copy_n (left, frames, right);
+            runInserts (ch.inserts, left, right, frames);
+            if (mono)
+                for (int k = 0; k < frames; ++k)
+                    left[k] = 0.5f * (left[k] + right[k]);
+        }
+
+        // Muted or solo-silenced: no output and no sends (D-W6-2). The delay lines still run on
+        // silence so nothing stale plays when the channel comes back, and the fader ramps up from 0.
         if (! ch.audible)
-            continue; // muted or solo-silenced: no output and no sends (D-W6-2)
+        {
+            std::fill_n (left, frames, 0.0f);
+            std::fill_n (right, frames, 0.0f);
+            state.gainLeft = state.gainRight = 0;
+            state.gainSet = true;
+        }
 
         const auto sendTo = [&] (const SendPlan& send, bool stereo) noexcept {
+            float* sl = scratchLeft.data();
+            float* sr = scratchRight.data();
+            for (int k = 0; k < frames; ++k)
+            {
+                sl[k] = left[k] * send.gain;
+                sr[k] = (stereo ? right[k] : left[k]) * send.gain;
+            }
+            if (send.delayLine)
+                send.delayLine->process (sl, sr, frames, send.delay, snap.fadeFrames);
             float* tl = snap.buffers[2 * static_cast<std::size_t> (send.target)].data();
             float* tr = snap.buffers[2 * static_cast<std::size_t> (send.target) + 1].data();
             for (int k = 0; k < frames; ++k)
             {
-                tl[k] += left[k] * send.gain;
-                tr[k] += (stereo ? right[k] : left[k]) * send.gain;
+                tl[k] += sl[k];
+                tr[k] += sr[k];
             }
         };
         for (const auto& send : ch.sends)
             if (send.pre)
                 sendTo (send, ! mono);
 
-        // Fader and pan: the channel becomes stereo here.
-        const float gl = ch.gain * ch.panLeft, gr = ch.gain * ch.panRight;
+        // Fader and pan: the channel becomes stereo here. Gain changes ramp across the span (AT-MIX-2).
+        const float targetL = ch.audible ? ch.gain * ch.panLeft : 0.0f, targetR = ch.audible ? ch.gain * ch.panRight : 0.0f;
+        const float startL = state.gainSet ? state.gainLeft : targetL, startR = state.gainSet ? state.gainRight : targetR;
+        state.gainLeft = targetL;
+        state.gainRight = targetR;
+        state.gainSet = true;
+        const bool ramp = ! nearly (startL, targetL) || ! nearly (startR, targetR);
         for (int k = 0; k < frames; ++k)
         {
+            float gl = targetL, gr = targetR;
+            if (ramp)
+            {
+                const float x = static_cast<float> (k + 1) / static_cast<float> (frames);
+                gl = startL + (targetL - startL) * x;
+                gr = startR + (targetR - startR) * x;
+            }
             const float l = left[k], r = mono ? left[k] : right[k];
             left[k] = l * gl;
             right[k] = r * gr;
@@ -913,9 +1131,11 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         float p = 0;
         for (int k = 0; k < frames; ++k)
             p = std::max ({ p, std::abs (left[k]), std::abs (right[k]) });
-        auto& m = snap.meters[i].output;
-        if (p > m.load (std::memory_order_relaxed))
-            m.store (p, std::memory_order_relaxed);
+        state.meter.add (p);
+
+        // Delay compensation for the output edge (F-MIX-13).
+        if (ch.outputDelayLine)
+            ch.outputDelayLine->process (left, right, frames, ch.outputDelay, snap.fadeFrames);
 
         float* outL = ch.output >= 0 ? snap.buffers[2 * static_cast<std::size_t> (ch.output)].data() : mix[0].data() + offset;
         float* outR = ch.output >= 0 ? snap.buffers[2 * static_cast<std::size_t> (ch.output) + 1].data() : mix[1].data() + offset;

@@ -227,6 +227,15 @@ EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
     return run ("Input Monitoring", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "monitor", Value (mode))); });
 }
 
+EditResult Session::setTrackAutomationMode (const Id& trackId, const std::string& mode)
+{
+    if (projection.track (trackId) == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (mode != "off" && mode != "read" && mode != "touch" && mode != "latch" && mode != "write")
+        return reject ("Automation mode is off, read, touch, latch or write.");
+    return run ("Automation Mode", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "automationMode", Value (mode))); });
+}
+
 EditResult Session::setTrackInput (const Id& trackId, const model::InputAssignment& input)
 {
     const auto* t = projection.track (trackId);
@@ -942,6 +951,8 @@ std::optional<Id> Session::addSend (const Id& trackId, const Id& busId, double l
         error = "Sends go to a bus.";
     else if (t->strip.sends.size() >= static_cast<std::size_t> (model::maxSends))
         error = "A channel strip holds up to " + std::to_string (model::maxSends) + " sends.";
+    else if (std::any_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.targetBusId == busId; }))
+        error = "This channel already sends to " + bus->name + "."; // W-7 step 7
     else if (wouldCycle (trackId, busId, {}))
         error = "That send would create a feedback loop.";
     else
@@ -974,6 +985,8 @@ EditResult Session::setSendTarget (const Id& trackId, const Id& sendId, const Id
     const auto* bus = projection.track (busId);
     if (bus == nullptr || bus->kind != TrackKind::bus)
         return reject ("Sends go to a bus.");
+    if (std::any_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.targetBusId == busId && s.id != sendId; }))
+        return reject ("This channel already sends to " + bus->name + ".");
     if (wouldCycle (trackId, busId, model::RoutingEdge { trackId, {}, sendId }.key()))
         return reject ("That send would create a feedback loop.");
     return run ("Send Destination", [&] (TxnWriter& w) {
@@ -987,6 +1000,153 @@ EditResult Session::removeSend (const Id& trackId, const Id& sendId)
     if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
         return reject ("That send no longer exists.");
     return run ("Remove Send", [&] (TxnWriter& w) { return wrote (w.listRemove (sendsPath (trackId), sendId)); });
+}
+
+EditResult Session::setSendPre (const Id& trackId, const Id& sendId, bool pre)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
+        return reject ("That send no longer exists.");
+    return run (pre ? "Pre-Fader Send" : "Post-Fader Send", [&] (TxnWriter& w) {
+        return wrote (w.put (sendsPath (trackId) / PathSegment::id (sendId) / "mode", Value (pre ? "pre" : "post")));
+    });
+}
+
+EditResult Session::setSendMuted (const Id& trackId, const Id& sendId, bool muted)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
+        return reject ("That send no longer exists.");
+    return run (muted ? "Mute Send" : "Unmute Send", [&] (TxnWriter& w) {
+        return wrote (w.put (sendsPath (trackId) / PathSegment::id (sendId) / "muted", Value (muted)));
+    });
+}
+
+std::string Session::nextBusName() const
+{
+    // W-7 step 2: "Bus N", N the lowest number no bus uses yet.
+    std::set<std::string> taken;
+    for (const auto& [id, t] : projection.tracks)
+        if (t->kind == TrackKind::bus)
+            taken.insert (t->name);
+    for (int n = 1;; ++n)
+        if (! taken.contains ("Bus " + std::to_string (n)))
+            return "Bus " + std::to_string (n);
+}
+
+std::optional<Id> Session::newBus (const Id& trackId, bool asSend)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId) || t->kind == TrackKind::master)
+    {
+        error = "That track can't route to a bus.";
+        return std::nullopt;
+    }
+    if (asSend && t->strip.sends.size() >= static_cast<std::size_t> (model::maxSends))
+    {
+        error = "A channel strip holds up to " + std::to_string (model::maxSends) + " sends.";
+        return std::nullopt;
+    }
+    model::Track bus;
+    bus.id = newId();
+    bus.kind = TrackKind::bus;
+    bus.name = nextBusName();
+    bus.color.palette = static_cast<int> (projection.tracks.size() % 24);
+    model::Send send;
+    send.id = newId();
+    send.targetBusId = bus.id;
+    model::OutputAssignment out;
+    out.busId = bus.id;
+    // The bus goes after the existing tracks; it outputs to the master at 0 dB (W-7 step 2, D-W7-2).
+    return runCreate ("New Bus", bus.id, [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (bus.id), bus.toValue())
+                 && w.listInsert (doc::path ({ keys::trackOrder }), projection.storedTrackOrder.size(), Value (bus.id), bus.id);
+        if (asSend)
+            good = good && w.listInsert (sendsPath (trackId), t->strip.sends.size(), send.toValue(), send.id);
+        else
+            good = good && w.put (trackPath (trackId) / "output", out.toValue());
+        return wrote (good);
+    });
+}
+
+std::size_t Session::sendsTo (const Id& busId) const
+{
+    std::size_t n = 0;
+    for (const auto& [id, t] : projection.tracks)
+        n += static_cast<std::size_t> (std::count_if (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.targetBusId == busId; }));
+    return n;
+}
+
+EditResult Session::moveInsert (const Id& trackId, const Id& pluginId, std::size_t newIndex)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr)
+        return reject ("That track no longer exists.");
+    const auto it = std::find_if (t->strip.inserts.begin(), t->strip.inserts.end(), [&] (const auto& p) { return p.id == pluginId; });
+    if (it == t->strip.inserts.end())
+        return reject ("That plug-in no longer exists.");
+    const auto plugin = *it;
+    const auto at = std::min (newIndex, t->strip.inserts.size() - 1);
+    return run ("Move Plug-in", [&] (TxnWriter& w) {
+        return wrote (w.listRemove (insertsPath (trackId), pluginId) && w.listInsert (insertsPath (trackId), at, plugin.toValue(), plugin.id));
+    });
+}
+
+std::optional<Id> Session::replaceInsert (const Id& trackId, const Id& pluginId, model::PluginInstance plugin)
+{
+    const auto* t = projection.track (trackId);
+    const auto it = t == nullptr ? std::vector<model::PluginInstance>::const_iterator {}
+                                 : std::find_if (t->strip.inserts.begin(), t->strip.inserts.end(), [&] (const auto& p) { return p.id == pluginId; });
+    if (t == nullptr || it == t->strip.inserts.end())
+    {
+        error = "That plug-in no longer exists.";
+        return std::nullopt;
+    }
+    if (plugin.pluginUid.empty())
+    {
+        error = "Choose a plug-in.";
+        return std::nullopt;
+    }
+    if (plugin.id.empty())
+        plugin.id = newId();
+    const auto at = static_cast<std::size_t> (it - t->strip.inserts.begin());
+    return runCreate ("Replace Plug-in", plugin.id, [&] (TxnWriter& w) {
+        return wrote (w.listRemove (insertsPath (trackId), pluginId) && w.listInsert (insertsPath (trackId), at, plugin.toValue(), plugin.id));
+    });
+}
+
+std::optional<Id> Session::setInstrument (const Id& trackId, model::PluginInstance plugin)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId) || t->kind != TrackKind::instrument)
+    {
+        error = "Only instrument tracks have an instrument slot.";
+        return std::nullopt;
+    }
+    if (plugin.pluginUid.empty())
+    {
+        error = "Choose an instrument.";
+        return std::nullopt;
+    }
+    if (plugin.id.empty())
+        plugin.id = newId();
+    // Replacing the instrument keeps the track's regions, inserts and sends (F-MIX-7).
+    return runCreate ("Set Instrument", plugin.id, [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "strip" / "instrument", plugin.toValue())); });
+}
+
+EditResult Session::setPluginState (const Id& trackId, const Id& pluginId, const Value& state)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr)
+        return reject ("That track no longer exists.");
+    Path base;
+    if (t->strip.instrument && t->strip.instrument->id == pluginId)
+        base = trackPath (trackId) / "strip" / "instrument";
+    else if (std::any_of (t->strip.inserts.begin(), t->strip.inserts.end(), [&] (const auto& p) { return p.id == pluginId; }))
+        base = insertsPath (trackId) / PathSegment::id (pluginId);
+    else
+        return reject ("That plug-in no longer exists.");
+    return run ("Plug-in Settings", [&] (TxnWriter& w) { return wrote (w.put (base / "state", state)); });
 }
 
 // Automation ------------------------------------------------------------------------

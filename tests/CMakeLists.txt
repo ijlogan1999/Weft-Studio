@@ -28,6 +28,7 @@ add_executable(weft_engine_tests
     engine/AllocationCounter.cpp
     engine/ArrangeEngineTests.cpp
     engine/ImportTests.cpp
+    engine/MixerEngineTests.cpp
     engine/NullDeviceTests.cpp
     engine/PianoRollEngineTests.cpp
     engine/RecordingTests.cpp
@@ -80,8 +81,15 @@ endif()
 
 # [UI] tests: the arrange window, headless. Linux needs a virtual X server (xvfb-run).
 if(WEFT_WITH_JUCE)
-    add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp)
+    add_executable(weft_ui_tests ui/UiMain.cpp ui/PanelTests.cpp ui/ArrangeUiTests.cpp ui/EditorTests.cpp ui/PianoRollUiTests.cpp
+                                 ui/MixerUiTests.cpp)
     target_link_libraries(weft_ui_tests PRIVATE weft::app_lib Catch2::Catch2)
+    # The mixer and plug-in manager tests host the fixture plug-ins through the real scanner.
+    add_dependencies(weft_ui_tests weft-plugin-scanner TestGain_VST3 TestSynth_VST3)
+    target_compile_definitions(weft_ui_tests PRIVATE
+        "WEFT_SCANNER=\"$<TARGET_FILE:weft-plugin-scanner>\""
+        "WEFT_FIXTURE_TESTGAIN=\"$<GENEX_EVAL:$<TARGET_PROPERTY:TestGain_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\""
+        "WEFT_FIXTURE_TESTSYNTH=\"$<GENEX_EVAL:$<TARGET_PROPERTY:TestSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\"")
     if(WIN32 OR APPLE)
         add_test(NAME ui-tests COMMAND weft_ui_tests)
     else()

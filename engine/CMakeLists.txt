@@ -3,7 +3,10 @@ add_library(weft_engine STATIC
     src/arrange/OfflineRender.cpp
     src/devices/NullDevice.cpp
     src/dsp/WeftKeys.cpp
+    src/dsp/BuiltinEffects.cpp
+    src/dsp/BuiltinProcessor.cpp
     src/graph/Instrument.cpp
+    src/graph/Mixer.cpp
     src/graph/SnapshotCompiler.cpp
     src/media/MediaPool.cpp
     src/media/MediaSource.cpp

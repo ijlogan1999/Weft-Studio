@@ -17,6 +17,7 @@ add_library(weft_core STATIC
     src/doc/Document.cpp
     src/doc/Path.cpp
     src/doc/Value.cpp
+    src/media/Blobs.cpp
     src/media/Hash.cpp
     src/media/Decoder.cpp
     src/media/MediaStore.cpp

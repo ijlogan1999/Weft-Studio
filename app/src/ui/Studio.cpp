@@ -2,6 +2,8 @@
 
 #include "Theme.h"
 
+#include "weft/engine/dsp/BuiltinEffects.h"
+#include "weft/media/Blobs.h"
 #include "weft/media/Decoder.h"
 
 #include <cmath>
@@ -67,6 +69,15 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     : audioDevice (std::move (device))
 {
     eng = std::make_unique<engine::Engine> (pool, rack);
+    catalog = std::make_unique<engine::PluginCatalog> (settingsFolder() / "plugins.json");
+    catalog->load();
+    host = std::make_unique<engine::Vst3Host> (*catalog);
+    pluginFolders = engine::PluginCatalog::defaultFolders();
+    eng->setPluginFactory ([this] (const model::PluginInstance& p, bool instrument) { return host->create (p, instrument); });
+    scannerPath = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
+                      .getSiblingFile (juce::String ("weft-plugin-scanner") + (juce::SystemStats::getOperatingSystemType() & juce::SystemStats::Windows ? ".exe" : ""))
+                      .getFullPathName()
+                      .toStdString();
     fs::path dir;
     for (int n = 1;; ++n)
     {
@@ -118,6 +129,7 @@ void Studio::edited()
     for (auto it = piano.selection.begin(); it != piano.selection.end();)
         it = commands::findNote (model(), *it) == nullptr ? piano.selection.erase (it) : std::next (it);
     syncEngine();
+    ++editCount;
     sendChangeMessage();
 }
 
@@ -199,6 +211,9 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 
 void Studio::tick()
 {
+    flushPluginStates();
+    if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
+        endPluginGesture();
     eng->collectGarbage();
     if (eng->recordingPending())
         if (const auto outcome = eng->finishRecording (*sess))
@@ -354,7 +369,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::togglePianoRoll: case Cmd::toggleAudioEditor: case Cmd::toggleGlobalTracks: case Cmd::addMarker: case Cmd::previousMarker:
         case Cmd::nextMarker: case Cmd::marker1: case Cmd::marker2: case Cmd::marker3: case Cmd::marker4: case Cmd::marker5: case Cmd::marker6:
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
-        case Cmd::about: case Cmd::applyQuantize:
+        case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
             break;
     }
     return std::nullopt;
@@ -362,6 +377,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
 
 bool Studio::perform (Cmd command)
 {
+    endPluginGesture();
     if (notesFocused())
         if (const auto handled = performNotes (command))
             return *handled;
@@ -537,9 +553,26 @@ bool Studio::perform (Cmd command)
         case Cmd::newTrack:
         case Cmd::toolMenu:
         case Cmd::about:
+        case Cmd::pluginManager:
+        case Cmd::deleteTrack:
             if (uiCommand)
                 uiCommand (command);
             break;
+        case Cmd::newBus:
+        {
+            // Mix > New Bus: the selected track's output goes to a new bus (W-6 "choosing outputs").
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr || t->kind == model::TrackKind::master)
+            {
+                setStatus ("Select a track to route to the new bus.");
+                return false;
+            }
+            const auto bus = s.newBus (t->id, false);
+            if (! bus)
+                setStatus (juce::String (s.lastError()));
+            edited();
+            return bus.has_value();
+        }
         case Cmd::muteNotes:
         case Cmd::quantize:
             setStatus ("Click in the piano roll to edit notes.");
@@ -682,5 +715,184 @@ const std::vector<float>& Studio::peaks (const std::string& hash)
                 }
     }
     return out;
+}
+// Plug-ins -------------------------------------------------------------------------------
+
+fs::path& Studio::settingsFolder()
+{
+    static fs::path folder = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Weft Studio").getFullPathName().toStdString();
+    return folder;
+}
+
+engine::PluginCatalog::ScanResult Studio::rescanPlugins (bool retryFailed)
+{
+    engine::PluginCatalog::ScanOptions options;
+    options.folders = pluginFolders;
+    options.scanner = scannerPath;
+    options.retryFailed = retryFailed;
+    const auto result = catalog->scan (options);
+    setStatus ("Plug-ins: " + juce::String (result.found) + " found, " + juce::String (result.failed) + " failed.");
+    return result;
+}
+
+std::vector<Studio::PluginChoice> Studio::pluginChoices (bool instruments) const
+{
+    std::vector<PluginChoice> out;
+    for (const auto& b : engine::builtinPlugins())
+        if (b.instrument == instruments)
+        {
+            PluginChoice c;
+            c.plugin.format = "builtin";
+            c.plugin.pluginUid = b.uid;
+            c.plugin.name = b.name;
+            c.plugin.vendor = "Weft Studio";
+            c.plugin.version = JUCE_APPLICATION_VERSION_STRING;
+            c.label = b.name;
+            c.group = "Weft";
+            out.push_back (std::move (c));
+        }
+    for (const auto& p : catalog->menu (instruments))
+    {
+        PluginChoice c;
+        c.plugin.format = p.format;
+        c.plugin.pluginUid = p.uid;
+        c.plugin.name = p.name;
+        c.plugin.vendor = p.vendor;
+        c.plugin.version = p.version;
+        c.label = p.name;
+        c.group = p.vendor.empty() ? juce::String ("Other") : juce::String (p.vendor);
+        out.push_back (std::move (c));
+    }
+    return out;
+}
+
+std::optional<Id> Studio::addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index)
+{
+    endPluginGesture();
+    const auto id = sess->addInsert (trackId, choice.plugin, index);
+    if (! id)
+        setStatus (juce::String (sess->lastError()));
+    edited();
+    if (id && openPluginEditor)
+        openPluginEditor (*id);
+    return id;
+}
+
+bool Studio::replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice)
+{
+    endPluginGesture();
+    const auto id = sess->replaceInsert (trackId, pluginId, choice.plugin);
+    if (! id)
+        setStatus (juce::String (sess->lastError()));
+    edited();
+    if (id && openPluginEditor)
+        openPluginEditor (*id);
+    return id.has_value();
+}
+
+bool Studio::setInstrument (const Id& trackId, const PluginChoice& choice)
+{
+    endPluginGesture();
+    const auto id = sess->setInstrument (trackId, choice.plugin);
+    if (! id)
+        setStatus (juce::String (sess->lastError()));
+    edited();
+    if (id && openPluginEditor)
+        openPluginEditor (*id);
+    return id.has_value();
+}
+
+const model::PluginInstance* Studio::pluginInstance (const Id& pluginId, Id* trackId) const
+{
+    for (const auto& [id, t] : model().tracks)
+    {
+        if (t->strip.instrument && t->strip.instrument->id == pluginId)
+        {
+            if (trackId != nullptr)
+                *trackId = id;
+            return &*t->strip.instrument;
+        }
+        for (const auto& p : t->strip.inserts)
+            if (p.id == pluginId)
+            {
+                if (trackId != nullptr)
+                    *trackId = id;
+                return &p;
+            }
+    }
+    return nullptr;
+}
+
+void Studio::pluginParamsChanged (const Id& pluginId, const std::vector<std::pair<std::string, double>>& changes)
+{
+    Id trackId;
+    if (pluginInstance (pluginId, &trackId) == nullptr || changes.empty())
+        return;
+    if (! sess->inGesture())
+        sess->beginGesture ("Plug-in Parameter");
+    for (const auto& [paramId, value] : changes)
+        sess->setPluginParam (trackId, pluginId, paramId, value);
+    eng->adoptPluginParams (pluginId, changes); // the processor already has these values
+    lastParamChange = juce::Time::getMillisecondCounterHiRes();
+    pendingState[pluginId] = lastParamChange;
+    edited();
+}
+
+void Studio::endPluginGesture()
+{
+    if (lastParamChange > 0 && sess->inGesture())
+        sess->endGesture();
+    lastParamChange = 0;
+}
+
+void Studio::writePluginState (const Id& pluginId)
+{
+    pendingState.erase (pluginId);
+    Id trackId;
+    const auto* plugin = pluginInstance (pluginId, &trackId);
+    const auto p = eng->processor (pluginId);
+    if (plugin == nullptr || p == nullptr || p->isPlaceholder())
+        return;
+    const auto bytes = p->state();
+    std::string error;
+    const auto value = media::pluginStateValue (bytes, projectRoot() / "Blobs", &error);
+    if (! value)
+    {
+        setStatus ("Couldn't save the plug-in's settings: " + juce::String (error));
+        return;
+    }
+    if (*value == plugin->state)
+        return;
+    endPluginGesture();
+    eng->adoptPluginState (pluginId, bytes); // no need to load the state back into the plug-in
+    check (sess->setPluginState (trackId, pluginId, *value));
+}
+
+void Studio::flushPluginStates (bool all)
+{
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    std::vector<Id> due;
+    for (const auto& [id, at] : pendingState)
+        if (all || now - at >= 2000.0)
+            due.push_back (id);
+    for (const auto& id : due)
+        writePluginState (id);
+}
+
+juce::String Studio::deleteTrackQuestion (const Id& trackId) const
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr || t->kind != model::TrackKind::bus)
+        return {};
+    const auto n = sess->sendsTo (trackId);
+    return "Remove " + juce::String (t->name) + " and " + juce::String (n) + (n == 1 ? " send?" : " sends?");
+}
+
+bool Studio::deleteTrack (const Id& trackId)
+{
+    endPluginGesture();
+    if (local.selectedTrack == trackId)
+        local.selectedTrack.clear();
+    return check (sess->deleteTrack (trackId));
 }
 } // namespace weft::ui

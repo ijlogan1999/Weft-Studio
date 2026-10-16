@@ -20,6 +20,8 @@ media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& med
     settings.metronomeDuring = ClickDuring::both;
     engine.setSettings (settings);
     engine.setDiskThread (false);
+    engine.setPluginFactory (options.plugins);
+    engine.setProjectFolder (options.projectFolder);
 
     DeviceConfig config;
     config.sampleRate = model.info.sampleRate;
@@ -31,19 +33,22 @@ media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& med
         return out;
     engine.setProject (model);
     engine.play (options.from);
-    device.setCaptureCapacity (options.frames);
+    const std::int64_t latency = engine.compensationLatency();
+    const auto total = options.frames + latency;
+    device.setCaptureCapacity (total);
     // Render a chunk at a time and load the streamed blocks ahead of each one.
     constexpr std::int64_t chunk = 8192;
-    for (std::int64_t done = 0; done < options.frames; done += chunk)
+    for (std::int64_t done = 0; done < total; done += chunk)
     {
         engine.pumpDisk();
-        device.render (std::min (chunk, options.frames - done));
+        device.render (std::min (chunk, total - done));
     }
     device.stop();
     for (int ch = 0; ch < 2; ++ch)
     {
         const auto c = device.capturedOutput (ch);
-        out.channels.emplace_back (c.begin(), c.end());
+        const auto skip = std::min<std::size_t> (static_cast<std::size_t> (latency), c.size());
+        out.channels.emplace_back (c.begin() + static_cast<std::ptrdiff_t> (skip), c.end());
     }
     return out;
 }

@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <functional>
 #include <string>
 #include <vector>
@@ -195,14 +196,59 @@ TEST_CASE ("Rejected commands write nothing", "[U][undo]")
     CHECK (s.session.document().root() == original);
 }
 
-TEST_CASE ("Sends and outputs that would make a feedback loop are rejected", "[U][routing]")
+TEST_CASE ("AT-MIX-9 Sends and outputs that would make a feedback loop are rejected", "[U][routing]")
 {
     Scene s;
+    // Track A -> Bus 1 -> Bus 2 is allowed.
     const auto bus2 = s.session.createTrack (TrackKind::bus, "Bus B").value();
+    REQUIRE (s.session.setTrackOutput (s.audioTrack, s.bus));
     REQUIRE (s.session.setTrackOutput (s.bus, bus2));
+    // Bus 2 -> Bus 1, as an output or a send, would close the loop: the mixer disables both.
+    CHECK (s.session.wouldCycle (bus2, s.bus, "out:" + bus2));
+    CHECK (s.session.wouldCycle (bus2, s.bus));
     CHECK_FALSE (s.session.addSend (bus2, s.bus).has_value());
+    CHECK (s.session.lastError().find ("feedback loop") != std::string::npos);
     CHECK_FALSE (s.session.setTrackOutput (bus2, s.bus));
+    CHECK (s.session.lastError().find ("feedback loop") != std::string::npos);
+    CHECK_FALSE (s.session.wouldCycle (s.audioTrack, bus2));
     CHECK (s.session.addSend (s.audioTrack, bus2).has_value());
+}
+
+TEST_CASE ("AT-MIX-8 New Bus from a send, and removing the bus", "[U][routing]")
+{
+    Scene s;
+    const auto before = s.session.model().trackOrder.size();
+    CHECK (s.session.nextBusName() == "Bus 1");
+    const auto bus = s.session.newBus (s.audioTrack, true);
+    REQUIRE (bus);
+    const auto& m = s.session.model();
+    const auto* b = m.track (*bus);
+    REQUIRE (b != nullptr);
+    CHECK (b->name == "Bus 1");
+    CHECK (b->kind == TrackKind::bus);
+    CHECK (b->output.busId.empty()); // Master
+    CHECK (std::abs (b->strip.volumeDb) < 1e-9);
+    CHECK (m.trackOrder.size() == before + 1);
+    CHECK (m.trackOrder.back() == *bus); // a bus track in the tracks area
+    const auto& sends = m.track (s.audioTrack)->strip.sends;
+    REQUIRE (sends.size() == 1);
+    CHECK (sends[0].targetBusId == *bus);
+    CHECK (std::abs (sends[0].levelDb) < 1e-9);
+    CHECK_FALSE (sends[0].pre);
+    CHECK (s.session.nextBusName() == "Bus 2");
+
+    // One undo step.
+    REQUIRE (s.session.undo().done);
+    CHECK (s.session.model().track (*bus) == nullptr);
+    CHECK (s.session.model().track (s.audioTrack)->strip.sends.empty());
+    REQUIRE (s.session.redo().done);
+
+    // Another channel outputs to it; removing it removes the send and reroutes that channel to Master.
+    REQUIRE (s.session.setTrackOutput (s.instTrack, *bus));
+    CHECK (s.session.sendsTo (*bus) == 1);
+    REQUIRE (s.session.deleteTrack (*bus));
+    CHECK (s.session.model().track (s.audioTrack)->strip.sends.empty());
+    CHECK (s.session.model().track (s.instTrack)->output.busId.empty());
 }
 
 TEST_CASE ("Insert and send limits", "[U][routing]")
@@ -218,9 +264,18 @@ TEST_CASE ("Insert and send limits", "[U][routing]")
     p.pluginUid = "weft.gain";
     CHECK_FALSE (s.session.addInsert (s.instTrack, p).has_value());
 
+    REQUIRE (s.session.model().track (s.instTrack)->strip.sends.size() == 1); // the scene's send to s.bus
+    std::vector<Id> buses;
+    for (int i = 0; i < model::maxSends; ++i)
+        buses.push_back (s.session.createTrack (TrackKind::bus, "Bus").value());
     for (int i = 1; i < model::maxSends; ++i)
-        REQUIRE (s.session.addSend (s.instTrack, s.bus).has_value());
-    CHECK_FALSE (s.session.addSend (s.instTrack, s.bus).has_value());
+        REQUIRE (s.session.addSend (s.instTrack, buses[static_cast<std::size_t> (i)]).has_value());
+    CHECK_FALSE (s.session.addSend (s.instTrack, buses[0]).has_value());
+    // A channel sends to a bus once (W-7 step 7).
+    const auto other = s.session.addSend (s.audioTrack, s.bus);
+    REQUIRE (other);
+    CHECK_FALSE (s.session.addSend (s.audioTrack, s.bus).has_value());
+    CHECK_FALSE (s.session.setSendTarget (s.instTrack, s.session.model().track (s.instTrack)->strip.sends[1].id, s.bus));
 }
 
 TEST_CASE ("Splitting a MIDI region moves the right-hand notes to a new sequence", "[U][regions]")

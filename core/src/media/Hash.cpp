@@ -33,4 +33,14 @@ std::optional<std::string> hashFile (const std::filesystem::path& file, std::str
     weft_hasher_finish_hex (hasher.get(), hex.data());
     return "b3:" + std::string (hex.begin(), hex.end());
 }
+
+std::string hashBytes (std::span<const std::uint8_t> bytes)
+{
+    const std::unique_ptr<WeftHasher, decltype (&weft_hasher_free)> hasher (weft_hasher_new(), &weft_hasher_free);
+    if (! bytes.empty())
+        weft_hasher_update (hasher.get(), bytes.data(), bytes.size());
+    std::array<std::uint8_t, 64> hex {};
+    weft_hasher_finish_hex (hasher.get(), hex.data());
+    return "b3:" + std::string (hex.begin(), hex.end());
+}
 } // namespace weft::media

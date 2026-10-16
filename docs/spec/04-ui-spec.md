@@ -147,6 +147,8 @@ Shown in the bottom area (MVP; detachable window in v2).
 - Selecting a strip selects the track (and vice versa).
 - Disabled feedback edges (D-DM-6) show a warning badge on the affected send or output button.
 - Missing-plugin placeholders show the plugin name with a warning style and tooltip "Not installed on this computer".
+- **Decision D-UI-10:** the Monitor button cycles Auto, On, Off (lit when On, "-" when Off). The instrument slot of an instrument track with no instrument shows "Weft Keys", the default. The fader runs from −90 dB (shown "-inf", stored as −inf) to +6 dB with 0 dB about three quarters up; Shift-drag is fine adjustment. Typing in the readout accepts "-6", "-6 dB" or "-inf".
+- **Decision D-UI-11:** a plug-in window is titled "<plug-in> · <track>". It shows the plug-in's own editor, or a slider per parameter when it has none, or "Not installed on this computer" for a placeholder. Window positions are remembered per instance while the app runs, not saved in the project.
 
 ## 9. Collaboration UI
 
@@ -235,3 +237,5 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-7 | Piano roll keys act on notes after the piano roll is clicked; Left/Right move notes by its grid. |
 | D-UI-8 | Piano keys always sound; audition plays notes up to 1 s on the track's instrument. |
 | D-UI-9 | Inspector note fields set every selected note; velocity shows a range when mixed. |
+| D-UI-10 | Strip details: Monitor cycles Auto/On/Off; empty instrument slot shows Weft Keys; fader law and typed levels. |
+| D-UI-11 | Plug-in windows: title, editor choice, positions kept for the session. |

@@ -6,6 +6,7 @@
 #include "BottomArea.h"
 #include "ControlBar.h"
 #include "Inspector.h"
+#include "PluginWindows.h"
 #include "SidePanel.h"
 #include "TracksArea.h"
 
@@ -54,6 +55,12 @@ public:
     BottomArea& bottom() noexcept { return bottomArea; }
     SidePanel& side() noexcept { return sidePanel; }
     StatusBar& statusBar() noexcept { return status; }
+    PluginWindows& pluginWindows() noexcept { return plugins; }
+    /** Delete Track: asks "Remove bus and N sends?" for a bus with sends (W-7 step 6); answer() is what the buttons call. */
+    void deleteSelectedTrack();
+    bool questionPending() const noexcept { return ! questionTrack.empty(); }
+    const juce::String& questionText() const noexcept { return asked; }
+    void answer (bool confirmed);
 
     /** Called when the panel layout changes, so the app can keep it (F-UI-1). */
     std::function<void (const PanelLayout&)> onLayoutChanged;
@@ -70,6 +77,10 @@ private:
     BottomArea bottomArea;
     SidePanel sidePanel;
     StatusBar status;
+    PluginWindows plugins;
+    std::unique_ptr<juce::AlertWindow> question;
+    Id questionTrack;
+    juce::String asked;
     juce::TooltipWindow tooltips { this, 600 };
     PanelLayout shownLayout;
     std::vector<int> heldKeys; // keyboard MIDI keys currently down

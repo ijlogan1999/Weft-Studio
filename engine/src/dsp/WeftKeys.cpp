@@ -9,16 +9,51 @@ namespace weft::engine
 namespace
 {
 constexpr float silenceLevel = 1.0e-6f; // -120 dBFS: the voice is freed
-constexpr double releaseSeconds = 0.12;  // time constant: -90 dB after about 1.25 s
-constexpr double decaySeconds = 1.5;     // held notes fade like a struck key
+
+/** Linear below 0.5, then a smooth curve that approaches but never reaches 1. */
+float softLimit (float x) noexcept
+{
+    const float a = std::abs (x);
+    if (a <= 0.5f)
+        return x;
+    const float y = 0.5f + 0.5f * std::tanh ((a - 0.5f) * 2.0f);
+    return x < 0 ? -y : y;
+}
 } // namespace
+
+// Release time constants stay short so released notes fall below -90 dBFS within 2 s.
+const std::array<WeftKeys::Preset, 4>& WeftKeys::presets()
+{
+    static const std::array<Preset, 4> list { {
+        { "Soft Keys", { 1, 2, 3 }, { 1.0f / 1.47f, 0.35f / 1.47f, 0.12f / 1.47f }, 0.004, 1.5, 0.12 },
+        { "Glass Bell", { 1, 2.76, 5.40 }, { 0.62f, 0.26f, 0.12f }, 0.002, 2.5, 0.15 },
+        { "Reed Organ", { 1, 2, 4 }, { 0.55f, 0.30f, 0.15f }, 0.010, 1.0e6, 0.05 },
+        { "Warm Pad", { 1, 1.005, 2 }, { 0.45f, 0.40f, 0.15f }, 0.300, 8.0, 0.14 },
+    } };
+    return list;
+}
+
+WeftKeys::WeftKeys()
+    : BuiltinProcessor ({ { "preset", "Preset", "", 0, 3, 0, ParamScale::choice, { "Soft Keys", "Glass Bell", "Reed Organ", "Warm Pad" } },
+                          { "level", "Level", "dB", -24, 6, 0, ParamScale::linear, {} } })
+{
+}
+
+void WeftKeys::applyPreset() noexcept
+{
+    const auto& p = presets()[static_cast<std::size_t> (std::clamp (static_cast<int> (value (0)), 0, 3))];
+    attackStep = static_cast<float> (1.0 / (p.attack * rate));
+    decayFactor = static_cast<float> (std::exp (-1.0 / (p.decay * rate)));
+    releaseFactor = static_cast<float> (std::exp (-1.0 / (p.release * rate)));
+    ratios = p.ratios;
+    levels = p.levels;
+}
 
 void WeftKeys::prepare (double sampleRate, int)
 {
     rate = sampleRate;
-    attackStep = static_cast<float> (1.0 / (0.004 * rate)); // 4 ms attack
-    decayFactor = static_cast<float> (std::exp (-1.0 / (decaySeconds * rate)));
-    releaseFactor = static_cast<float> (std::exp (-1.0 / (releaseSeconds * rate)));
+    takeChanges();
+    applyPreset();
     voices = {};
     sustainPedal = false;
 }
@@ -26,6 +61,11 @@ void WeftKeys::prepare (double sampleRate, int)
 int WeftKeys::activeVoices() const noexcept
 {
     return static_cast<int> (std::count_if (voices.begin(), voices.end(), [] (const Voice& v) { return v.active; }));
+}
+
+bool WeftKeys::sounding (int channel, int pitch) const noexcept
+{
+    return std::any_of (voices.begin(), voices.end(), [&] (const Voice& v) { return v.active && v.channel == channel && v.pitch == pitch; });
 }
 
 void WeftKeys::noteOn (int channel, int pitch, int velocity) noexcept
@@ -50,8 +90,12 @@ void WeftKeys::noteOn (int channel, int pitch, int velocity) noexcept
     v.sustained = false;
     v.channel = channel;
     v.pitch = pitch;
-    v.phase = 0;
-    v.increment = 2.0 * std::numbers::pi * 440.0 * std::pow (2.0, (pitch - 69) / 12.0) / rate;
+    const double base = 2.0 * std::numbers::pi * 440.0 * std::pow (2.0, (pitch - 69) / 12.0) / rate;
+    for (std::size_t k = 0; k < 3; ++k)
+    {
+        v.phase[k] = 0;
+        v.increment[k] = base * ratios[k];
+    }
     v.amplitude = 0.25f * static_cast<float> (velocity) / 127.0f;
     v.envelope = 0;
     v.release = 1;
@@ -107,11 +151,14 @@ float WeftKeys::renderVoice (Voice& v) noexcept
     else
         v.release *= releaseFactor;
 
-    const auto p = v.phase;
-    const float tone = static_cast<float> (std::sin (p) + 0.35 * std::sin (2.0 * p) + 0.12 * std::sin (3.0 * p)) / 1.47f;
-    v.phase += v.increment;
-    if (v.phase > 2.0 * std::numbers::pi)
-        v.phase -= 2.0 * std::numbers::pi;
+    float tone = 0;
+    for (std::size_t k = 0; k < 3; ++k)
+    {
+        tone += levels[k] * static_cast<float> (std::sin (v.phase[k]));
+        v.phase[k] += v.increment[k];
+        if (v.phase[k] > 2.0 * std::numbers::pi)
+            v.phase[k] -= 2.0 * std::numbers::pi;
+    }
     const float level = v.amplitude * v.envelope * v.release;
     if (! v.held && ! v.sustained && v.release * v.envelope < silenceLevel)
         v.active = false;
@@ -120,6 +167,9 @@ float WeftKeys::renderVoice (Voice& v) noexcept
 
 void WeftKeys::process (std::span<const MidiEvent> events, float* const* outputs, int numChannels, int numFrames) noexcept
 {
+    if (takeChanges())
+        applyPreset();
+    const auto level = static_cast<float> (std::pow (10.0, value (1) / 20.0));
     std::size_t next = 0;
     for (int i = 0; i < numFrames; ++i)
     {
@@ -129,6 +179,7 @@ void WeftKeys::process (std::span<const MidiEvent> events, float* const* outputs
         for (auto& v : voices)
             if (v.active)
                 sum += renderVoice (v);
+        sum = softLimit (sum * level);
         for (int ch = 0; ch < numChannels; ++ch)
             outputs[ch][i] = sum;
     }

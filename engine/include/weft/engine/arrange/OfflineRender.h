@@ -5,6 +5,7 @@
 
 #include "weft/commands/Session.h"
 #include "weft/engine/media/MediaPool.h"
+#include "weft/engine/transport/Engine.h"
 #include "weft/media/WavFile.h"
 
 #include <filesystem>
@@ -19,9 +20,15 @@ struct OfflineRenderOptions
     std::int64_t frames = 0;
     bool metronome = false;
     int blockSize = 512;
+    Engine::PluginFactory plugins;      // hosted plug-ins; null: built-ins and placeholders only
+    std::filesystem::path projectFolder; // where plug-in state blobs are
 };
 
-/** Plays the model from `from` for `frames` at the project rate. Stereo output. Streamed media is read as it goes. */
+/**
+    Plays the model from `from` for `frames` at the project rate. Stereo output. Streamed media
+    is read as it goes. The output is shifted back by the compensated plug-in latency, so it
+    lines up with the timeline.
+*/
 media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& media, const OfflineRenderOptions& options);
 
 /**

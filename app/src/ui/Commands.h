@@ -20,7 +20,9 @@ enum class Cmd
     addMarker, previousMarker, nextMarker, marker1, marker2, marker3, marker4, marker5, marker6, marker7, marker8, marker9,
     snapToggle, keyboardMidi, toggleTheme, about,
     // Piano roll (they act on notes while the piano roll has focus).
-    muteNotes, quantize, transposeUp, transposeDown, octaveUp, octaveDown, notesLeft, notesRight, applyQuantize
+    muteNotes, quantize, transposeUp, transposeDown, octaveUp, octaveDown, notesLeft, notesRight, applyQuantize,
+    // Mixer and plug-ins (M6).
+    deleteTrack, newBus, pluginManager
 };
 
 struct CommandInfo

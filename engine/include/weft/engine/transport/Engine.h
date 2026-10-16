@@ -92,10 +92,24 @@ public:
     /** Recompiles the last model (after media loads or instrument changes). */
     void refresh();
 
-    /** Makes the instrument for an instrument track that has none in the rack yet. The default
-        creates Weft Keys for tracks with no instrument or the built-in one; hosted plug-ins arrive in M6. */
+    /** Makes the processor for a hosted (non-built-in) plug-in, or null when it isn't
+        installed (the engine then uses a placeholder, F-PLG-15). */
+    using PluginFactory = std::function<std::shared_ptr<Processor> (const model::PluginInstance&, bool instrument)>;
+    void setPluginFactory (PluginFactory factory) { pluginFactory = std::move (factory); }
+
+    /** Makes the instrument for an instrument track. The default uses Weft Keys when the track
+        has no instrument, a built-in for builtin plug-ins and the plug-in factory otherwise. */
     using InstrumentFactory = std::function<std::shared_ptr<Instrument> (const model::Track&)>;
     void setInstrumentFactory (InstrumentFactory factory) { instrumentFactory = std::move (factory); }
+
+    /** The processor in a plug-in slot (an insert by plug-in id, or a track's instrument). Message thread. */
+    std::shared_ptr<Processor> processor (const Id& pluginId) const;
+    /** The plug-in's own editor changed it: these values are already in the processor, so the
+        engine doesn't apply them again when they reach the model. */
+    void adoptPluginParams (const Id& pluginId, const std::vector<std::pair<std::string, double>>& values);
+    void adoptPluginState (const Id& pluginId, std::vector<std::uint8_t> state);
+    /** A built-in, hosted or placeholder processor for a plug-in instance. */
+    static std::shared_ptr<Processor> makeProcessor (const model::PluginInstance& plugin, bool instrument, const PluginFactory& hosted);
 
     // Transport ------------------------------------------------------------------
     void play();                  // from the playhead
@@ -125,9 +139,14 @@ public:
     {
         float output = 0; // post-fader peak, linear
         float input = 0;  // input peak of an armed track
+        bool clip = false; // a sample went over 0 dBFS since the clip light was last reset
     };
     /** Peaks since the last call for a track's channel (or the master, for an empty id). */
     Meter takeMeter (const Id& trackId);
+    /** Clicking the clip light (F-MIX-5). Empty id: the master. */
+    void resetClip (const Id& trackId);
+    /** Latency of the longest path to the master in samples (F-MIX-13). */
+    int compensationLatency() const noexcept { return live ? live->masterLatency : 0; }
     /** Seconds of input buffered between the audio thread and the disk writer, per armed track. */
     void setRecordCapacitySeconds (double seconds);
     /** The project folder: recordings go to Recovery/ while running and Media/ when done. */
@@ -219,6 +238,7 @@ private:
     void renderSpan (const EngineSnapshot& snap, const float* const* inputs, std::int64_t from, int offset, int frames, bool timeline) noexcept;
     void mixSegments (const ChannelPlan& channel, std::int64_t from, int frames, float* left, float* right) noexcept;
     void renderInstrument (const ChannelPlan& channel, std::int64_t from, int offset, int frames, bool timeline, float* left, float* right) noexcept;
+    void runInserts (const std::vector<InsertPlan>& inserts, float* left, float* right, int frames) noexcept;
     bool monitoring (const ChannelPlan& channel) const noexcept;
     void renderClicks (const EngineSnapshot& snap, std::int64_t from, int offset, int frames, bool audible) noexcept;
     void flushAllNotes (const EngineSnapshot* snap) noexcept;
@@ -229,6 +249,8 @@ private:
 
     MediaPool& mediaPool;
     InstrumentRack& rack;
+    EffectRack effects;
+    MixerState mixer;
 
     // Message thread.
     std::optional<model::ProjectModel> lastModel;
@@ -242,6 +264,10 @@ private:
     TransportSettings currentSettings;
     LocalMixState local;
     InstrumentFactory instrumentFactory;
+    PluginFactory pluginFactory;
+    void syncPlugins();
+    void applyPlugin (Processor& processor, InstrumentSlot::Applied& applied, const model::PluginInstance& plugin);
+    InstrumentSlot::Applied* appliedFor (const Id& pluginId);
     double recordSeconds = 10;
     std::filesystem::path projectFolder;
     int recordDelay = 0;
@@ -306,6 +332,9 @@ private:
     std::int64_t previewPos = 0;
     std::vector<std::vector<float>> mix;
     std::vector<float*> mixPtrs;
+    std::vector<float> scratchLeft, scratchRight;
+    float masterGainNow = 1;
+    bool masterGainSet = false;
     std::vector<MidiEvent> events;
     static constexpr int maxClicksPerSpan = 64;
     std::array<Metronome::Click, maxClicksPerSpan> clickScratch {};

@@ -208,7 +208,7 @@ void AudioEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 
 // Bottom area ---------------------------------------------------------------------------------
 
-BottomArea::BottomArea (Studio& s) : studio (s), editor (s), roll (s)
+BottomArea::BottomArea (Studio& s) : studio (s), editor (s), mixer (s), roll (s)
 {
     setTitle ("Editors");
     addChildComponent (editor);
