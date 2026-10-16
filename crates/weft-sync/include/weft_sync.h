@@ -10,8 +10,9 @@
 extern "C" {
 #endif
 
-/* One blocking HTTP request. request: {method, url, token?, json?, bytes?, timeoutMs?}.
-   response: {status, json?, bytes?, error?}; status 0 means the relay couldn't be reached. */
+/* One blocking HTTP request. request: {method, url, token?, json?, bytes?, timeoutMs?, headers?}.
+   response: {status, headers, json?, bytes?, error?}; status 0 means the relay couldn't be
+   reached. Header names are lower case. */
 WeftStatus weft_http(const uint8_t* request, size_t len, WeftBytes* response);
 
 typedef struct WeftConn WeftConn;

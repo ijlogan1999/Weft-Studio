@@ -17,6 +17,17 @@ pub struct Response {
     pub bytes: Option<Vec<u8>>,
     /// Why the request failed: the relay's `error` text, or a network error.
     pub error: Option<String>,
+    /// Response headers, names in lower case.
+    pub headers: Vec<(String, String)>,
+}
+
+impl Response {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 impl Response {
@@ -26,6 +37,7 @@ impl Response {
             json: None,
             bytes: None,
             error: Some(msg),
+            headers: Vec::new(),
         }
     }
 }
@@ -72,12 +84,27 @@ pub fn request(
     body: Body,
     timeout: Duration,
 ) -> Response {
+    request_with_headers(method, url, token, body, timeout, &[])
+}
+
+/// Like `request`, with extra request headers (such as `range`).
+pub fn request_with_headers(
+    method: &str,
+    url: &str,
+    token: Option<&str>,
+    body: Body,
+    timeout: Duration,
+    headers: &[(String, String)],
+) -> Response {
     if let Err(e) = check_scheme(url) {
         return Response::failed(e);
     }
     let mut builder = ureq::http::Request::builder().method(method).uri(url);
     if let Some(t) = token {
         builder = builder.header("authorization", format!("Bearer {t}"));
+    }
+    for (k, v) in headers {
+        builder = builder.header(k.as_str(), v.as_str());
     }
     let payload = match body {
         Body::None => Vec::new(),
@@ -99,6 +126,16 @@ pub fn request(
         Err(e) => return Response::failed(format!("Can't reach the relay: {e}")),
     };
     let status = resp.status().as_u16();
+    let response_headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .filter_map(|(k, v)| {
+            Some((
+                k.as_str().to_ascii_lowercase(),
+                v.to_str().ok()?.to_string(),
+            ))
+        })
+        .collect();
     let is_json = resp
         .headers()
         .get("content-type")
@@ -134,6 +171,7 @@ pub fn request(
         bytes: (!is_json).then_some(data),
         json,
         error,
+        headers: response_headers,
     }
 }
 

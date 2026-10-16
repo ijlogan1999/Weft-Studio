@@ -1570,6 +1570,7 @@ dependencies = [
  "automerge",
  "axum",
  "base64 0.22.1",
+ "blake3",
  "futures-util",
  "hmac",
  "http-body-util",

@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use weft_proto::{notice, reject, Message};
 use weft_relay::{Config, RunningRelay};
-use weft_sync::http::{request, Body};
+use weft_sync::http::{request, request_with_headers, Body};
 use weft_sync::{Connection, Event, Tokens};
 
 fn call(relay: &str, method: &str, path: &str, token: Option<&str>, body: Value) -> (u16, Value) {
@@ -69,6 +69,7 @@ struct Client {
     rejected: Option<String>,
     disconnects: usize,
     refreshed: bool,
+    blobs: Vec<String>,
 }
 
 impl Client {
@@ -104,6 +105,7 @@ impl Client {
             rejected: None,
             disconnects: 0,
             refreshed: false,
+            blobs: Vec::new(),
         }
     }
 
@@ -142,6 +144,7 @@ impl Client {
                 Event::Message(Message::Reject(r)) => self.rejected = Some(r.code),
                 Event::Disconnected { .. } => self.disconnects += 1,
                 Event::TokensRefreshed(_) => self.refreshed = true,
+                Event::Message(Message::BlobAvailable(b)) => self.blobs.push(b.hash),
                 _ => {}
             }
         }
@@ -692,4 +695,248 @@ fn joins_are_refused_for_newer_schemas_strangers_and_missing_projects() {
     );
     wait_until(&mut [&mut bad], "auth", |c| c[0].rejected.is_some());
     assert_eq!(bad.rejected.as_deref(), Some(reject::AUTH));
+}
+
+fn blob_call(
+    relay: &str,
+    method: &str,
+    path: &str,
+    token: &str,
+    body: Body,
+) -> weft_sync::http::Response {
+    request(
+        method,
+        &format!("{relay}{path}"),
+        Some(token),
+        body,
+        Duration::from_secs(20),
+    )
+}
+
+/// A pseudo-random payload a bit over two upload chunks long.
+fn payload(len: usize, seed: u32) -> Vec<u8> {
+    let mut x = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+fn b3(bytes: &[u8]) -> String {
+    format!("b3:{}", blake3::hash(bytes).to_hex())
+}
+
+#[test]
+fn blobs_resume_verify_dedupe_within_an_owner_and_refuse_strangers() {
+    let relay = RunningRelay::start(Config::default());
+    let url = relay.url();
+    let owner = sign_up(&url, "owner@example.org", "Owner");
+    let editor = sign_up(&url, "ed@example.org", "Ed");
+    let viewer = sign_up(&url, "vi@example.org", "Vi");
+    let stranger = sign_up(&url, "d@example.org", "Dee");
+    share(&url, &owner, "song");
+    invite(&url, &owner, "song", "editor", &editor);
+    invite(&url, &owner, "song", "viewer", &viewer);
+    let mut o = Client::connect(&url, "song", &owner, project_doc());
+    wait_until(&mut [&mut o], "the owner to join", |c| c[0].role.is_some());
+
+    let chunk = weft_relay::blobs::CHUNK_BYTES as usize;
+    let data = payload(2 * chunk + 12_345, 7);
+    let hash = b3(&data);
+    let tok = editor.tokens.access_token.as_str();
+    let q = "?project=song";
+
+    // Not uploaded yet: members get 404, a stranger 403 even with a valid token (AT-COL-16).
+    assert_eq!(
+        blob_call(
+            &url,
+            "HEAD",
+            &format!("/v1/blobs/{hash}{q}"),
+            tok,
+            Body::None
+        )
+        .status,
+        404
+    );
+    assert_eq!(
+        blob_call(
+            &url,
+            "GET",
+            &format!("/v1/blobs/{hash}{q}"),
+            &stranger.tokens.access_token,
+            Body::None
+        )
+        .status,
+        403
+    );
+    let start = |token: &str| {
+        blob_call(
+            &url,
+            "POST",
+            &format!("/v1/blobs/{hash}/uploads{q}"),
+            token,
+            Body::Json(json!({ "size": data.len() })),
+        )
+    };
+    assert_eq!(
+        start(&viewer.tokens.access_token).status,
+        403,
+        "viewers can't upload"
+    );
+
+    // One chunk, then the upload is interrupted.
+    let r = start(tok);
+    assert_eq!(r.status, 201, "{:?}", r.error);
+    let id = r.json.as_ref().unwrap()["uploadId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let put = |offset: usize, bytes: &[u8]| {
+        blob_call(
+            &url,
+            "PUT",
+            &format!("/v1/blobs/{hash}/uploads/{id}{q}&offset={offset}"),
+            tok,
+            Body::Bytes(bytes.to_vec()),
+        )
+    };
+    assert_eq!(put(0, &data[..chunk]).status, 200);
+    let wrong = put(5, &data[chunk..2 * chunk]);
+    assert_eq!(wrong.status, 409);
+    assert_eq!(wrong.json.unwrap()["offset"], chunk as i64);
+
+    // Starting again resumes after the completed chunk (AT-COL-15, relay side).
+    let r = start(tok);
+    assert_eq!(r.status, 200);
+    let j = r.json.unwrap();
+    assert_eq!(j["uploadId"], id.as_str());
+    assert_eq!(j["offset"], chunk as i64);
+    assert_eq!(put(chunk, &data[chunk..2 * chunk]).status, 200);
+    assert_eq!(put(2 * chunk, &data[2 * chunk..]).status, 200);
+    let done = blob_call(
+        &url,
+        "POST",
+        &format!("/v1/blobs/{hash}/uploads/{id}/complete{q}"),
+        tok,
+        Body::None,
+    );
+    assert_eq!(done.status, 200, "{:?}", done.error);
+    wait_until(&mut [&mut o], "BLOB_AVAILABLE", |c| {
+        c[0].blobs.contains(&hash)
+    });
+
+    // Members download it, whole or by range; a stranger still gets 403.
+    let whole = blob_call(
+        &url,
+        "GET",
+        &format!("/v1/blobs/{hash}{q}"),
+        &viewer.tokens.access_token,
+        Body::None,
+    );
+    assert_eq!(whole.status, 200);
+    assert_eq!(whole.bytes.unwrap(), data);
+    let part = request_with_headers(
+        "GET",
+        &format!("{url}/v1/blobs/{hash}{q}"),
+        Some(&viewer.tokens.access_token),
+        Body::None,
+        Duration::from_secs(10),
+        &[("range".into(), "bytes=100-199".into())],
+    );
+    assert_eq!(part.status, 206);
+    assert_eq!(
+        part.header("content-range"),
+        Some(format!("bytes 100-199/{}", data.len()).as_str())
+    );
+    assert_eq!(part.bytes.unwrap(), data[100..200]);
+    assert_eq!(
+        blob_call(
+            &url,
+            "GET",
+            &format!("/v1/blobs/{hash}{q}"),
+            &stranger.tokens.access_token,
+            Body::None
+        )
+        .status,
+        403
+    );
+
+    // A second project of the same Owner gets it without an upload (HEAD hit); another
+    // owner's project doesn't learn it exists (D-COL-9).
+    share(&url, &owner, "song2");
+    let head = blob_call(
+        &url,
+        "HEAD",
+        &format!("/v1/blobs/{hash}?project=song2"),
+        &owner.tokens.access_token,
+        Body::None,
+    );
+    assert_eq!(head.status, 200);
+    assert_eq!(
+        head.header("content-length"),
+        Some(data.len().to_string().as_str())
+    );
+    share(&url, &stranger, "theirs");
+    assert_eq!(
+        blob_call(
+            &url,
+            "HEAD",
+            &format!("/v1/blobs/{hash}?project=theirs"),
+            &stranger.tokens.access_token,
+            Body::None
+        )
+        .status,
+        404
+    );
+    let r = blob_call(
+        &url,
+        "POST",
+        &format!("/v1/blobs/{hash}/uploads?project=song2"),
+        &owner.tokens.access_token,
+        Body::Json(json!({ "size": data.len() })),
+    );
+    assert_eq!(r.json.unwrap()["complete"], true);
+
+    // Bytes that don't match their hash are refused and the upload discarded.
+    let bad = payload(1000, 9);
+    let claimed = b3(&payload(1000, 10));
+    let r = blob_call(
+        &url,
+        "POST",
+        &format!("/v1/blobs/{claimed}/uploads{q}"),
+        tok,
+        Body::Json(json!({ "size": bad.len() })),
+    );
+    let id = r.json.unwrap()["uploadId"].as_str().unwrap().to_string();
+    let r = blob_call(
+        &url,
+        "PUT",
+        &format!("/v1/blobs/{claimed}/uploads/{id}{q}&offset=0"),
+        tok,
+        Body::Bytes(bad),
+    );
+    assert_eq!(r.status, 200);
+    let r = blob_call(
+        &url,
+        "POST",
+        &format!("/v1/blobs/{claimed}/uploads/{id}/complete{q}"),
+        tok,
+        Body::None,
+    );
+    assert_eq!(r.status, 422);
+    assert_eq!(
+        blob_call(
+            &url,
+            "HEAD",
+            &format!("/v1/blobs/{claimed}{q}"),
+            tok,
+            Body::None
+        )
+        .status,
+        404
+    );
 }

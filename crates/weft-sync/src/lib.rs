@@ -201,8 +201,8 @@ unsafe fn value_arg(p: *const u8, len: usize) -> Option<Value> {
 }
 
 /// Makes one HTTP request. `request` is a codec map
-/// `{method, url, token?, json?, bytes?, timeoutMs?}`; the response is
-/// `{status, json?, bytes?, error?}` (status 0: the relay couldn't be reached).
+/// `{method, url, token?, json?, bytes?, timeoutMs?, headers?}`; the response is
+/// `{status, headers, json?, bytes?, error?}` (status 0: the relay couldn't be reached).
 #[no_mangle]
 pub unsafe extern "C" fn weft_http(
     request: *const u8,
@@ -227,14 +227,30 @@ pub unsafe extern "C" fn weft_http(
             t if t > 0 => Duration::from_millis(t as u64),
             _ => Duration::from_secs(30),
         };
-        let r = http::request(
+        let headers: Vec<(String, String)> = match get(&req, "headers") {
+            Some(Value::Map(items)) => items
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Str(s) => Some((k.clone(), s.clone())),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let r = http::request_with_headers(
             &get_str(&req, "method"),
             &get_str(&req, "url"),
             (!token.is_empty()).then_some(token.as_str()),
             body,
             timeout,
+            &headers,
         );
         let mut items = vec![("status", Value::Int(i64::from(r.status)))];
+        let mut response_headers: Vec<(String, Value)> =
+            r.headers.iter().map(|(k, v)| (k.clone(), s(v))).collect();
+        response_headers.sort_by(|a, b| a.0.cmp(&b.0));
+        response_headers.dedup_by(|a, b| a.0 == b.0);
+        items.push(("headers", Value::Map(response_headers)));
         if let Some(j) = &r.json {
             items.push(("json", http::json_to_value(j)));
         }
