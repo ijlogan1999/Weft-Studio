@@ -47,6 +47,9 @@ struct ProjectModel
     std::vector<Id> storedTrackOrder; // raw list, may contain duplicates
     std::vector<TempoPoint> storedTempoPoints;
     std::vector<SignaturePoint> storedSignaturePoints;
+    std::map<Id, Ref<Comment>> comments;     // collab.comments
+    std::vector<ChatMessage> chat;           // collab.chat, in list order (D-DM-14)
+    std::map<Id, Ref<VersionTag>> versions;  // collab.versions
 
     // Derived (repaired) views.
     std::vector<Id> trackOrder;                           // deduped, complete, excludes master (repairs 1, 2)
@@ -62,6 +65,8 @@ struct ProjectModel
     const Region* region (const Id& id) const;
     const MidiSequence* sequence (const Id& id) const;
     const MediaRef* mediaRef (const std::string& hash) const;
+    const Comment* comment (const Id& id) const;
+    const VersionTag* version (const Id& id) const;
 
     /** Track a region is shown on: its trackId, or the Recovered track for an orphan. */
     Id effectiveTrackId (const Region& r) const;

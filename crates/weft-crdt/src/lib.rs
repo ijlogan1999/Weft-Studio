@@ -461,6 +461,30 @@ pub unsafe extern "C" fn weft_doc_changed_paths(
     })
 }
 
+/// A new document holding the state at `heads` (concatenated 32-byte hashes),
+/// for read-only previews of a version (spec 05 §9.3). Null if a head is unknown.
+#[no_mangle]
+pub unsafe extern "C" fn weft_doc_fork_at(
+    doc: *mut WeftDoc,
+    heads: *const u8,
+    heads_len: usize,
+) -> *mut WeftDoc {
+    let Some(doc) = doc.as_mut() else {
+        return ptr::null_mut();
+    };
+    let Some(raw) = bytes_arg(heads, heads_len) else {
+        return ptr::null_mut();
+    };
+    let Ok(at) = ops::parse_heads(raw) else {
+        return ptr::null_mut();
+    };
+    catch_unwind(AssertUnwindSafe(|| match doc.inner.fork_at(&at) {
+        Ok(inner) => Box::into_raw(Box::new(WeftDoc { inner })),
+        Err(_) => ptr::null_mut(),
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Merges all changes from `other` into `doc`. `other`'s pending operations are committed first.
 #[no_mangle]
 pub unsafe extern "C" fn weft_doc_merge(doc: *mut WeftDoc, other: *mut WeftDoc) -> WeftStatus {

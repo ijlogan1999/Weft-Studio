@@ -52,6 +52,8 @@ WeftStatus weft_doc_apply(WeftDoc* doc, const uint8_t* data, size_t len);
 int32_t weft_doc_has_change(WeftDoc* doc, const uint8_t* hash32);
 WeftStatus weft_doc_changed_paths(WeftDoc* doc, const uint8_t* heads, size_t heads_len, size_t depth, WeftBytes* out);
 WeftStatus weft_doc_merge(WeftDoc* doc, WeftDoc* other);
+/* A new document at the given heads (read-only previews); NULL if a head is unknown. Free with weft_doc_free. */
+WeftDoc* weft_doc_fork_at(WeftDoc* doc, const uint8_t* heads, size_t heads_len);
 
 void weft_bytes_free(WeftBytes bytes);
 

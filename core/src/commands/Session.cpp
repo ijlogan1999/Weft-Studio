@@ -129,9 +129,14 @@ std::optional<Session> Session::createNew (const NewProjectOptions& options, Use
 doc::Status Session::applyChanges (std::span<const std::uint8_t> changes)
 {
     const auto before = doc.heads();
+    const auto locks = myLocks();
+    const auto regionTracks = regionTracksOn (locks);
     const auto status = doc.apply (changes);
-    if (status == Status::ok)
+    if (status == Status::ok && doc.heads() != before)
+    {
         model::Projector::refresh (projection, doc, doc.changedPaths (before, 2));
+        afterRemote (before, locks, regionTracks);
+    }
     return status;
 }
 
@@ -140,9 +145,14 @@ void Session::reproject() { projection = model::Projector::project (doc); }
 doc::Status Session::receiveSyncMessage (doc::SyncState& state, std::span<const std::uint8_t> message)
 {
     const auto before = doc.heads();
+    const auto locks = myLocks();
+    const auto regionTracks = regionTracksOn (locks);
     const auto status = doc.receiveSyncMessage (state, message);
     if (status == Status::ok && doc.heads() != before)
+    {
         model::Projector::refresh (projection, doc, doc.changedPaths (before, 2));
+        afterRemote (before, locks, regionTracks);
+    }
     return status;
 }
 
@@ -161,20 +171,57 @@ void Session::setAccess (Access a, std::string reason)
     accessReason = std::move (reason);
 }
 
-bool Session::allowed (const Txn& txn) const
+bool Session::allowed (const Txn& txn)
 {
+    const auto denied = [&] {
+        error = accessReason.empty() ? std::string ("You can't change this project.") : accessReason;
+        return false;
+    };
     switch (accessLevel)
     {
-        case Access::full: return true;
-        case Access::none: return false;
+        case Access::full: break;
+        case Access::none: return denied();
         case Access::commentsOnly:
-            return std::all_of (txn.records.begin(), txn.records.end(), [] (const TxnRecord& r) {
-                const auto& p = r.path;
-                return p.size() >= 2 && p[0].kind == PathSegment::Kind::key && p[0].key == model::keys::collab
-                    && p[1].kind == PathSegment::Kind::key && (p[1].key == "comments" || p[1].key == "chat");
-            });
+            if (! std::all_of (txn.records.begin(), txn.records.end(), [] (const TxnRecord& r) {
+                    const auto& p = r.path;
+                    return p.size() >= 2 && p[0].kind == PathSegment::Kind::key && p[0].key == model::keys::collab
+                        && p[1].kind == PathSegment::Kind::key && (p[1].key == "comments" || p[1].key == "chat");
+                }))
+                return denied();
+            return true;
     }
-    return false;
+
+    // Tracks locked by someone else (05 §7): their fields, strip, regions (onto or off them),
+    // automation and take folders. Lock fields themselves are checked by the lock commands.
+    const bool anyLocked = std::any_of (projection.tracks.begin(), projection.tracks.end(), [&] (const auto& t) { return lockedByOther (t.first); });
+    if (! anyLocked)
+        return true;
+    std::vector<Path> paths;
+    std::set<Id> extra;
+    for (const auto& r : txn.records)
+    {
+        paths.push_back (r.path);
+        const bool regionPath = r.path.size() >= 2 && r.path[0].kind == PathSegment::Kind::key && r.path[0].key == model::keys::regions;
+        for (const auto* v : { r.before ? &*r.before : nullptr, r.after ? &*r.after : nullptr })
+        {
+            if (v == nullptr || ! regionPath)
+                continue;
+            if (v->isString() && r.path.size() == 3 && r.path[2].key == "trackId")
+                extra.insert (v->asString());
+            else if (v->isMap() && r.path.size() == 2 && (*v)["trackId"].isString())
+                extra.insert ((*v)["trackId"].asString());
+        }
+    }
+    auto touched = tracksTouched (paths, {});
+    touched.insert (extra.begin(), extra.end());
+    for (const auto& id : touched)
+        if (lockedByOther (id))
+        {
+            const auto* t = projection.track (id);
+            error = "\"" + (t != nullptr ? t->name : std::string ("This track")) + "\" is " + lockText (id) + ".";
+            return false;
+        }
+    return true;
 }
 
 void Session::refreshFor (const Txn& txn)
@@ -202,7 +249,6 @@ bool Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
     {
         doc.rollback();
         refreshFor (txn);
-        error = accessReason.empty() ? std::string ("You can't change this project.") : accessReason;
         return false;
     }
     const auto now = clock();
@@ -226,7 +272,10 @@ bool Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
         }
     refreshFor (txn);
     if (pushTo != nullptr)
+    {
+        ++localEdits;
         pushTo->push_back (std::move (txn));
+    }
     return true;
 }
 

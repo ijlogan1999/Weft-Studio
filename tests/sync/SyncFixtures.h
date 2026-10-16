@@ -208,7 +208,10 @@ struct Peer
         o.oneWayDelayMs = oneWayDelayMs;
         o.pendingFile = std::move (pendingFile);
         if (clock)
+        {
+            session->setClock (clock);
             o.clock = std::move (clock);
+        }
         client = std::make_unique<SyncClient> (*session, std::move (o));
         client->onMessage = [this] (const std::string& m) { messages.push_back (m); };
         client->onRemoteChange = [this] { ++remoteChanges; };

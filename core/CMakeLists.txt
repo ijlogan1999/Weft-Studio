@@ -7,6 +7,7 @@ add_library(weft_core STATIC
     src/arrange/RegionDrag.cpp
     src/arrange/Selection.cpp
     src/commands/Arrange.cpp
+    src/commands/Collab.cpp
     src/commands/Commands.cpp
     src/commands/Notes.cpp
     src/commands/Recording.cpp

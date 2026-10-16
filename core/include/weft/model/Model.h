@@ -23,6 +23,7 @@ inline constexpr int maxInserts = 15;
 inline constexpr int maxSends = 8;
 inline constexpr Samples minAudioRegionLength = 64;
 inline constexpr Ticks minMidiRegionLength = 1;
+inline constexpr std::size_t maxMessageLength = 4000; // comment and chat bodies (03 §9.1, §9.2)
 
 /** Palette index 0-23, or "#RRGGBB". */
 struct Color
@@ -274,6 +275,57 @@ struct Marker
     UserId createdBy;
 
     static Marker fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A comment pinned to the timeline (03 §9.1). Replies are one level deep. */
+struct Comment
+{
+    Id id;
+    Ticks pos = 0;
+    std::optional<Ticks> endPos;
+    Id trackId;  // optional anchor
+    Id regionId; // optional anchor
+    Id parentId; // reply to this comment
+    UserId author;
+    std::int64_t createdAt = 0;
+    std::string body; // "@<UserId>" for mentions
+    std::optional<std::int64_t> editedAt;
+    bool resolved = false;
+    UserId resolvedBy;
+    bool deleted = false;
+
+    /** The user ids mentioned as "@<UserId>" in the body. */
+    std::vector<UserId> mentions() const;
+
+    static Comment fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A chat message (03 §9.2). Chat is an append-only list. */
+struct ChatMessage
+{
+    Id id;
+    UserId author;
+    std::int64_t sentAt = 0;
+    std::string body;
+    bool deleted = false;
+
+    static ChatMessage fromValue (const Value& v);
+    Value toValue() const;
+};
+
+/** A named or automatic checkpoint (03 §9.4): the change-graph heads of that state. */
+struct VersionTag
+{
+    Id id;
+    std::string name;
+    std::vector<std::string> heads; // change hashes, hex
+    UserId createdBy;
+    std::int64_t createdAt = 0;
+    bool autoVersion = false;
+
+    static VersionTag fromValue (const Id& id, const Value& v);
     Value toValue() const;
 };
 
