@@ -34,10 +34,16 @@ add_executable(weft-plugin-scanner "${PROJECT_SOURCE_DIR}/tools/scanner/ScannerM
 target_link_libraries(weft-plugin-scanner PRIVATE weft::engine_juce)
 weft_set_warnings(weft-plugin-scanner)
 
-# ASIO needs Steinberg's ASIO SDK, which isn't fetched (D-ARCH-14). Point
-# WEFT_ASIO_SDK_DIR at an unpacked SDK to build the ASIO driver type.
-set(WEFT_ASIO_SDK_DIR "" CACHE PATH "Steinberg ASIO SDK folder (enables the ASIO driver on Windows)")
-if(WIN32 AND WEFT_ASIO_SDK_DIR)
-    target_include_directories(weft_juce_modules PRIVATE "${WEFT_ASIO_SDK_DIR}/common")
+# ASIO uses Steinberg's ASIO SDK under its GPLv3 option (D-ARCH-14, D-ARCH-53). Windows builds fetch it
+# from the manifest; WEFT_ASIO_SDK_DIR points at an SDK already on disk instead.
+option(WEFT_WITH_ASIO "Build the ASIO driver type on Windows" ON)
+set(WEFT_ASIO_SDK_DIR "" CACHE PATH "Steinberg ASIO SDK folder (default: fetch the version in cpp-deps.json)")
+if(WIN32 AND WEFT_WITH_ASIO)
+    set(asio_sdk "${WEFT_ASIO_SDK_DIR}")
+    if(NOT asio_sdk)
+        weft_fetch(ASIOSDK)
+        set(asio_sdk "${WEFT_SRC_ASIOSDK}")
+    endif()
+    target_include_directories(weft_juce_modules PRIVATE "${asio_sdk}/common")
     target_compile_definitions(weft_juce_modules PUBLIC JUCE_ASIO=1)
 endif()

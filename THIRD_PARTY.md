@@ -12,6 +12,7 @@ original or redistributable and be listed here.
 
 | Component | Version | License | Ships | Purpose |
 |---|---|---|---|---|
+| ASIOSDK | 2.3.4 | GPL-3.0-only | yes | ASIO driver support on Windows (headers only; fetched by Windows builds) |
 | Catch2 | v3.9.1 | BSL-1.0 | no (build/test only) | C++ unit test framework (tests only) |
 | Corrosion | v0.6.1 | MIT | no (build/test only) | CMake integration for Rust crates (build only) |
 | JUCE | 8.0.9 | AGPL-3.0-only | yes | Windowing, graphics, audio/MIDI devices, VST3 hosting, audio file I/O |

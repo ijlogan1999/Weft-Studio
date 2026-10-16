@@ -3,7 +3,7 @@
 The [HW] acceptance tests need a real Windows PC, audio interface and MIDI keyboard, so CI can't run
 them. This is the checklist for a person running them before a release. Use the installer from the
 latest green CI run on `main` (the `WeftStudio-windows-installer` artifact of the "Windows installer
-(Release)" job), or a Release build with `WEFT_ASIO_SDK_DIR` set for the ASIO parts (D-ARCH-14).
+(Release)" job), or your own Release build. Both include ASIO.
 
 Record each pass in a copy of the table at the end: the date, the Weft version (Help > About), the
 machine, the interface and driver versions, and a note for anything that failed.
