@@ -2,7 +2,11 @@ juce_add_gui_app(WeftStudio
     PRODUCT_NAME "Weft Studio"
     COMPANY_NAME "Weft Studio contributors"
     BUNDLE_ID "org.weftstudio.app"
-    VERSION ${PROJECT_VERSION})
+    VERSION ${PROJECT_VERSION}
+    # The app icon (D-ARCH-54): JUCE builds the exe's .ico from these, so the window, taskbar
+    # and shortcuts all show it.
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon/weft-icon-256.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon/weft-icon-32.png")
 
 target_sources(WeftStudio PRIVATE src/Main.cpp)
 
