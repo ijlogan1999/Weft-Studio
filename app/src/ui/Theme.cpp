@@ -365,6 +365,15 @@ public:
         const auto r = juce::Rectangle<int> (x, y, w, h).toFloat();
         const bool vertical = style == juce::Slider::LinearVertical;
         const bool hot = s.isMouseOverOrDragging() && s.isEnabled();
+        if (style == juce::Slider::LinearBar)
+        {
+            // A value field that fills: the well, the filled part, and the text box on top.
+            const auto field = s.getLocalBounds().toFloat().reduced (0.0f, 1.0f);
+            depth::well (g, field, radius::r1);
+            g.setColour (colour (Token::textDim).withAlpha (hot ? 0.45f : 0.3f));
+            g.fillRoundedRectangle (field.withRight (std::max (field.getX(), pos)), radius::r1);
+            return;
+        }
         if (vertical)
         {
             const auto track = r.withSizeKeepingCentre (4.0f, r.getHeight());

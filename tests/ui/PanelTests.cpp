@@ -291,4 +291,18 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     browserFile.deleteFile();
     juce::FileOutputStream browserStream (browserFile);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (rows, browserStream));
+
+    // The audio editor on the Guitar region, trimmed so both parts of the file show.
+    const auto guitar = ui.m().regionsOnTrack (audio).front()->id;
+    REQUIRE (s.trimAudioStartSamples (guitar, 24000));
+    REQUIRE (s.trimRegionLength (guitar, 96000));
+    ui.studio.editorRegion = guitar;
+    ui.main->run (Cmd::toggleAudioEditor);
+    ui.studio.edited();
+    ui.settle();
+    const auto editor = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
+    const auto editorFile = out.getSiblingFile (out.getFileNameWithoutExtension() + "-editor.png");
+    editorFile.deleteFile();
+    juce::FileOutputStream editorStream (editorFile);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (editor, editorStream));
 }

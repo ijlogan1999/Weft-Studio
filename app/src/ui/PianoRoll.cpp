@@ -282,20 +282,20 @@ float PianoRoll::laneY (int value) const
 
 void PianoRoll::resized()
 {
-    auto bar = getLocalBounds().removeFromTop (toolbarHeight).reduced (6, 4);
+    auto bar = getLocalBounds().removeFromTop (toolbarHeight).reduced (space::s1, space::half);
     const auto place = [&bar] (juce::Component& c, int w) {
         c.setBounds (bar.removeFromLeft (w));
-        bar.removeFromLeft (6);
+        bar.removeFromLeft (space::s1);
     };
     place (toolBox, 96);
     place (snapBox, 96);
-    place (quantizeBox, 86);
+    place (quantizeBox, 88);
     place (strength, 112);
-    place (swing, 100);
-    place (quantizeButton, 30);
-    place (auditionToggle, 86);
-    place (followToggle, 70);
-    place (laneBox, std::max (90, std::min (150, bar.getWidth())));
+    place (swing, 96);
+    place (quantizeButton, 32);
+    place (auditionToggle, 88);
+    place (followToggle, 72);
+    place (laneBox, std::max (88, std::min (152, bar.getWidth())));
     if (needsFit && getWidth() > 0 && isVisible())
         fitRegions();
 }
@@ -938,24 +938,33 @@ void PianoRoll::paintKeyboard (juce::Graphics& g)
     const auto area = keyboardArea();
     const juce::Graphics::ScopedSaveState save (g);
     g.reduceClipRegion (area);
-    g.fillAll (colour (Token::text));
+    // White keys in the fader-cap grey rather than white, so the keyboard doesn't glare.
+    g.setGradientFill (juce::ColourGradient::horizontal (colour (Token::capBottom), 0.0f, colour (Token::capTop), static_cast<float> (keyboardWidth)));
+    g.fillRect (area);
     g.setFont (font (Type::small));
     const auto first = yToPitch (static_cast<float> (area.getBottom() - 1));
     for (int pitch = first; pitch <= std::min (127, topPitch); ++pitch)
     {
         const auto y = pitchToY (pitch);
         const juce::Rectangle<float> row (0.0f, y, static_cast<float> (keyboardWidth), static_cast<float> (rowHeight));
+        // A line between neighbouring white keys (B-C and E-F).
+        if (pitch % 12 == 0 || pitch % 12 == 5)
+        {
+            g.setColour (colour (Token::regionText).withAlpha (0.25f));
+            g.fillRect (0.0f, row.getBottom() - 1.0f, static_cast<float> (keyboardWidth), 1.0f);
+        }
         if (commands::isBlackKey (pitch))
         {
-            g.setColour (colour (Token::background));
-            g.fillRect (row.withWidth (static_cast<float> (keyboardWidth) * 0.62f));
+            const auto key = row.withWidth (static_cast<float> (keyboardWidth) * 0.6f).reduced (0.0f, 1.0f);
+            g.setColour (colour (Token::well));
+            g.fillRoundedRectangle (key, radius::r1);
+            g.setColour (colour (Token::text).withAlpha (0.12f));
+            g.fillRect (key.withTrimmedRight (2.0f).withTrimmedTop (1.0f).withHeight (1.0f));
         }
         if (pitch % 12 == 0)
         {
-            g.setColour (colour (Token::background));
-            g.drawText (juce::String (commands::noteName (pitch)), row.withTrimmedRight (4.0f), juce::Justification::centredRight);
-            g.setColour (colour (Token::gridStrong));
-            g.drawHorizontalLine (juce::roundToInt (row.getBottom()) - 1, 0.0f, static_cast<float> (keyboardWidth));
+            g.setColour (colour (Token::regionText));
+            g.drawText (juce::String (commands::noteName (pitch)), row.withTrimmedRight (static_cast<float> (space::half)), juce::Justification::centredRight);
         }
     }
     g.setColour (colour (Token::border));

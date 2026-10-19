@@ -1,4 +1,5 @@
 #include "BottomArea.h"
+#include "Waveform.h"
 
 #include <cmath>
 
@@ -25,7 +26,7 @@ std::int64_t AudioEditor::fileFrames() const
         return 0;
     if (const auto* m = studio.model().mediaRef (r->audio.media); m != nullptr && m->lengthSamples > 0)
         return m->lengthSamples;
-    return static_cast<std::int64_t> (studio.peaks (r->audio.media).size()) * Studio::peakFrames;
+    return studio.waveform (r->audio.media).frames();
 }
 
 void AudioEditor::showWholeFile()
@@ -74,8 +75,12 @@ void AudioEditor::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::lane));
     const auto* r = region();
-    g.setColour (colour (Token::surface));
-    g.fillRect (getLocalBounds().removeFromTop (headerHeight));
+    const auto header = getLocalBounds().removeFromTop (headerHeight);
+    g.setColour (colour (Token::surfaceRaised));
+    g.fillRect (header);
+    depth::highlight (g, header.toFloat(), 0.0f);
+    g.setColour (colour (Token::lineSubtle));
+    g.fillRect (header.withTop (header.getBottom() - 1));
     g.setFont (font (Type::strong));
     g.setColour (colour (Token::text));
     if (r == nullptr)
@@ -95,31 +100,35 @@ void AudioEditor::paint (juce::Graphics& g)
     const auto used1 = static_cast<float> (sampleToX (static_cast<double> (r->audio.sourceOffset)));
     const auto used2 = static_cast<float> (sampleToX (static_cast<double> (r->audio.sourceOffset + r->length)));
     const auto regionCol = colourFor (m.regionColor (*r).palette, m.regionColor (*r).rgb);
-    g.setColour (regionCol.withAlpha (0.35f));
+    // The part the region plays sits on its body colour; the rest of the file is dimmed.
+    g.setColour (regionBody (regionCol));
     g.fillRect (juce::Rectangle<float> (used1, area.getY(), used2 - used1, area.getHeight()));
+    g.setColour (colour (Token::gridWeak));
+    g.fillRect (area.getX(), area.getCentreY(), area.getWidth(), 1.0f);
 
-    const auto& pk = studio.peaks (r->audio.media);
-    const auto frames = fileFrames();
-    const auto mid = area.getCentreY();
-    const auto half = area.getHeight() * 0.46f;
-    for (int px = 0; px < getWidth(); ++px)
+    const auto& wave = studio.waveform (r->audio.media);
+    const auto content = regionCol.brighter (0.6f);
+    WaveformStyle style;
+    style.gain = static_cast<float> (std::pow (10.0, r->audio.gainDb / 20.0));
+    const auto first = xToSample (area.getX());
+    const auto draw = [&] (juce::Colour c, float fromX, float toX) {
+        style.peak = c.withMultipliedAlpha (0.55f);
+        style.rms = c;
+        style.startX = fromX;
+        style.endX = toX;
+        drawWaveform (g, wave, area.reduced (0.0f, 4.0f), first, samplesPerPixel, style);
+    };
+    draw (colour (Token::textDim).withAlpha (0.5f), area.getX(), used1);
+    draw (content, used1, used2);
+    draw (colour (Token::textDim).withAlpha (0.5f), used2, area.getRight());
+    // Trim handles: a 2 px line with a grab tab at the top.
+    for (const auto x : { used1, used2 })
     {
-        const auto s1 = xToSample (px), s2 = xToSample (px + 1);
-        if (s2 < 0 || s1 >= static_cast<double> (frames))
-            continue;
-        const auto from = static_cast<std::int64_t> (std::max (0.0, s1)) / Studio::peakFrames;
-        const auto to = static_cast<std::int64_t> (std::max (0.0, s2)) / Studio::peakFrames;
-        float peak = 0;
-        for (auto i = from; i <= to && i < static_cast<std::int64_t> (pk.size()); ++i)
-            peak = std::max (peak, pk[static_cast<std::size_t> (i)]);
-        const bool inside = static_cast<float> (px) >= used1 && static_cast<float> (px) < used2;
-        g.setColour (inside ? colour (Token::text) : colour (Token::textDim).withAlpha (0.6f));
-        g.drawVerticalLine (px, mid - peak * half, mid + peak * half);
+        g.setColour (colour (Token::accent));
+        g.fillRect (x - 1.0f, area.getY(), 2.0f, area.getHeight());
+        const auto tab = juce::Rectangle<float> (x == used1 ? x - 1.0f : x - 7.0f, area.getY(), 8.0f, 12.0f);
+        g.fillRoundedRectangle (tab, radius::r1);
     }
-    // Trim handles.
-    g.setColour (colour (Token::accent));
-    g.fillRect (used1 - 1.5f, area.getY(), 3.0f, area.getHeight());
-    g.fillRect (used2 - 1.5f, area.getY(), 3.0f, area.getHeight());
     g.setFont (font (Type::body));
     g.setColour (colour (Token::textDim));
     g.drawText ("Start " + juce::String (r->audio.sourceOffset) + "  ·  Length " + juce::String (r->length) + " samples",

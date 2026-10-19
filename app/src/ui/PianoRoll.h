@@ -72,7 +72,7 @@ public:
     int rowHeight = 10;
     int topPitch = 84; // the pitch in the top row
     bool laneShown = true;
-    static constexpr int toolbarHeight = 32, keyboardWidth = 56, rulerHeight = 22, laneHeight = 90;
+    static constexpr int toolbarHeight = size::panelHeader, keyboardWidth = 56, rulerHeight = 24, laneHeight = 88;
 
     juce::Rectangle<int> keyboardArea() const;
     juce::Rectangle<int> rulerArea() const;
