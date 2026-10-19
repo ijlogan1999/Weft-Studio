@@ -92,9 +92,11 @@ inline constexpr float r0 = 0.0f, r1 = 2.0f, r2 = 4.0f;
 enum class Type
 {
     caption,    // 11, SemiBold, caps: section labels
+    small,      // 11: secondary lines, note and key labels
     body,       // 12: default UI, buttons
     strong,     // 13, Medium: track names, inspector values
     title,      // 15, SemiBold: dialog and panel titles
+    display,    // 24, SemiBold: the product name on the About and start pages
     monoSmall,  // 11: ruler, meter scale
     monoValue,  // 12, Medium: dB, pan, BPM readouts
     monoCounter // 20, Medium: the transport counter
@@ -164,6 +166,10 @@ void well (juce::Graphics&, juce::Rectangle<float>, float cornerRadius);
 void tinted (juce::Graphics&, juce::Rectangle<float>, float cornerRadius, juce::Colour);
 /** The keyboard focus ring: 2 px accent with a 1 px gap. */
 void focusRing (juce::Graphics&, juce::Rectangle<float>, float cornerRadius);
+/** Shadow ink for edges drawn by hand (column and bar shadows): black at the theme's alpha. */
+juce::Colour shade (float darkAlpha, float lightAlpha);
+/** A faint wash that lifts a band off the canvas: light on the dark theme, dark on the light one. */
+juce::Colour wash (float darkAlpha, float lightAlpha);
 } // namespace depth
 
 /** Roles a button can take, set with `setRole`; the look and feel draws each one. */

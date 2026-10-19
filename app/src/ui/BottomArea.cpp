@@ -76,13 +76,13 @@ void AudioEditor::paint (juce::Graphics& g)
     const auto* r = region();
     g.setColour (colour (Token::surface));
     g.fillRect (getLocalBounds().removeFromTop (headerHeight));
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.setFont (font (Type::strong));
     g.setColour (colour (Token::text));
     if (r == nullptr)
     {
         g.drawText ("Audio Editor", getLocalBounds().removeFromTop (headerHeight).reduced (10, 0), juce::Justification::centredLeft);
         g.setColour (colour (Token::textDim));
-        g.setFont (juce::FontOptions (15.0f));
+        g.setFont (font (Type::title));
         g.drawText ("Double-click an audio region to edit it here.", getLocalBounds(), juce::Justification::centred);
         return;
     }
@@ -120,7 +120,7 @@ void AudioEditor::paint (juce::Graphics& g)
     g.setColour (colour (Token::accent));
     g.fillRect (used1 - 1.5f, area.getY(), 3.0f, area.getHeight());
     g.fillRect (used2 - 1.5f, area.getY(), 3.0f, area.getHeight());
-    g.setFont (juce::FontOptions (12.0f));
+    g.setFont (font (Type::body));
     g.setColour (colour (Token::textDim));
     g.drawText ("Start " + juce::String (r->audio.sourceOffset) + "  ·  Length " + juce::String (r->length) + " samples",
                 getLocalBounds().removeFromTop (headerHeight).reduced (10, 0), juce::Justification::centredRight);

@@ -351,7 +351,7 @@ void Inspector::paint (juce::Graphics& g)
     g.fillAll (colour (Token::surface));
     g.setColour (colour (Token::border));
     g.drawVerticalLine (getWidth() - 1, 0.0f, static_cast<float> (getHeight()));
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.setFont (font (Type::strong));
     g.setColour (colour (Token::textDim));
     if (regionName.isVisible())
         g.drawText ("REGION", 12, regionTop, getWidth() - 24, 18, juce::Justification::left);
@@ -361,7 +361,7 @@ void Inspector::paint (juce::Graphics& g)
         g.drawText ("NOTE", 12, noteTop, getWidth() - 24, 18, juce::Justification::left);
     if (! regionName.isVisible() && ! trackName.isVisible())
         g.drawText ("Select a track or region.", getLocalBounds().reduced (12), juce::Justification::centredTop);
-    g.setFont (juce::FontOptions (12.0f));
+    g.setFont (font (Type::body));
     auto label = [&] (juce::Component& c, const juce::String& text) {
         if (c.isVisible())
             g.drawText (text, 12, c.getY(), 70, c.getHeight(), juce::Justification::centredLeft);

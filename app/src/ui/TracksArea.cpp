@@ -23,7 +23,7 @@ juce::Colour regionColour (const model::ProjectModel& m, const model::Region& r)
 void drawPlayheadLine (juce::Graphics& g, float x, float top, float bottom)
 {
     const auto px = static_cast<float> (juce::roundToInt (x));
-    g.setColour (juce::Colours::black.withAlpha (Theme::get().isDark() ? 0.45f : 0.15f));
+    g.setColour (depth::shade (0.45f, 0.15f));
     g.fillRect (px - 1.0f, top, 3.0f, bottom - top);
     g.setColour (colour (Token::playhead));
     g.fillRect (px, top, 1.0f, bottom - top);
@@ -162,7 +162,7 @@ void Ruler::paint (juce::Graphics& g)
     const auto px = static_cast<float> (juce::roundToInt (v.tickToX (static_cast<double> (studio.playhead())))) + 0.5f;
     juce::Path handle;
     handle.addTriangle (px - 5.0f, static_cast<float> (cycleStrip), px + 5.0f, static_cast<float> (cycleStrip), px, cycleStrip + 7.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.4f));
+    g.setColour (depth::shade (0.4f, 0.2f));
     g.fillPath (handle, juce::AffineTransform::translation (0.0f, 1.0f));
     g.setColour (colour (Token::playhead));
     g.fillPath (handle);
@@ -787,7 +787,7 @@ void Timeline::paintAutomation (juce::Graphics& g, const AutomationHit& lane)
         g.drawEllipse (dot, 1.5f);
     }
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (11.0f));
+    g.setFont (font (Type::small));
     g.drawText (studio.automationTargetName (lane.trackId, lane.target), lane.box.reduced (6.0f, 2.0f), juce::Justification::topLeft);
     if (autoDrag == AutoDrag::band && autoLane.box == lane.box)
     {
@@ -1127,13 +1127,14 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
     }
     if (ghost)
         return;
-    // Collaborators' selections, in their colours; several stack 1 px apart (05 §5).
-    float offset = 0.0f;
+    // Collaborators' selections, in their colours; several stack 1.5 px apart (05 §5). The first
+    // sits just inside the region's edge so it covers whole pixels against the dark body.
+    float offset = -0.75f;
     for (const auto* who : studio.collaborators())
         if (std::find (who->state.regions.begin(), who->state.regions.end(), r.id) != who->state.regions.end())
         {
             g.setColour (colourOf (*who));
-            g.drawRoundedRectangle (box.expanded (offset), radius::r1 + offset, 1.5f);
+            g.drawRoundedRectangle (box.expanded (offset), std::max (0.0f, radius::r1 + offset), 1.5f);
             offset += 1.5f;
         }
 }
@@ -1179,7 +1180,7 @@ void Timeline::paint (juce::Graphics& g)
         // The loop region: a light wash with its edges marked, so it reads across every lane.
         const auto x1 = static_cast<float> (juce::roundToInt (studio.view.tickToX (static_cast<double> (m.info.cycle.start))));
         const auto x2 = static_cast<float> (juce::roundToInt (studio.view.tickToX (static_cast<double> (m.info.cycle.end))));
-        g.setColour (Theme::get().isDark() ? juce::Colours::white.withAlpha (0.045f) : juce::Colours::black.withAlpha (0.04f));
+        g.setColour (depth::wash (0.045f, 0.04f));
         g.fillRect (x1, 0.0f, x2 - x1, static_cast<float> (getHeight()));
         g.setColour (colour (Token::loop).withAlpha (0.7f));
         g.fillRect (x1, 0.0f, 1.0f, static_cast<float> (getHeight()));
@@ -1805,7 +1806,7 @@ void TracksArea::paintOverChildren (juce::Graphics& g)
 {
     // The header column sits above the canvas: a short shadow falls onto the lanes.
     const auto x = static_cast<float> (headerWidth);
-    const auto a = juce::Colours::black.withAlpha (Theme::get().isDark() ? 0.3f : 0.1f);
+    const auto a = depth::shade (0.3f, 0.1f);
     g.setGradientFill (juce::ColourGradient::horizontal (a, x, a.withAlpha (0.0f), x + 5.0f));
     g.fillRect (x, static_cast<float> (rulerComponent.getY()), 5.0f, static_cast<float> (getHeight()));
     g.setColour (colour (Token::border));

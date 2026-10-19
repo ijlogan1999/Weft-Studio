@@ -905,7 +905,7 @@ void PianoRoll::paint (juce::Graphics& g)
     if (regions.empty())
     {
         g.setColour (colour (Token::textDim));
-        g.setFont (juce::FontOptions (15.0f));
+        g.setFont (font (Type::title));
         g.drawText ("Double-click a MIDI region to edit its notes.", getLocalBounds().withTrimmedTop (toolbarHeight), juce::Justification::centred);
         return;
     }
@@ -939,7 +939,7 @@ void PianoRoll::paintKeyboard (juce::Graphics& g)
     const juce::Graphics::ScopedSaveState save (g);
     g.reduceClipRegion (area);
     g.fillAll (colour (Token::text));
-    g.setFont (juce::FontOptions (10.0f));
+    g.setFont (font (Type::small));
     const auto first = yToPitch (static_cast<float> (area.getBottom() - 1));
     for (int pitch = first; pitch <= std::min (127, topPitch); ++pitch)
     {
@@ -979,7 +979,7 @@ void PianoRoll::paintRuler (juce::Graphics& g)
             g.setColour (trackColour().withAlpha (0.8f));
             g.fillRect (juce::Rectangle<float> (x0, static_cast<float> (area.getBottom() - 5), x1 - x0, 5.0f));
         }
-    g.setFont (juce::FontOptions (11.0f));
+    g.setFont (font (Type::monoSmall));
     const auto start = m.signatures.barAt (std::max<Ticks> (0, static_cast<Ticks> (xToTick (area.getX())))).bar;
     int lastLabel = -1000;
     for (int bar = start;; ++bar)
@@ -1050,7 +1050,7 @@ void PianoRoll::paintNotes (juce::Graphics& g)
     const auto& sel = studio.piano.selection;
     const bool moving = (drag == Drag::move || drag == Drag::copy) && (deltaTicks != 0 || deltaPitch != 0);
     const bool resizing = drag == Drag::resizeLeft || drag == Drag::resizeRight;
-    g.setFont (juce::FontOptions (10.0f));
+    g.setFont (font (Type::small));
     for (const auto& n : shownNotes())
     {
         auto b = n.bounds;
@@ -1114,7 +1114,7 @@ void PianoRoll::paintLane (juce::Graphics& g)
     g.setColour (colour (Token::surfaceRaised));
     g.fillRect (juce::Rectangle<int> (0, area.getY() + 1, keyboardWidth, area.getHeight()));
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (10.0f));
+    g.setFont (font (Type::small));
     g.drawFittedText (laneName (lane), juce::Rectangle<int> (2, area.getY() + 4, keyboardWidth - 4, 40), juce::Justification::topLeft, 3);
 
     const auto base = trackColour();

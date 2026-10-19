@@ -12,7 +12,7 @@ GenericPluginEditor::GenericPluginEditor (std::shared_ptr<engine::Processor> pro
 {
     setTitle (name);
     message.setJustificationType (juce::Justification::centred);
-    message.setFont (juce::FontOptions (13.0f));
+    message.setFont (font (Type::body));
     addChildComponent (message);
     if (proc == nullptr || proc->isPlaceholder())
     {
@@ -27,7 +27,7 @@ GenericPluginEditor::GenericPluginEditor (std::shared_ptr<engine::Processor> pro
         const auto& info = infos[i];
         Row row;
         row.label = std::make_unique<juce::Label> (juce::String(), juce::String (info.name));
-        row.label->setFont (juce::FontOptions (12.0f));
+        row.label->setFont (font (Type::body));
         row.slider = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
         auto& s = *row.slider;
         s.setRange (0.0, 1.0, info.steps > 1 ? 1.0 / (info.steps - 1) : 0.0);
@@ -307,7 +307,7 @@ void PluginManager::paintCell (juce::Graphics& g, int row, int column, int width
     const auto& all = studio.plugins().plugins();
     const auto failed = row < static_cast<int> (all.size()) && all[static_cast<std::size_t> (row)].status == engine::PluginStatus::failed;
     g.setColour (failed && column == colStatus ? colour (Token::warning) : colour (Token::text));
-    g.setFont (juce::FontOptions (12.0f));
+    g.setFont (font (Type::body));
     g.drawText (cellText (row, column), 4, 0, width - 8, height, juce::Justification::centredLeft, true);
 }
 

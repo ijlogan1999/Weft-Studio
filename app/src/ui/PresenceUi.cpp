@@ -62,7 +62,7 @@ void drawBadge (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c, c
         g.drawEllipse (box.expanded (2.0f), 1.5f);
     }
     g.setColour (recording ? colour (Token::onRecord) : textOn (c));
-    g.setFont (box.getHeight() >= 20.0f ? font (Type::caption) : font (Type::caption).withPointHeight (box.getHeight() * 0.5f));
+    g.setFont (font (box.getHeight() >= 20.0f ? Type::caption : Type::small));
     g.drawText (text, box, juce::Justification::centred, false);
 }
 

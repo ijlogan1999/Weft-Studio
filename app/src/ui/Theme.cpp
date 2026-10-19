@@ -542,9 +542,11 @@ juce::Font font (Type type)
     switch (type)
     {
         case Type::caption: return plex (t.semiBold, 11.0f).withExtraKerningFactor (0.06f);
+        case Type::small: return plex (t.regular, 11.0f);
         case Type::body: return plex (t.regular, 12.0f);
         case Type::strong: return plex (t.medium, 13.0f);
         case Type::title: return plex (t.semiBold, 15.0f);
+        case Type::display: return plex (t.semiBold, 24.0f);
         case Type::monoSmall: return plex (t.mono, 11.0f);
         case Type::monoValue: return plex (t.monoMedium, 12.0f);
         case Type::monoCounter: return plex (t.monoMedium, 20.0f);
@@ -633,6 +635,12 @@ void focusRing (juce::Graphics& g, juce::Rectangle<float> r, float rad)
 {
     g.setColour (colour (Token::accent));
     g.drawRoundedRectangle (r.expanded (2.0f), rad + 2.0f, 2.0f);
+}
+juce::Colour shade (float darkAlpha, float lightAlpha) { return juce::Colours::black.withAlpha (Theme::get().isDark() ? darkAlpha : lightAlpha); }
+
+juce::Colour wash (float darkAlpha, float lightAlpha)
+{
+    return Theme::get().isDark() ? juce::Colours::white.withAlpha (darkAlpha) : juce::Colours::black.withAlpha (lightAlpha);
 }
 } // namespace depth
 

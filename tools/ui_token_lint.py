@@ -19,7 +19,7 @@ RULES = [
     (re.compile(r"FontOptions\s*\(\s*[\d.]"), "font size literal: use font (Type::...)"),
     (re.compile(r"\bFont\s*\(\s*[\d.]"), "font size literal: use font (Type::...)"),
     (re.compile(r"setFont\s*\(\s*[\d.]"), "font size literal: use font (Type::...)"),
-    (re.compile(r"withHeight\s*\(\s*[\d.]+f?\s*\)\s*\)"), "font size literal: use font (Type::...)"),
+    (re.compile(r"\bfont\s*\(\s*Type::\w+\s*\)\s*\.with(Point)?Height\s*\("), "font size: use font (Type::...)"),
     (re.compile(r"withPointHeight\s*\("), "font size: use font (Type::...)"),
 ]
 

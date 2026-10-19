@@ -162,7 +162,7 @@ void InsertSlot::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat().reduced (0.0f, 1.0f);
     g.setColour (pluginId.empty() ? colour (Token::background) : placeholder ? colour (Token::warning) : colour (Token::surfaceRaised));
     g.fillRoundedRectangle (r, 3.0f);
-    g.setFont (juce::FontOptions (11.0f));
+    g.setFont (font (Type::small));
     if (pluginId.empty())
     {
         g.setColour (colour (Token::textDim));
@@ -300,7 +300,7 @@ void SendSlot::paint (juce::Graphics& g)
 ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (trackId))
 {
     name.setJustificationType (juce::Justification::centred);
-    name.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    name.setFont (font (Type::strong));
     name.setEditable (false, ! isMaster());
     describe (name, "Channel name", isMaster() ? juce::String ("Master") : juce::String ("Double-click to rename"));
     name.onTextChange = [this] {
@@ -390,7 +390,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     addAndMakeVisible (volume);
 
     readout.setJustificationType (juce::Justification::centred);
-    readout.setFont (juce::FontOptions (11.0f));
+    readout.setFont (font (Type::monoSmall));
     readout.setEditable (false, true);
     describe (readout, "Volume in dB", "Double-click to type a level");
     readout.onTextChange = [this] {
@@ -702,7 +702,7 @@ void ChannelStrip::paint (juce::Graphics& g)
         drawLock (g, juce::Rectangle<float> (static_cast<float> (getWidth()) - 16.0f, 9.0f, 10.0f, 13.0f),
                   studio.lockedByOther (id) ? colour (Token::warning) : colour (Token::textDim));
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (10.0f));
+    g.setFont (font (Type::monoSmall));
     if (! slotArea.isEmpty())
         g.drawHorizontalLine (slotArea.getY() - 1, static_cast<float> (slotArea.getX()), static_cast<float> (slotArea.getRight()));
 }

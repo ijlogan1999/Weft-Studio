@@ -25,6 +25,8 @@ original or redistributable and be listed here.
 | ↳ HarfBuzz (inside JUCE) | | MIT-Modern-Variant | yes | |
 | ↳ SheenBidi (inside JUCE) | | Apache-2.0 | yes | |
 | ↳ pslextensions (inside JUCE) | | LicenseRef-Public-Domain | yes | |
+| PlexMono | 1.1.0 | OFL-1.1 | yes | Typeface for time, tempo and level readouts, embedded in the app |
+| PlexSans | 1.1.0 | OFL-1.1 | yes | UI typeface (Regular, Medium, SemiBold), embedded in the app |
 
 ## Rust crates linked into the app (via weft-ffi)
 

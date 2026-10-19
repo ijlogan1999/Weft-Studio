@@ -1668,6 +1668,7 @@ void Studio::startMediaSync()
         if (pool.loadPartial (d.partFile, hash, ref->lengthSamples) && fresh)
             syncEngine();
         peakCache.erase (hash);
+        waveCache.erase (hash);
         sendChangeMessage();
     };
     mediaSyncer->onDownloaded = [this] (const std::string& hash, const fs::path&) { mediaDownloaded (hash); };
@@ -1692,6 +1693,7 @@ void Studio::mediaDownloaded (const std::string& hash)
             setStatus ("Couldn't open downloaded audio: " + juce::String::fromUTF8 (error.c_str()));
     }
     peakCache.erase (hash);
+    waveCache.erase (hash);
     syncEngine();
     sendChangeMessage();
 }

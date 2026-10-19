@@ -14,9 +14,9 @@ namespace
 {
 constexpr float pad = 8.0f;
 
-juce::Font bodyFont() { return juce::FontOptions (13.0f); }
-juce::Font smallFont() { return juce::FontOptions (11.0f); }
-juce::Font nameFont() { return juce::FontOptions (12.0f, juce::Font::bold); }
+juce::Font bodyFont() { return font (Type::body); }
+juce::Font smallFont() { return font (Type::small); }
+juce::Font nameFont() { return font (Type::strong); }
 
 void styleEditor (juce::TextEditor& e, const juce::String& hint, bool multiLine)
 {
@@ -488,7 +488,7 @@ public:
                 s.append (before, bodyFont(), colour (Token::text));
                 chars += before.length();
                 const auto linkText = juce::String::fromUTF8 (shown.data() + link.start, static_cast<int> (link.length));
-                s.append (linkText, juce::Font (juce::FontOptions (13.0f)).withStyle (juce::Font::underlined), colour (Token::accent));
+                s.append (linkText, font (Type::body).withStyle (juce::Font::underlined), colour (Token::accent));
                 spans.push_back ({ { chars, chars + linkText.length() }, link.pos });
                 chars += linkText.length();
                 at = link.start + link.length;

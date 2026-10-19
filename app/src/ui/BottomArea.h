@@ -67,7 +67,7 @@ public:
     {
         g.fillAll (colour (Token::surface));
         g.setColour (colour (Token::textDim));
-        g.setFont (juce::FontOptions (15.0f));
+        g.setFont (font (Type::title));
         g.drawText (getTitle() + ": " + text, getLocalBounds(), juce::Justification::centred);
     }
 

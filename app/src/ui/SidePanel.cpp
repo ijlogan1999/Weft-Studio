@@ -99,10 +99,10 @@ void MediaList::paintListBoxItem (int row, juce::Graphics& g, int width, int hei
     if (selected)
         g.fillAll (colour (Token::surfaceRaised));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     g.drawText (juce::String (item.name), 8, 2, width - 16, height / 2, juce::Justification::bottomLeft, true);
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (11.0f));
+    g.setFont (font (Type::small));
     const auto used = item.regions == 1 ? juce::String ("1 region") : juce::String (item.regions) + " regions";
     g.drawText (juce::String (item.seconds, 1) + " s  ·  " + used, 8, height / 2, width - 16, height / 2 - 2, juce::Justification::topLeft);
 }

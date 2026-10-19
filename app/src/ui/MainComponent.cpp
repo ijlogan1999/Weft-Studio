@@ -280,7 +280,7 @@ void MainComponent::paintOverChildren (juce::Graphics& g)
         if (edge.isEmpty())
             return;
         const auto r = edge.toFloat();
-        const auto a = juce::Colours::black.withAlpha (Theme::get().isDark() ? 0.35f : 0.12f);
+        const auto a = depth::shade (0.35f, 0.12f);
         g.setGradientFill (down ? juce::ColourGradient::vertical (a, r.getY(), a.withAlpha (0.0f), r.getBottom())
                                 : juce::ColourGradient::horizontal (a, r.getX(), a.withAlpha (0.0f), r.getRight()));
         g.fillRect (r);
