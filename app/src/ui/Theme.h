@@ -186,7 +186,9 @@ enum class ButtonRole
 /** Buttons whose edges are connected (`setConnectedEdges`) are segments of a group: the group
     paints one raised frame behind them (`paintGroup`) and each segment draws only its state. */
 void paintGroup (juce::Graphics&, juce::Rectangle<int> bounds);
-void setRole (juce::Button&, ButtonRole);
+/** `tintedWhenOff` keeps the role's colour on the label while off (the transport's record
+    button, so it is found at a glance); otherwise an off button reads like any other. */
+void setRole (juce::Button&, ButtonRole, bool tintedWhenOff = false);
 ButtonRole roleOf (const juce::Component&);
 /** The colour a button's label or icon is drawn in. */
 juce::Colour buttonTextColour (const juce::Button&, bool over, bool down);

@@ -658,7 +658,7 @@ juce::Colour buttonTextColour (const juce::Button& b, bool over, bool down)
         return colour (Token::regionText);
     if (on && role == ButtonRole::record)
         return colour (Token::onRecord);
-    if (role == ButtonRole::record)
+    if (role == ButtonRole::record && static_cast<bool> (b.getProperties()["weftTintedWhenOff"]))
         return colour (Token::record);
     if (on && role == ButtonRole::tab)
         return colour (Token::text);
@@ -669,7 +669,7 @@ void paintGroup (juce::Graphics& g, juce::Rectangle<int> bounds)
 {
     const auto r = bounds.toFloat().reduced (0.5f, 1.0f);
     depth::raised (g, r, radius::r2);
-    g.setColour (juce::Colours::black.withAlpha (Theme::get().isDark() ? 0.35f : 0.12f));
+    g.setColour (depth::shade (0.35f, 0.12f));
     g.drawRoundedRectangle (r, radius::r2, 1.0f);
 }
 
@@ -765,7 +765,11 @@ juce::Path lock()
 }
 } // namespace icon----------------------------------------------------------------------------------
 
-void setRole (juce::Button& b, ButtonRole role) { b.getProperties().set ("weftRole", static_cast<int> (role)); }
+void setRole (juce::Button& b, ButtonRole role, bool tintedWhenOff)
+{
+    b.getProperties().set ("weftRole", static_cast<int> (role));
+    b.getProperties().set ("weftTintedWhenOff", tintedWhenOff);
+}
 
 ButtonRole roleOf (const juce::Component& c)
 {

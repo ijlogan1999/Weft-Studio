@@ -196,7 +196,26 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     Ui ui;
     auto& s = ui.studio.session();
     const auto audio = ui.m().trackOrder.front();
-    const auto file = writeSine (ui.folder.path / "Guitar.wav", 6.0);
+    // Plucked notes, so the waveform has the shape of a real part rather than a flat tone.
+    const auto file = ui.folder.path / "Guitar.wav";
+    {
+        media::AudioData a;
+        a.sampleRate = 48000;
+        const auto n = static_cast<std::size_t> (6.0 * a.sampleRate);
+        a.channels.assign (2, std::vector<float> (n));
+        const double freqs[] = { 196.0, 246.9, 293.7, 392.0, 329.6, 246.9 };
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const auto t = static_cast<double> (i) / a.sampleRate;
+            const auto note = static_cast<int> (t / 0.25);
+            const auto since = t - note * 0.25;
+            const auto accent = note % 4 == 0 ? 0.9 : 0.45 + 0.1 * (note % 3);
+            const auto v = accent * std::exp (-since * 9.0) * std::sin (2.0 * 3.141592653589793 * freqs[note % 6] * t);
+            a.channels[0][i] = static_cast<float> (v);
+            a.channels[1][i] = static_cast<float> (v * 0.9);
+        }
+        REQUIRE (media::writeWav (file, a, media::SampleFormat::int24));
+    }
     engine::DropTarget target;
     target.at = bar;
     target.trackId = audio;
@@ -232,4 +251,15 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     out.deleteFile();
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+
+    // Zoomed in on the start of the audio region, to check the waveform stays crisp.
+    ui.studio.view.pixelsPerTick *= 24.0;
+    ui.studio.view.originTick = bar;
+    ui.studio.edited();
+    ui.settle();
+    const auto zoomed = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
+    const auto zoomFile = out.getSiblingFile (out.getFileNameWithoutExtension() + "-zoom.png");
+    zoomFile.deleteFile();
+    juce::FileOutputStream zoomStream (zoomFile);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (zoomed, zoomStream));
 }

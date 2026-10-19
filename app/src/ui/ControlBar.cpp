@@ -33,7 +33,7 @@ ControlBar::ControlBar (Studio& s) : studio (s)
     play.setIcon (icon::play());
     record.setIcon (icon::record());
     cycle.setIcon (icon::cycle());
-    setRole (record, ButtonRole::record);
+    setRole (record, ButtonRole::record, true);
     // Buttons are grouped into segmented controls; each group paints one frame (paintGroup).
     for (const auto& group : groups())
         for (std::size_t i = 0; i < group.size(); ++i)

@@ -102,8 +102,9 @@ void Ruler::paint (juce::Graphics& g)
     }
     else
     {
-        g.setColour (colour (Token::loop).withAlpha (0.45f));
-        g.drawRoundedRectangle (cycleBox.reduced (0.5f), radius::r1, 1.0f);
+        // Off: a faint band, so the range can be found and dragged without reading as a rule.
+        g.setColour (colour (Token::loop).withAlpha (0.18f));
+        g.fillRoundedRectangle (cycleBox, radius::r1);
     }
     if (m.info.punch.enabled)
     {
@@ -115,7 +116,7 @@ void Ruler::paint (juce::Graphics& g)
     // Bars: a full tick and its number; beats as short ticks when there is room.
     g.setFont (font (Type::monoSmall));
     const auto labels = barLabels (m, v, getWidth());
-    if (labels.size() > 1 || ! labels.empty())
+    {
         for (std::size_t i = 0; i < labels.size(); ++i)
         {
             const auto [bar, x] = labels[i];
@@ -131,8 +132,16 @@ void Ruler::paint (juce::Graphics& g)
                     const auto bx = static_cast<float> (juce::roundToInt (v.tickToX (static_cast<double> (t))));
                     g.setColour (colour (Token::gridStrong));
                     g.fillRect (bx, static_cast<float> (rulerHeight - 6), 1.0f, 6.0f);
+                    // Zoomed in far enough, beats are numbered too ("2.3").
+                    if (beat * v.pixelsPerTick >= 48.0)
+                    {
+                        g.setColour (colour (Token::textDim));
+                        g.drawText (juce::String (bar) + "." + juce::String ((t - barTick) / beat + 1), juce::roundToInt (bx) + space::half,
+                                    cycleStrip + space::half, 40, 16, juce::Justification::left);
+                    }
                 }
         }
+    }
     g.setColour (colour (Token::border));
     g.fillRect (0, rulerHeight - 1, getWidth(), 1);
     // Markers: raised chips with their colour on the left edge.
@@ -1162,6 +1171,13 @@ void Timeline::paint (juce::Graphics& g)
         const auto lane = rowBounds (row);
         if (lane.getBottom() >= 0 && lane.getY() <= getHeight())
             g.fillRect (0.0f, lane.getBottom() - 1.0f, static_cast<float> (getWidth()), 1.0f);
+    }
+    // Below the last track the canvas recedes, so the end of the track list is plain.
+    const auto end = rows() > 0 ? rowBounds (rows() - 1).getBottom() : 0.0f;
+    if (end < static_cast<float> (getHeight()))
+    {
+        g.setColour (colour (Token::background).withAlpha (0.7f));
+        g.fillRect (0.0f, end, static_cast<float> (getWidth()), static_cast<float> (getHeight()) - end);
     }
     if (studio.automationView)
         for (int row = 0; row < rows(); ++row)
