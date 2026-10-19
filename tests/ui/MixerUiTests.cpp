@@ -482,9 +482,9 @@ TEST_CASE ("Screenshot of the mixer", "[.screenshot-mixer]")
     ui.studio.edited();
     ui.settle();
     auto& mixer = ui.main->bottom().mixerView();
-    mixer.stripFor (audio)->meter.update (0.5f, false, 1.0);
-    mixer.stripFor (keys)->meter.update (0.3f, false, 1.0);
-    mixer.masterStrip().meter.update (1.2f, true, 1.0);
+    mixer.stripFor (audio)->meter.update (0.5f, 0.18f, false, 1.0);
+    mixer.stripFor (keys)->meter.update (0.3f, 0.09f, false, 1.0);
+    mixer.masterStrip().meter.update (1.2f, 0.45f, true, 1.0);
     const auto image = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
     const auto* env = std::getenv ("WEFT_SCREENSHOT");
     juce::File out (env != nullptr ? juce::String (env) : juce::File::getCurrentWorkingDirectory().getChildFile ("mixer.png").getFullPathName());

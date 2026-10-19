@@ -149,6 +149,7 @@ public:
     struct Meter
     {
         float output = 0; // post-fader peak, linear
+        float rms = 0;    // post-fader RMS over about 300 ms, linear
         float input = 0;  // input peak of an armed track
         bool clip = false; // a sample went over 0 dBFS since the clip light was last reset
     };

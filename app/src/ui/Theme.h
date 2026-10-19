@@ -80,6 +80,7 @@ inline constexpr int lane = 56;        // automation lanes
 inline constexpr int strip = 72;       // mixer channel strips
 inline constexpr int gutter = 4;       // between zones; also the resize handles
 inline constexpr int icon = 16;
+inline constexpr int faderCap = 16;   // fader cap height; the fader's travel is inset by half of it
 inline constexpr int status = 24;      // the status bar
 } // namespace size
 
@@ -181,7 +182,8 @@ enum class ButtonRole
     mute,
     primary, // the default action in a dialog: accent fill
     tab,     // panel tabs: underline when on
-    flat     // borderless, for dense rows
+    flat,    // borderless, for dense rows
+    warning  // something needs attention: a missing plug-in, a disabled route
 };
 /** Buttons whose edges are connected (`setConnectedEdges`) are segments of a group: the group
     paints one raised frame behind them (`paintGroup`) and each segment draws only its state. */

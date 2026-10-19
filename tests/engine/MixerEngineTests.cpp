@@ -284,6 +284,12 @@ TEST_CASE ("AT-MIX-4: meters show the peak, latch clips until reset and hold the
     rig.engine.resetClip (s);
     CHECK_FALSE (rig.engine.takeMeter (s).clip);
 
+    // RMS (D-UI-15): a steady sine settles at amplitude / sqrt 2, 3 dB under its peak.
+    addMedia (rig, "b3:long", { sine (1000, amp, 96000), sine (1000, amp, 96000) });
+    const auto l = trackPlaying (rig, "Long", "b3:long");
+    playBoth (rig, 72000);
+    CHECK (db (rig.engine.takeMeter (l).rms) == Catch::Approx (-9.03).margin (0.1));
+
     // Peak hold: the highest peak shows for 2 s, then follows the level again.
     MeterBallistics meter;
     meter.update (amp, false, 0.0);

@@ -213,14 +213,15 @@ public:
                 case ButtonRole::solo: depth::tinted (g, r, rad, colour (Token::solo)); return;
                 case ButtonRole::mute: depth::tinted (g, r, rad, colour (Token::mute)); return;
                 case ButtonRole::primary: depth::tinted (g, r, rad, colour (Token::accent).brighter (down ? 0.0f : 0.1f)); return;
+                case ButtonRole::warning: depth::tinted (g, r, rad, colour (Token::warning)); return;
                 case ButtonRole::normal:
                 case ButtonRole::tab:
                 case ButtonRole::flat: depth::pressed (g, r, rad); return;
             }
         }
-        if (role == ButtonRole::primary)
+        if (role == ButtonRole::primary || role == ButtonRole::warning)
         {
-            depth::tinted (g, r, rad, colour (Token::accent).withMultipliedBrightness (over ? 1.08f : 1.0f));
+            depth::tinted (g, r, rad, colour (role == ButtonRole::primary ? Token::accent : Token::warning).withMultipliedBrightness (over ? 1.08f : 1.0f));
             return;
         }
         depth::raised (g, r, rad, over && enabled);
@@ -357,8 +358,8 @@ public:
         {
             const auto track = r.withSizeKeepingCentre (4.0f, r.getHeight());
             depth::well (g, track, radius::r1);
-            const auto cap = juce::Rectangle<float> (0, 0, std::min (28.0f, r.getWidth()), 16.0f).withCentre ({ r.getCentreX(), pos });
-            drawCap (g, cap, hot, s.isMouseButtonDown());
+            const auto cap = juce::Rectangle<float> (0, 0, std::min (28.0f, r.getWidth()), static_cast<float> (size::faderCap)).withCentre ({ r.getCentreX(), pos });
+            drawCap (g, cap, hot, s.isMouseButtonDown(), s.isMouseButtonDown() && juce::ModifierKeys::currentModifiers.isShiftDown());
             return;
         }
         const auto track = r.withSizeKeepingCentre (r.getWidth(), 4.0f);
@@ -366,10 +367,18 @@ public:
         g.setColour (hot ? colour (Token::text) : colour (Token::textDim));
         g.fillRoundedRectangle (track.withRight (pos), radius::r1);
         const auto thumb = juce::Rectangle<float> (0, 0, 8.0f, 14.0f).withCentre ({ pos, r.getCentreY() });
-        drawCap (g, thumb, hot, s.isMouseButtonDown());
+        drawCap (g, thumb, hot, s.isMouseButtonDown(), false);
     }
 
-    static void drawCap (juce::Graphics& g, juce::Rectangle<float> cap, bool hot, bool down)
+    /** Linear sliders travel between the cap's centres, so a scale drawn beside a fader can use
+        the same inset (size::faderCap / 2) and line up with it. */
+    int getSliderThumbRadius (juce::Slider& s) override
+    {
+        return s.getSliderStyle() == juce::Slider::LinearVertical ? size::faderCap / 2 : 4;
+    }
+
+    /** `fine`: Shift is held during the drag, so the cap's line turns accent to say so. */
+    static void drawCap (juce::Graphics& g, juce::Rectangle<float> cap, bool hot, bool down, bool fine)
     {
         depth::shadow (g, cap, radius::r1, depth::Level::panel);
         auto top = colour (Token::capTop), bottom = colour (Token::capBottom);
@@ -384,7 +393,7 @@ public:
         g.drawHorizontalLine (juce::roundToInt (cap.getY()), cap.getX() + 1.0f, cap.getRight() - 1.0f);
         if (cap.getWidth() > 12.0f)
         {
-            g.setColour (colour (Token::regionText));
+            g.setColour (fine ? colour (Token::accent) : colour (Token::regionText));
             g.fillRect (cap.withSizeKeepingCentre (cap.getWidth() - 8.0f, 2.0f));
         }
     }
@@ -658,6 +667,8 @@ juce::Colour buttonTextColour (const juce::Button& b, bool over, bool down)
         return colour (Token::regionText);
     if (on && role == ButtonRole::record)
         return colour (Token::onRecord);
+    if (role == ButtonRole::warning)
+        return colour (Token::onWarning);
     if (role == ButtonRole::record && static_cast<bool> (b.getProperties()["weftTintedWhenOff"]))
         return colour (Token::record);
     if (on && role == ButtonRole::tab)

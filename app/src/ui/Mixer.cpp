@@ -7,8 +7,8 @@ namespace weft::ui
 {
 namespace
 {
-constexpr int rowHeight = 20;
-constexpr int gap = 3;
+constexpr int rowHeight = size::control;
+constexpr int gap = space::half;
 const char* const automationModes[] = { "off", "read", "touch", "latch", "write" };
 const char* const feedbackText = "Would create a feedback loop";
 
@@ -23,25 +23,9 @@ model::AutomationTarget targetOf (const char* kind)
 
 } // namespace
 
-void KnobLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&)
+void KnobLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider& s)
 {
-    const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat().reduced (2.0f);
-    const auto radius = std::min (bounds.getWidth(), bounds.getHeight()) / 2.0f;
-    const auto line = std::max (2.0f, radius * 0.25f);
-    const auto arcRadius = radius - line / 2.0f;
-    const auto c = bounds.getCentre();
-    juce::Path track;
-    track.addCentredArc (c.x, c.y, arcRadius, arcRadius, 0.0f, start, end, true);
-    g.setColour (colour (Token::border));
-    g.strokePath (track, juce::PathStrokeType (line, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    const auto angle = start + pos * (end - start);
-    juce::Path value;
-    value.addCentredArc (c.x, c.y, arcRadius, arcRadius, 0.0f, start, angle, true);
-    g.setColour (colour (Token::accent));
-    g.strokePath (value, juce::PathStrokeType (line, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    const auto tip = c.getPointOnCircumference (arcRadius - line, angle);
-    g.setColour (colour (Token::text));
-    g.drawLine (juce::Line<float> (c, tip), 1.5f);
+    Theme::get().lookAndFeel().drawRotarySlider (g, x, y, w, h, pos, start, end, s);
 }
 
 namespace
@@ -51,17 +35,21 @@ void styleSlider (juce::Slider& s, juce::Slider::SliderStyle style, double min, 
     s.setSliderStyle (style);
     s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
     s.setRange (min, max, 0.0);
-    s.setDoubleClickReturnValue (true, resetTo, juce::ModifierKeys::altModifier); // Alt+click resets (F-MIX-2, F-MIX-3)
-    s.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier); // Shift-drag: fine
-    s.setWantsKeyboardFocus (false);
+    // Double-click or Alt+click resets (F-MIX-2, F-MIX-3); Shift-drag is fine adjustment.
+    s.setDoubleClickReturnValue (true, resetTo, juce::ModifierKeys::altModifier);
+    s.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
+    s.setWantsKeyboardFocus (true);
+    s.setMouseClickGrabsKeyboardFocus (false);
+    s.setHasFocusOutline (true);
     if (style != juce::Slider::LinearVertical)
         s.setLookAndFeel (&knobs);
 }
 
 void small (juce::TextButton& b)
 {
-    b.setWantsKeyboardFocus (false);
-    b.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    b.setWantsKeyboardFocus (true);
+    b.setMouseClickGrabsKeyboardFocus (false);
+    b.setHasFocusOutline (true);
 }
 
 void setDbSlider (juce::Slider& s, double db)
@@ -101,43 +89,76 @@ std::optional<double> fader::parseDb (const juce::String& text)
 
 // Meter --------------------------------------------------------------------------------------
 
-namespace
+float MeterView::proportion (float db)
 {
-float meterProportion (float db) { return std::clamp ((db + 60.0f) / 66.0f, 0.0f, 1.0f); }
-} // namespace
+    if (db <= static_cast<float> (fader::minDb))
+        return 0.0f;
+    return static_cast<float> (fader::range().convertTo0to1 (std::min (static_cast<double> (db), fader::maxDb)));
+}
 
-void MeterView::update (float peak, bool clip, double now)
+juce::Rectangle<float> MeterView::barArea() const
 {
-    const auto before = std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip());
+    return getLocalBounds().toFloat().withTrimmedTop (static_cast<float> (clipHeight + clipGap)).reduced (0.0f, size::faderCap / 2.0f);
+}
+
+void MeterView::update (float peak, float rms, bool clip, double now)
+{
+    const auto before = std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip(), rmsDb);
     ballistics.update (peak, clip, now);
-    if (std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip()) != before)
+    rmsLinear = rms;
+    rmsDb = engine::gainToDb (rms);
+    if (std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip(), rmsDb) != before)
         repaint();
 }
 
 void MeterView::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    auto led = r.removeFromTop (static_cast<float> (clipHeight));
-    g.setColour (ballistics.clip() ? colour (Token::record) : colour (Token::surfaceRaised));
-    g.fillRect (led.reduced (1.0f, 0.0f));
-    r.removeFromTop (2.0f);
-    g.setColour (colour (Token::background));
-    g.fillRect (r);
-    const auto level = meterProportion (ballistics.levelDb());
-    const auto bar = r.withTop (r.getBottom() - r.getHeight() * level);
-    g.setColour (ballistics.levelDb() > -0.1f ? colour (Token::warning) : colour (Token::accent));
-    g.fillRect (bar.reduced (1.0f, 0.0f));
-    if (ballistics.holdDb() > -60.0f)
+    const auto bounds = getLocalBounds().toFloat();
+    // The clip light: dark until something clips, then lit until clicked.
+    const auto led = bounds.withHeight (static_cast<float> (clipHeight));
+    if (ballistics.clip())
+        depth::tinted (g, led, radius::r1, colour (Token::meterClip));
+    else
+        depth::well (g, led, radius::r1);
+    // The well runs the fader's full travel, cap ends included, so the two look like one unit.
+    const auto bars = barArea();
+    const auto well = bars.expanded (0.0f, size::faderCap / 2.0f);
+    depth::well (g, well, radius::r1);
+    const auto inner = bars.reduced (2.0f, 0.0f);
+    auto yOf = [&] (float db) { return inner.getBottom() - inner.getHeight() * proportion (db); };
+    // Zones are fixed in dB, so the colour says the level as much as the height does.
+    const auto hotY = yOf (-18.0f), clipY = yOf (-6.0f);
+    auto fillZones = [&] (float top, float alpha) {
+        if (top >= inner.getBottom())
+            return;
+        const juce::Graphics::ScopedSaveState save (g);
+        g.reduceClipRegion (inner.withTop (top).toNearestInt());
+        g.setColour (colour (Token::meterSafe).withAlpha (alpha));
+        g.fillRect (inner.withTop (hotY));
+        g.setColour (colour (Token::meterHot).withAlpha (alpha));
+        g.fillRect (inner.withTop (clipY).withBottom (hotY));
+        g.setColour (colour (Token::meterClip).withAlpha (alpha));
+        g.fillRect (inner.withBottom (clipY));
+    };
+    // Peak: the lighter tone; RMS: the solid bar inside it.
+    fillZones (yOf (ballistics.levelDb()), 0.4f);
+    fillZones (yOf (rmsDb), 1.0f);
+    // Tick lines every 6 dB down to -48, the 0 dB line brighter.
+    for (const auto db : { 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f })
     {
-        const auto y = r.getBottom() - r.getHeight() * meterProportion (ballistics.holdDb());
-        g.setColour (colour (Token::text));
-        g.drawHorizontalLine (static_cast<int> (y), r.getX() + 1.0f, r.getRight() - 1.0f);
+        g.setColour (db == 0.0f ? colour (Token::text).withAlpha (0.35f) : colour (Token::well).withAlpha (0.6f));
+        g.fillRect (inner.getX(), std::round (yOf (db)), inner.getWidth(), 1.0f);
+    }
+    if (ballistics.holdDb() > static_cast<float> (fader::minDb))
+    {
+        g.setColour (ballistics.holdDb() > -6.0f ? colour (Token::meterClip) : colour (Token::text));
+        g.fillRect (inner.getX(), std::round (yOf (ballistics.holdDb())), inner.getWidth(), 2.0f);
     }
 }
 
 void MeterView::mouseDown (const juce::MouseEvent& e)
 {
-    if (e.y <= clipHeight + 2)
+    if (e.y <= clipHeight + clipGap)
     {
         ballistics.resetClip();
         if (onResetClip)
@@ -160,8 +181,13 @@ InsertSlot::InsertSlot (ChannelStrip& strip, std::size_t i, const model::PluginI
 void InsertSlot::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (0.0f, 1.0f);
-    g.setColour (pluginId.empty() ? colour (Token::background) : placeholder ? colour (Token::warning) : colour (Token::surfaceRaised));
-    g.fillRoundedRectangle (r, 3.0f);
+    // Empty slots sink into the strip; filled ones sit on it like buttons.
+    if (pluginId.empty())
+        depth::well (g, r, radius::r1);
+    else if (placeholder)
+        depth::tinted (g, r, radius::r1, colour (Token::warning));
+    else
+        depth::raised (g, r, radius::r1, isMouseOver());
     g.setFont (font (Type::small));
     if (pluginId.empty())
     {
@@ -170,8 +196,19 @@ void InsertSlot::paint (juce::Graphics& g)
         return;
     }
     const auto edge = r.removeFromLeft (static_cast<float> (bypassWidth));
-    g.setColour (bypassed ? colour (Token::textDim) : colour (Token::accent));
-    g.fillEllipse (edge.withSizeKeepingCentre (6.0f, 6.0f));
+    // The bypass dot: lit (meter green) while the effect runs, hollow when bypassed. Not the
+    // accent, which is kept for selection and record.
+    const auto dot = edge.withSizeKeepingCentre (6.0f, 6.0f);
+    if (bypassed)
+    {
+        g.setColour (colour (Token::textDim));
+        g.drawEllipse (dot.reduced (0.5f), 1.0f);
+    }
+    else
+    {
+        g.setColour (colour (Token::meterSafe));
+        g.fillEllipse (dot);
+    }
     g.setColour (placeholder ? colour (Token::onWarning) : bypassed ? colour (Token::textDim) : colour (Token::text));
     g.drawText (label, r.reduced (2.0f, 0.0f), juce::Justification::centredLeft, true);
 }
@@ -233,18 +270,15 @@ SendSlot::SendSlot (ChannelStrip& strip, std::size_t i, const model::Send* send,
     addAndMakeVisible (target);
     if (send == nullptr)
     {
-        target.setColour (juce::TextButton::textColourOffId, colour (Token::textDim));
+        setRole (target, ButtonRole::flat);
         return;
     }
     if (disabledEdge)
-    {
-        target.setColour (juce::TextButton::buttonColourId, colour (Token::warning));
-        target.setColour (juce::TextButton::textColourOffId, colour (Token::onWarning));
-    }
+        setRole (target, ButtonRole::warning);
     styleSlider (level, juce::Slider::RotaryHorizontalVerticalDrag, fader::minDb, fader::maxDb, 0.0, *knobs);
     level.setSkewFactor (3.0);
     level.setValue (std::clamp (send->levelDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
-    describe (level, "Send level", "Send level (Alt+click: 0 dB)");
+    describe (level, "Send level", "Send level (double-click: 0 dB)");
     level.onDragStart = [this] { owner.studio.session().beginGesture ("Send Level"); };
     level.onDragEnd = [this] { owner.studio.session().endGesture(); };
     level.onValueChange = [this] {
@@ -266,8 +300,7 @@ SendSlot::SendSlot (ChannelStrip& strip, std::size_t i, const model::Send* send,
     small (mute);
     mute.setClickingTogglesState (false);
     mute.setToggleState (send->muted, juce::dontSendNotification);
-    mute.setColour (juce::TextButton::buttonOnColourId, colour (Token::warning));
-    mute.setColour (juce::TextButton::textColourOnId, colour (Token::onWarning));
+    setRole (mute, ButtonRole::mute);
     mute.onClick = [this] { owner.pickSend (index, ChannelStrip::itemMuteSend); };
     addAndMakeVisible (mute);
 }
@@ -282,7 +315,7 @@ void SendSlot::resized()
     }
     mute.setBounds (r.removeFromRight (16));
     mode.setBounds (r.removeFromRight (28));
-    level.setBounds (r.removeFromRight (22).expanded (0, 1));
+    level.setBounds (r.removeFromRight (r.getHeight()));
     target.setBounds (r);
 }
 
@@ -364,7 +397,8 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
 
     styleSlider (volume, juce::Slider::LinearVertical, fader::minDb, fader::maxDb, 0.0, *knobs);
     volume.setNormalisableRange (fader::range());
-    describe (volume, "Volume", "Volume (Alt+click: 0 dB, Shift-drag: fine)");
+    describe (volume, "Volume", "Volume (double-click: 0 dB, Shift-drag: fine)");
+    volume.addMouseListener (&faderHover, false);
     volume.textFromValueFunction = [] (double v) { return fader::dbText (v) + " dB"; };
     volume.onDragStart = [this] {
         liveVolume = studio.automationLive (id, targetOf ("volume"));
@@ -387,10 +421,14 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
         }
         setVolume (db);
     };
+    volume.onDragStart = [this, start = volume.onDragStart] {
+        start();
+        repaint();
+    };
     addAndMakeVisible (volume);
 
     readout.setJustificationType (juce::Justification::centred);
-    readout.setFont (font (Type::monoSmall));
+    readout.setFont (font (Type::monoValue));
     readout.setEditable (false, true);
     describe (readout, "Volume in dB", "Double-click to type a level");
     readout.onTextChange = [this] {
@@ -401,7 +439,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     };
     addAndMakeVisible (readout);
 
-    describe (meter, "Meter", "Peak meter (click the light to reset the clip indicator)");
+    describe (meter, "Meter", "Level: RMS bar, peak above it (click the light to reset the clip indicator)");
     meter.onResetClip = [this] { studio.engine().resetClip (isMaster() ? Id() : id); };
     addAndMakeVisible (meter);
 
@@ -414,14 +452,9 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     describe (solo, "Solo", "Solo (Ctrl+click: solo this channel only)");
     describe (arm, "Record enable");
     describe (monitor, "Input monitoring", "Input monitoring: auto, on, off");
-    mute.setColour (juce::TextButton::buttonOnColourId, colour (Token::warning));
-    mute.setColour (juce::TextButton::textColourOnId, colour (Token::onWarning));
-    solo.setColour (juce::TextButton::buttonOnColourId, colour (Token::accent));
-    solo.setColour (juce::TextButton::textColourOnId, colour (Token::onAccent));
-    arm.setColour (juce::TextButton::buttonOnColourId, colour (Token::record));
-    arm.setColour (juce::TextButton::textColourOnId, colour (Token::onRecord));
-    monitor.setColour (juce::TextButton::buttonOnColourId, colour (Token::accent));
-    monitor.setColour (juce::TextButton::textColourOnId, colour (Token::onAccent));
+    setRole (mute, ButtonRole::mute);
+    setRole (solo, ButtonRole::solo);
+    setRole (arm, ButtonRole::record);
     mute.onClick = [this] {
         const auto* t = track();
         if (t == nullptr)
@@ -499,8 +532,8 @@ int ChannelStrip::shownSendRows() const
 int ChannelStrip::preferredHeight() const
 {
     // name, input, slots, output, automation, pan, fader (min), readout, buttons
-    return 6 + rowHeight + gap + rowHeight + gap + (shownInsertRows() + 1 + shownSendRows()) * rowHeight + gap + rowHeight + gap + rowHeight + gap + 36 + 90
-           + 18 + rowHeight + 8;
+    return space::s1 + rowHeight + gap + rowHeight + gap + (shownInsertRows() + 1 + shownSendRows()) * rowHeight + gap + rowHeight + gap + rowHeight + gap
+           + space::s4 + gap + 120 + gap + rowHeight + gap + rowHeight + space::s1;
 }
 
 void ChannelStrip::rebuildSlots()
@@ -564,8 +597,7 @@ void ChannelStrip::refresh()
 
     const auto kind = t->kind;
     input.setVisible (kind == model::TrackKind::audio || kind == model::TrackKind::instrument);
-    input.setColour (juce::TextButton::buttonColourId, colour (Token::surfaceRaised));
-    input.setColour (juce::TextButton::textColourOffId, colour (Token::text));
+    setRole (input, ButtonRole::normal);
     if (kind == model::TrackKind::instrument)
     {
         const auto proc = t->strip.instrument ? studio.processor (t->strip.instrument->id) : nullptr;
@@ -574,10 +606,7 @@ void ChannelStrip::refresh()
         input.setButtonText (label);
         describe (input, "Instrument", missing ? label + ": Not installed on this computer" : "Instrument: " + label);
         if (missing)
-        {
-            input.setColour (juce::TextButton::buttonColourId, colour (Token::warning));
-            input.setColour (juce::TextButton::textColourOffId, colour (Token::onWarning));
-        }
+            setRole (input, ButtonRole::warning);
     }
     else if (kind == model::TrackKind::audio)
     {
@@ -597,8 +626,8 @@ void ChannelStrip::refresh()
         const auto disabled = studio.model().disabledEdges.contains (model::RoutingEdge { id, t->output.busId, {} }.key());
         output.setButtonText (busName (t->output.busId));
         describe (output, "Output", disabled ? juce::String ("Disabled: feedback loop") : "Output: " + busName (t->output.busId));
-        output.setColour (juce::TextButton::buttonColourId, disabled ? colour (Token::warning) : colour (Token::surfaceRaised));
-        output.setColour (juce::TextButton::textColourOffId, disabled ? colour (Token::onWarning) : colour (Token::text));
+        setRole (output, disabled ? ButtonRole::warning : ButtonRole::normal);
+        output.repaint();
     }
 
     for (int i = 0; i < 5; ++i)
@@ -607,7 +636,7 @@ void ChannelStrip::refresh()
 
     pan.setVisible (! master);
     describe (pan, t->channels == 1 || kind == model::TrackKind::instrument ? juce::String ("Pan") : juce::String ("Balance"),
-              "Pan (Alt+click: centre)");
+              "Pan (double-click: centre)");
     if (! pan.isMouseButtonDown())
         pan.setValue (t->strip.pan * 100.0, juce::dontSendNotification);
     setDbSlider (volume, t->strip.volumeDb);
@@ -660,7 +689,7 @@ void ChannelStrip::refresh()
 void ChannelStrip::updateMeter (double now)
 {
     const auto m = studio.engine().takeMeter (isMaster() ? Id() : id);
-    meter.update (m.output, m.clip, now);
+    meter.update (m.output, m.rms, m.clip, now);
 }
 
 void ChannelStrip::followAutomation()
@@ -690,27 +719,78 @@ void ChannelStrip::paint (juce::Graphics& g)
 {
     const auto* t = track();
     const auto selected = ! isMaster() && studio.selectedTrack() == id;
-    g.fillAll (colour (Token::surface));
+    // Each strip is a raised panel on the mixer's ground, with the track colour along the top.
+    const auto panel = getLocalBounds().toFloat().reduced (1.0f, 0.0f);
+    depth::shadow (g, panel, radius::r1, depth::Level::panel);
+    g.setColour (selected ? colour (Token::hover) : colour (Token::surface));
+    g.fillRoundedRectangle (panel, radius::r1);
+    depth::highlight (g, panel, radius::r1);
     if (t != nullptr)
     {
         g.setColour (isMaster() ? colour (Token::textDim) : colourFor (t->color.palette, t->color.rgb));
-        g.fillRect (getLocalBounds().removeFromTop (4));
+        g.fillRect (panel.withHeight (4.0f));
     }
-    g.setColour (selected ? colour (Token::accent) : colour (Token::border));
-    g.drawRect (getLocalBounds(), selected ? 2 : 1);
+    if (selected)
+    {
+        g.setColour (colour (Token::accent));
+        g.fillRect (panel.withTrimmedTop (4.0f).withHeight (2.0f));
+    }
     if (! isMaster() && ! studio.lockTooltip (id).isEmpty())
         drawLock (g, juce::Rectangle<float> (static_cast<float> (getWidth()) - 16.0f, 9.0f, 10.0f, 13.0f),
                   studio.lockedByOther (id) ? colour (Token::warning) : colour (Token::textDim));
-    g.setColour (colour (Token::textDim));
-    g.setFont (font (Type::monoSmall));
     if (! slotArea.isEmpty())
-        g.drawHorizontalLine (slotArea.getY() - 1, static_cast<float> (slotArea.getX()), static_cast<float> (slotArea.getRight()));
+    {
+        g.setColour (colour (Token::lineSubtle));
+        g.fillRect (slotArea.getX(), slotArea.getY() - gap / 2 - 1, slotArea.getWidth(), 1);
+        g.fillRect (slotArea.getX(), slotArea.getBottom() + gap / 2, slotArea.getWidth(), 1);
+    }
+    // The dB scale between the fader and the meter: both use the fader's taper.
+    if (! scaleArea.isEmpty())
+    {
+        const auto travel = scaleArea.toFloat().reduced (0.0f, size::faderCap / 2.0f);
+        g.setFont (font (Type::monoSmall));
+        for (const auto db : { 6.0f, 0.0f, -6.0f, -12.0f, -24.0f, -48.0f, -90.0f })
+        {
+            const auto y = std::round (travel.getBottom() - travel.getHeight() * MeterView::proportion (db));
+            // Numbers only: the meter carries the tick lines, so the scale stays quiet.
+            g.setColour (db == 0.0f ? colour (Token::text) : colour (Token::textDim));
+            const auto label = db <= -90.0f ? juce::String ("inf") : db > 0.0f ? "+" + juce::String (juce::roundToInt (db)) : juce::String (juce::roundToInt (db));
+            g.drawText (label, juce::Rectangle<float> (travel.getX(), y - 6.0f, travel.getWidth() - 2.0f, 12.0f), juce::Justification::centredRight, false);
+        }
+    }
+    if (buttonRow.getWidth() > 0 && mute.isVisible())
+        paintGroup (g, buttonRow);
+}
+
+void ChannelStrip::paintOverChildren (juce::Graphics& g)
+{
+    // The fader's value tag: shown while the pointer is on the fader or dragging it, over the scale.
+    const bool dragging = volume.isMouseButtonDown();
+    if (! (volume.isMouseOver() || dragging) || ! volume.isEnabled())
+        return;
+    const auto fine = dragging && juce::ModifierKeys::currentModifiers.isShiftDown();
+    const auto db = isSilent (volume.getValue()) ? fader::silentDb : volume.getValue();
+    const auto text = fader::dbText (db) + (fine ? " fine" : "");
+    const auto f = font (Type::monoValue);
+    const auto w = static_cast<float> (juce::GlyphArrangement::getStringWidthInt (f, text)) + space::s1;
+    const auto travel = volume.getBounds().toFloat().reduced (0.0f, size::faderCap / 2.0f);
+    const auto y = travel.getBottom() - travel.getHeight() * static_cast<float> (volume.valueToProportionOfLength (volume.getValue()));
+    const auto tag = juce::Rectangle<float> (static_cast<float> (volume.getRight()) - 2.0f, y - 10.0f, w, 20.0f);
+    depth::shadow (g, tag, radius::r1, depth::Level::floating);
+    g.setColour (colour (Token::surfaceRaised));
+    g.fillRoundedRectangle (tag, radius::r1);
+    g.setColour (fine ? colour (Token::accent) : colour (Token::border));
+    g.drawRoundedRectangle (tag.reduced (0.5f), radius::r1, 1.0f);
+    g.setColour (colour (Token::text));
+    g.setFont (f);
+    g.drawText (text, tag, juce::Justification::centred, false);
 }
 
 void ChannelStrip::resized()
 {
-    auto r = getLocalBounds().reduced (4);
-    r.removeFromTop (2);
+    auto r = getLocalBounds().reduced (space::half + 1, 0);
+    r.removeFromTop (space::s1);
+    r.removeFromBottom (space::s1);
     name.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
     input.setBounds (r.removeFromTop (rowHeight));
@@ -728,14 +808,32 @@ void ChannelStrip::resized()
     r.removeFromTop (gap);
     automation.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
-    pan.setBounds (r.removeFromTop (36).withSizeKeepingCentre (32, 32));
-    auto buttons = r.removeFromBottom (rowHeight);
-    const auto bw = buttons.getWidth() / 4;
+    pan.setBounds (r.removeFromTop (space::s4).withSizeKeepingCentre (space::s4, space::s4));
+    r.removeFromTop (gap);
+    buttonRow = r.removeFromBottom (rowHeight);
+    auto buttons = buttonRow;
+    std::vector<juce::TextButton*> shown;
     for (auto* b : { &mute, &solo, &arm, &monitor })
-        b->setBounds (buttons.removeFromLeft (bw).reduced (1, 0));
-    readout.setBounds (r.removeFromBottom (18));
-    auto faderArea = r.reduced (0, 2);
-    meter.setBounds (faderArea.removeFromRight (16));
+        if (b->isVisible())
+            shown.push_back (b);
+    // A segmented group: one frame, the buttons share edges.
+    const auto bw = shown.empty() ? 0 : buttons.getWidth() / static_cast<int> (shown.size());
+    for (std::size_t i = 0; i < shown.size(); ++i)
+    {
+        shown[i]->setConnectedEdges ((i > 0 ? juce::Button::ConnectedOnLeft : 0) | (i + 1 < shown.size() ? juce::Button::ConnectedOnRight : 0));
+        shown[i]->setBounds (i + 1 < shown.size() ? buttons.removeFromLeft (bw) : buttons);
+    }
+    for (auto* b : { &mute, &solo, &arm, &monitor })
+        if (! b->isVisible())
+            b->setBounds ({});
+    r.removeFromBottom (gap);
+    readout.setBounds (r.removeFromBottom (rowHeight));
+    r.removeFromBottom (gap);
+    // Fader | scale | meter. The meter's clip light sits above the fader's travel.
+    auto faderArea = r;
+    meter.setBounds (faderArea.removeFromRight (space::s2));
+    faderArea.removeFromTop (MeterView::clipHeight + MeterView::clipGap);
+    scaleArea = faderArea.removeFromRight (space::s3 + space::half);
     volume.setBounds (faderArea);
 }
 
@@ -1118,7 +1216,7 @@ void MixerView::resized()
 {
     auto r = getLocalBounds();
     if (master != nullptr)
-        master->setBounds (r.removeFromRight (ChannelStrip::width + 6).withTrimmedLeft (6).withHeight (std::max (r.getHeight(), master->preferredHeight())));
+        master->setBounds (r.removeFromRight (ChannelStrip::width + space::s1).withTrimmedLeft (space::s1).withHeight (std::max (r.getHeight(), master->preferredHeight())));
     viewport.setBounds (r);
     const auto innerHeight = std::max (viewport.getMaximumVisibleHeight(), channelStrips.empty() ? 0 : channelStrips.front()->preferredHeight());
     content.setSize (static_cast<int> (channelStrips.size()) * ChannelStrip::width, innerHeight);
