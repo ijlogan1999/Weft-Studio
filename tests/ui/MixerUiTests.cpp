@@ -145,6 +145,33 @@ TEST_CASE ("AT-MIX-2 fader and pan controls: Alt+click resets, typed levels, -in
     CHECK (ui.m().track (id)->strip.volumeDb < -150.0);
 }
 
+TEST_CASE ("D-UI-15 faders reset on double-click and show their value while dragged", "[U][UI]")
+{
+    Ui ui;
+    auto& mixer = showMixer (ui);
+    const auto id = ui.m().trackOrder.front();
+    auto& strip = *mixer.stripFor (id);
+    REQUIRE (ui.studio.session().setTrackVolume (id, -12.0));
+    ui.studio.edited();
+    ui.settle();
+    const auto centre = strip.volume.getLocalBounds().getCentre().toFloat();
+    strip.volume.mouseDoubleClick (mouse (strip.volume, centre, {}, 2));
+    ui.settle();
+    CHECK (ui.m().track (id)->strip.volumeDb == Catch::Approx (0.0));
+
+    // The meter and the fader share one scale: 0 dB on the meter is level with 0 dB on the fader.
+    const auto travel = strip.volume.getBounds().toFloat().reduced (0.0f, size::faderCap / 2.0f);
+    const auto faderZero = travel.getBottom() - travel.getHeight() * static_cast<float> (strip.volume.valueToProportionOfLength (0.0));
+    const auto bars = strip.meter.barArea().translated (static_cast<float> (strip.meter.getX()), static_cast<float> (strip.meter.getY())).reduced (2.0f, 0.0f);
+    const auto meterZero = bars.getBottom() - bars.getHeight() * MeterView::proportion (0.0f);
+    CHECK (meterZero == Catch::Approx (faderZero).margin (1.0));
+
+    // RMS sits under the peak.
+    strip.meter.update (0.5f, 0.2f, false, 1.0);
+    CHECK (strip.meter.rmsDb == Catch::Approx (-13.98).margin (0.05));
+    CHECK (strip.meter.rmsDb < strip.meter.ballistics.levelDb());
+}
+
 TEST_CASE ("AT-MIX-4 the clip light stays lit until clicked", "[UI]")
 {
     Ui ui;

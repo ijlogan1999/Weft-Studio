@@ -143,7 +143,7 @@ PianoRoll::PianoRoll (Studio& s) : studio (s)
     for (juce::Component* c : std::initializer_list<juce::Component*> { &toolBox, &snapBox, &quantizeBox, &strength, &swing, &quantizeButton,
                                                                           &auditionToggle, &followToggle, &laneBox })
     {
-        c->setWantsKeyboardFocus (false);
+        makeFocusable (*c);
         addAndMakeVisible (c);
     }
     studio.addChangeListener (this);

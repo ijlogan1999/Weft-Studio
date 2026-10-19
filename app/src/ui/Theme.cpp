@@ -854,6 +854,13 @@ void setRole (juce::Button& b, ButtonRole role, bool tintedWhenOff)
     b.getProperties().set ("weftTintedWhenOff", tintedWhenOff);
 }
 
+void makeFocusable (juce::Component& c)
+{
+    c.setWantsKeyboardFocus (true);
+    c.setMouseClickGrabsKeyboardFocus (false);
+    c.setHasFocusOutline (true);
+}
+
 void setField (juce::Label& l)
 {
     l.getProperties().set ("weftField", true);

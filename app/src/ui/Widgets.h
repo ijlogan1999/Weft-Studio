@@ -22,6 +22,9 @@ inline void describe (juce::Component& c, const juce::String& name, const juce::
     c.setDescription (tooltip.isEmpty() ? name : tooltip);
     if (auto* t = dynamic_cast<juce::SettableTooltipClient*> (&c))
         t->setTooltip (tooltip.isEmpty() ? name : tooltip);
+    // Every named control is reachable from the keyboard (D-UI-13).
+    if (dynamic_cast<juce::Button*> (&c) != nullptr || dynamic_cast<juce::Slider*> (&c) != nullptr || dynamic_cast<juce::ComboBox*> (&c) != nullptr)
+        makeFocusable (c);
 }
 
 inline void describe (juce::Component& c, Cmd command) { describe (c, commandInfo (command).name, tooltipFor (command)); }
@@ -36,9 +39,6 @@ public:
         setClickingTogglesState (false);
         if (toggle)
             setToggleable (true);
-        setWantsKeyboardFocus (true);
-        setMouseClickGrabsKeyboardFocus (false);
-        setHasFocusOutline (true);
     }
 
     /** Draws `path` (16 x 16 units) instead of the label; the label stays as the accessible name. */

@@ -38,18 +38,14 @@ void styleSlider (juce::Slider& s, juce::Slider::SliderStyle style, double min, 
     // Double-click or Alt+click resets (F-MIX-2, F-MIX-3); Shift-drag is fine adjustment.
     s.setDoubleClickReturnValue (true, resetTo, juce::ModifierKeys::altModifier);
     s.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
-    s.setWantsKeyboardFocus (true);
-    s.setMouseClickGrabsKeyboardFocus (false);
-    s.setHasFocusOutline (true);
+    makeFocusable (s);
     if (style != juce::Slider::LinearVertical)
         s.setLookAndFeel (&knobs);
 }
 
 void small (juce::TextButton& b)
 {
-    b.setWantsKeyboardFocus (true);
-    b.setMouseClickGrabsKeyboardFocus (false);
-    b.setHasFocusOutline (true);
+    makeFocusable (b);
 }
 
 void setDbSlider (juce::Slider& s, double db)

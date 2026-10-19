@@ -306,3 +306,27 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     juce::FileOutputStream editorStream (editorFile);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (editor, editorStream));
 }
+
+TEST_CASE ("D-UI-13 controls take keyboard focus with a visible ring, and clicks don't steal it", "[U][UI]")
+{
+    Ui ui;
+    ui.instrumentTracks (1);
+    ui.main->run (Cmd::toggleMixer);
+    ui.settle();
+    int checked = 0;
+    forEachComponent (*ui.main, [&] (juce::Component& c) {
+        const bool control = dynamic_cast<juce::Button*> (&c) != nullptr || dynamic_cast<juce::Slider*> (&c) != nullptr || dynamic_cast<juce::ComboBox*> (&c) != nullptr;
+        if (! control || dynamic_cast<juce::TabBarButton*> (&c) != nullptr || ! c.isVisible() || c.getParentComponent() == nullptr
+            || dynamic_cast<juce::ScrollBar*> (c.getParentComponent()) != nullptr || dynamic_cast<juce::Slider*> (c.getParentComponent()) != nullptr
+            || dynamic_cast<juce::TabbedButtonBar*> (c.getParentComponent()) != nullptr) // the tab bar's own overflow button
+            return;
+        ++checked;
+        INFO (c.getTitle() << " in " << c.getParentComponent()->getTitle());
+        CHECK (c.getWantsKeyboardFocus());
+        CHECK (c.hasFocusOutline());
+        CHECK_FALSE (c.getMouseClickGrabsKeyboardFocus());
+    });
+    CHECK (checked > 40);
+    // The ring itself: the theme makes one for any focusable component.
+    CHECK (Theme::get().lookAndFeel().createFocusOutlineForComponent (*ui.main) != nullptr);
+}

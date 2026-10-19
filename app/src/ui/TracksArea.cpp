@@ -319,7 +319,7 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
     }
     mode.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
     describe (mode, "Automation mode");
-    mode.setWantsKeyboardFocus (false);
+    makeFocusable (mode);
     mode.onChange = [this] {
         static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
         const auto i = mode.getSelectedItemIndex();
@@ -328,7 +328,7 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
     };
     addChildComponent (mode);
     lock.setShape (icon::lock(), false, true, false);
-    lock.setWantsKeyboardFocus (false);
+    makeFocusable (lock);
     lock.onClick = [this] { lockClicked(); };
     addChildComponent (lock);
     setTitle ("Track header");
@@ -402,7 +402,7 @@ void TrackHeader::rebuildAutomation()
         {
             auto box = std::make_unique<juce::ComboBox>();
             describe (*box, "Automation parameter");
-            box->setWantsKeyboardFocus (false);
+            makeFocusable (*box);
             for (std::size_t c = 0; c < choices.size(); ++c)
                 box->addItem (juce::String (choices[c].name), static_cast<int> (c) + 1);
             for (std::size_t c = 0; c < choices.size(); ++c)
@@ -417,7 +417,7 @@ void TrackHeader::rebuildAutomation()
             parameters.push_back (std::move (box));
             auto plus = std::make_unique<juce::TextButton> ("+");
             describe (*plus, "Add automation lane", "Show another automation lane");
-            plus->setWantsKeyboardFocus (false);
+            makeFocusable (*plus);
             plus->onClick = [this] { studio.addShownLane (trackId); };
             addAndMakeVisible (*plus);
             addLane.push_back (std::move (plus));

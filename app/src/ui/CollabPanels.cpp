@@ -32,9 +32,7 @@ void styleEditor (juce::TextEditor& e, const juce::String& hint, bool multiLine)
 void styleToggle (juce::TextButton& b)
 {
     b.setClickingTogglesState (false);
-    b.setWantsKeyboardFocus (false);
-    b.setColour (juce::TextButton::buttonOnColourId, colour (Token::accent));
-    b.setColour (juce::TextButton::textColourOnId, colour (Token::onAccent));
+    makeFocusable (b);
 }
 
 /** Text with mentions as names, as one paragraph wrapped to width. */

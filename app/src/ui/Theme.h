@@ -191,6 +191,9 @@ void paintGroup (juce::Graphics&, juce::Rectangle<int> bounds);
 /** `tintedWhenOff` keeps the role's colour on the label while off (the transport's record
     button, so it is found at a glance); otherwise an off button reads like any other. */
 void setRole (juce::Button&, ButtonRole, bool tintedWhenOff = false);
+/** Reachable with Tab and drawn with the focus ring, without a click taking focus from the
+    arrange window (so shortcuts keep working after using the mouse). */
+void makeFocusable (juce::Component&);
 /** Draws a label as an editable field: a well with mono text (values typed by hand). */
 void setField (juce::Label&);
 /** The role set with `setRole`; otherwise primary for a button Return presses, else normal. */
