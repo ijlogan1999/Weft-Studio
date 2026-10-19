@@ -10,7 +10,6 @@
 namespace weft::ui
 {
 /** The 12 collaborator colours; the relay gives each member an index per project. */
-juce::Colour collaboratorColour (int index);
 juce::Colour colourOf (const collab::RemotePresence& who);
 /** "Ada Lovelace" -> "AL"; one name -> its first two letters. */
 juce::String initials (const std::string& displayName);

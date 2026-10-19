@@ -4,13 +4,6 @@
 
 namespace weft::ui
 {
-juce::Colour collaboratorColour (int index)
-{
-    static const juce::uint32 palette[12] = { 0xff3b82f6, 0xff14b8a6, 0xfff59e0b, 0xff22c55e, 0xffa855f7, 0xffec4899,
-                                              0xfff97316, 0xff06b6d4, 0xff84cc16, 0xff6366f1, 0xffeab308, 0xfff43f5e };
-    return juce::Colour (palette[((index % 12) + 12) % 12]);
-}
-
 juce::Colour colourOf (const collab::RemotePresence& who) { return collaboratorColour (who.color); }
 
 juce::String initials (const std::string& displayName)
@@ -43,15 +36,16 @@ void drawPointer (juce::Graphics& g, juce::Point<float> tip, juce::Colour c, con
     arrow.closeSubPath();
     g.setColour (c.withMultipliedAlpha (alpha));
     g.fillPath (arrow);
-    g.setColour (juce::Colours::white.withAlpha (0.9f * alpha));
+    g.setColour (textOn (c).withAlpha (0.9f * alpha));
     g.strokePath (arrow, juce::PathStrokeType (1.0f));
-    const juce::Font font (juce::FontOptions (11.0f, juce::Font::bold));
-    g.setFont (font);
-    const auto w = juce::GlyphArrangement::getStringWidth (font, name) + 10.0f;
+    const auto labelFont = font (Type::caption);
+    g.setFont (labelFont);
+    const auto w = juce::GlyphArrangement::getStringWidth (labelFont, name) + static_cast<float> (space::s1);
     const auto label = juce::Rectangle<float> (tip.x + 10.0f, tip.y + 12.0f, w, 16.0f);
+    depth::shadow (g, label, radius::r1, depth::Level::raised);
     g.setColour (c.withMultipliedAlpha (alpha));
-    g.fillRoundedRectangle (label, 4.0f);
-    g.setColour ((c.getPerceivedBrightness() > 0.6f ? juce::Colours::black : juce::Colours::white).withAlpha (alpha));
+    g.fillRoundedRectangle (label, radius::r1);
+    g.setColour (textOn (c).withAlpha (alpha));
     g.drawText (name, label, juce::Justification::centred, false);
 }
 
@@ -67,8 +61,8 @@ void drawBadge (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour c, c
         g.setColour (colour (Token::record).withAlpha (0.5f));
         g.drawEllipse (box.expanded (2.0f), 1.5f);
     }
-    g.setColour (recording ? colour (Token::onRecord) : (c.getPerceivedBrightness() > 0.6f ? juce::Colours::black : juce::Colours::white));
-    g.setFont (juce::FontOptions (box.getHeight() * 0.42f, juce::Font::bold));
+    g.setColour (recording ? colour (Token::onRecord) : textOn (c));
+    g.setFont (box.getHeight() >= 20.0f ? font (Type::caption) : font (Type::caption).withPointHeight (box.getHeight() * 0.5f));
     g.drawText (text, box, juce::Justification::centred, false);
 }
 
@@ -126,7 +120,7 @@ void Avatars::paint (juce::Graphics& g)
     if (who.size() > maxShown)
     {
         g.setColour (colour (Token::textDim));
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.setFont (font (Type::caption));
         g.drawText ("+" + juce::String (static_cast<int> (who.size()) - maxShown), maxShown * (size + 2), 0, 32, getHeight(), juce::Justification::centred);
     }
 }

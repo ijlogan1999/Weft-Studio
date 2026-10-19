@@ -24,8 +24,9 @@ void StatusBar::paint (juce::Graphics& g)
     g.fillAll (colour (Token::surface));
     g.setColour (colour (Token::border));
     g.drawHorizontalLine (0, 0.0f, static_cast<float> (getWidth()));
-    g.setFont (juce::FontOptions (12.0f));
-    auto r = getLocalBounds().reduced (10, 0);
+    depth::highlight (g, getLocalBounds().toFloat().withTrimmedTop (1.0f), 0.0f);
+    g.setFont (font (Type::body));
+    auto r = getLocalBounds().reduced (space::s1, 0);
     g.setColour (colour (Token::textDim));
     const auto right = juce::String (studio.model().info.name) + (studio.dirty() ? " (edited)" : "") + "   ·   Tool: " + toolName (studio.tool)
                        + "   ·   Snap: " + (studio.snapEnabled ? arrange::snapLabel (studio.snap) : juce::String ("Off"));
@@ -34,7 +35,7 @@ void StatusBar::paint (juce::Graphics& g)
     g.setColour (studio.shared() && studio.sync() != nullptr && studio.sync()->state() == collab::SyncState::synced ? colour (Token::text)
                                                                                                                   : colour (Token::textDim));
     g.drawText (studio.syncStatus(), sync, juce::Justification::centred, true);
-    r.setRight (std::min (r.getRight(), sync.getX() - 8));
+    r.setRight (std::min (r.getRight(), sync.getX() - space::s1));
     g.setColour (colour (Token::text));
     g.drawText (studio.status, r, juce::Justification::centredLeft, true);
 }
@@ -55,9 +56,14 @@ ReadOnlyBanner::ReadOnlyBanner()
     addAndMakeVisible (message);
 }
 
-void ReadOnlyBanner::paint (juce::Graphics& g) { g.fillAll (colour (Token::accent).withAlpha (0.22f)); }
+void ReadOnlyBanner::paint (juce::Graphics& g)
+{
+    g.fillAll (colour (Token::surfaceRaised));
+    g.setColour (colour (Token::accent));
+    g.fillRect (getLocalBounds().removeFromLeft (space::half));
+}
 
-void ReadOnlyBanner::resized() { message.setBounds (getLocalBounds().reduced (10, 2)); }
+void ReadOnlyBanner::resized() { message.setBounds (getLocalBounds().reduced (space::s2, space::half)); }
 
 // No-audio banner -------------------------------------------------------------------------------
 
@@ -70,13 +76,55 @@ NoAudioBanner::NoAudioBanner()
     addAndMakeVisible (setup);
 }
 
-void NoAudioBanner::paint (juce::Graphics& g) { g.fillAll (colour (Token::warning).withAlpha (0.25f)); }
+void NoAudioBanner::paint (juce::Graphics& g)
+{
+    g.fillAll (colour (Token::surfaceRaised));
+    g.setColour (colour (Token::warning));
+    g.fillRect (getLocalBounds().removeFromLeft (space::half));
+}
 
 void NoAudioBanner::resized()
 {
-    auto r = getLocalBounds().reduced (10, 3);
+    auto r = getLocalBounds().reduced (space::s2, space::half);
     setup.setBounds (r.removeFromRight (120));
     message.setBounds (r);
+}
+
+// Gutters --------------------------------------------------------------------------------------
+
+Gutter::Gutter (bool isVertical) : vertical (isVertical)
+{
+    setMouseCursor (vertical ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
+    setTitle (vertical ? "Panel divider" : "Bottom area divider");
+    setRepaintsOnMouseActivity (true);
+}
+
+void Gutter::paint (juce::Graphics& g)
+{
+    g.fillAll (colour (Token::background));
+    if (isMouseOverOrDragging())
+    {
+        g.setColour (colour (Token::border));
+        g.fillRect (vertical ? getLocalBounds().withSizeKeepingCentre (2, getHeight()) : getLocalBounds().withSizeKeepingCentre (getWidth(), 2));
+    }
+}
+
+void Gutter::mouseDown (const juce::MouseEvent&)
+{
+    if (onPress)
+        onPress();
+}
+
+void Gutter::mouseDrag (const juce::MouseEvent& e)
+{
+    if (onDrag)
+        onDrag (vertical ? e.getDistanceFromDragStartX() : e.getDistanceFromDragStartY());
+}
+
+void Gutter::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (onDoubleClick)
+        onDoubleClick();
 }
 
 // Main component ------------------------------------------------------------------------------
@@ -125,6 +173,30 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
             lines.add (juce::String::fromUTF8 (m.name.c_str()) + (m.addedBy.empty() ? "" : ", added by " + juce::String::fromUTF8 (m.addedBy.c_str())));
         alert ("Missing Plug-ins", "A collaborator used plug-ins that aren't installed here. Their slots keep their settings and pass audio through:\n\n"
                                        + lines.joinIntoString ("\n"));
+    };
+    for (auto* edge : { &inspectorEdge, &sideEdge, &bottomEdge })
+        addChildComponent (edge);
+    auto resize = [this] (int PanelLayout::*field, int value) {
+        studio.layout.*field = value;
+        resized();
+        if (onLayoutChanged)
+            onLayoutChanged (studio.layout);
+    };
+    inspectorEdge.onPress = [this] { dragFrom = inspectorPanel.getWidth(); };
+    inspectorEdge.onDrag = [this, resize] (int d) { resize (&PanelLayout::inspectorWidth, std::clamp (dragFrom + d, minInspector, maxInspector)); };
+    sideEdge.onPress = [this] { dragFrom = sidePanel.getWidth(); };
+    sideEdge.onDrag = [this, resize] (int d) { resize (&PanelLayout::sidePanelWidth, std::clamp (dragFrom - d, minSide, maxSide)); };
+    bottomEdge.onPress = [this] { dragFrom = bottomArea.getHeight(); };
+    bottomEdge.onDrag = [this, resize] (int d) { resize (&PanelLayout::bottomHeight, std::clamp (dragFrom - d, minBottom, maxBottom())); };
+    // Double-clicking the bottom area's divider toggles it maximised (spec 04 §G).
+    bottomEdge.onDoubleClick = [this, resize] {
+        if (bottomArea.getHeight() >= maxBottom() - 1 && restoreHeight > 0)
+            resize (&PanelLayout::bottomHeight, restoreHeight);
+        else
+        {
+            restoreHeight = bottomArea.getHeight();
+            resize (&PanelLayout::bottomHeight, maxBottom());
+        }
     };
     // Any input anywhere in the window keeps this user from showing as idle (05 §5).
     addMouseListener (this, true);
@@ -200,23 +272,60 @@ void MainComponent::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWh
 
 void MainComponent::paint (juce::Graphics& g) { g.fillAll (colour (Token::background)); }
 
+void MainComponent::paintOverChildren (juce::Graphics& g)
+{
+    // Zones cast short shadows onto the ones beneath them: the control bar onto everything, the
+    // inspector and track headers onto the timeline. It is what makes the canvas read as recessed.
+    auto shade = [&g] (juce::Rectangle<int> edge, bool down) {
+        if (edge.isEmpty())
+            return;
+        const auto r = edge.toFloat();
+        const auto a = juce::Colours::black.withAlpha (Theme::get().isDark() ? 0.35f : 0.12f);
+        g.setGradientFill (down ? juce::ColourGradient::vertical (a, r.getY(), a.withAlpha (0.0f), r.getBottom())
+                                : juce::ColourGradient::horizontal (a, r.getX(), a.withAlpha (0.0f), r.getRight()));
+        g.fillRect (r);
+    };
+    shade ({ 0, control.getBottom(), getWidth(), 6 }, true);
+    if (inspectorPanel.isVisible())
+        shade ({ inspectorPanel.getRight(), inspectorPanel.getY(), 5, inspectorPanel.getHeight() }, false);
+}
+
+int MainComponent::maxBottom() const
+{
+    // The tracks area keeps at least 160 px (F-UI-1: it is always visible); the bottom area may
+    // take 80 % of the window (spec 04 §G).
+    const auto room = getHeight() - control.getHeight() - StatusBar::height - 160;
+    return std::max (minBottom, std::min (room, getHeight() * 4 / 5));
+}
+
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
-    control.setBounds (r.removeFromTop (52));
+    control.setBounds (r.removeFromTop (size::transport));
     status.setBounds (r.removeFromBottom (StatusBar::height));
     if (banner.isVisible())
         banner.setBounds (r.removeFromTop (NoAudioBanner::height));
     if (readOnly.isVisible())
         readOnly.setBounds (r.removeFromTop (ReadOnlyBanner::height));
     const auto& l = studio.layout;
+    inspectorEdge.setVisible (l.inspector);
+    sideEdge.setVisible (l.sidePanel);
+    bottomEdge.setVisible (l.bottom != BottomTab::none);
     if (l.inspector)
-        inspectorPanel.setBounds (r.removeFromLeft (std::clamp (l.inspectorWidth, 180, 420)));
+    {
+        inspectorPanel.setBounds (r.removeFromLeft (std::clamp (l.inspectorWidth, minInspector, maxInspector)));
+        inspectorEdge.setBounds (r.removeFromLeft (size::gutter));
+    }
     if (l.sidePanel)
-        sidePanel.setBounds (r.removeFromRight (std::clamp (l.sidePanelWidth, 220, 520)));
-    // The tracks area keeps at least 160 px (F-UI-1: it is always visible).
+    {
+        sidePanel.setBounds (r.removeFromRight (std::clamp (l.sidePanelWidth, minSide, maxSide)));
+        sideEdge.setBounds (r.removeFromRight (size::gutter));
+    }
     if (l.bottom != BottomTab::none)
-        bottomArea.setBounds (r.removeFromBottom (std::clamp (l.bottomHeight, 120, std::max (120, r.getHeight() - 160))));
+    {
+        bottomArea.setBounds (r.removeFromBottom (std::clamp (l.bottomHeight, minBottom, maxBottom())));
+        bottomEdge.setBounds (r.removeFromBottom (size::gutter));
+    }
     if (preview.isVisible())
         preview.setBounds (r.removeFromTop (PreviewBanner::height));
     tracksArea.setBounds (r);

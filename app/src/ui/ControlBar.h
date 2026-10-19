@@ -29,15 +29,17 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
+    std::vector<std::vector<juce::Button*>> groups();
+    juce::Rectangle<int> displayBounds() const;
     void timerCallback() override;
 
     Studio& studio;
     CommandButton inspector { "Inspector", Cmd::toggleInspector, true }, side { "Side", Cmd::toggleSidePanel, true },
         mixer { "Mixer", Cmd::toggleMixer, true }, editor { "Editor", Cmd::toggleAudioEditor, true }, global { "Global", Cmd::toggleGlobalTracks, true };
-    CommandButton start { "|<", Cmd::goToStart }, rewind { "<<", Cmd::previousBar }, forward { ">>", Cmd::nextBar }, stop { "Stop", Cmd::playStop },
-        play { "Play", Cmd::playStop, true }, record { "Rec", Cmd::record, true }, cycle { "Cycle", Cmd::cycle, true };
+    CommandButton start { "Go to Start", Cmd::goToStart }, rewind { "Previous Bar", Cmd::previousBar }, forward { "Next Bar", Cmd::nextBar }, stop { "Stop", Cmd::playStop },
+        play { "Play", Cmd::playStop, true }, record { "Record", Cmd::record, true }, cycle { "Cycle", Cmd::cycle, true };
     CommandButton metronome { "Click", Cmd::metronome, true }, punch { "Punch", Cmd::autopunch, true }, snap { "Snap", Cmd::snapToggle, true },
-        follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true }, theme { "Theme", Cmd::toggleTheme };
+        follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true };
     juce::Label position, time, tempo, signature, cpu;
     juce::ComboBox countIn, snapBox;
     Avatars avatars { studio };

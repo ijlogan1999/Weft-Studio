@@ -43,5 +43,23 @@
     "ships": true,
     "purpose": "ASIO driver support on Windows (headers only; fetched by Windows builds)",
     "note": "Dual licensed Steinberg proprietary / GPLv3; Weft uses it under GPLv3."
+  },
+  "PlexSans": {
+    "url": "https://github.com/IBM/plex/releases/download/%40ibm%2Fplex-sans%401.1.0/ibm-plex-sans.zip",
+    "sha512": "6b15393b8aa70920b39c610b03214bae397e9021af039c0f1c2fc8bc20832bf31085673e96b3dd9be7ef5ca1ecb3880fae0c9b274c287f61d8158f6bf95636ed",
+    "tag": "1.1.0",
+    "license": "OFL-1.1",
+    "license_files": ["LICENSE.txt"],
+    "ships": true,
+    "purpose": "UI typeface (Regular, Medium, SemiBold), embedded in the app"
+  },
+  "PlexMono": {
+    "url": "https://github.com/IBM/plex/releases/download/%40ibm%2Fplex-mono%401.1.0/ibm-plex-mono.zip",
+    "sha512": "33738e1e9ae745b6823759b0c37bea5dcb7c2f58e6e979334807683fff88187073ac49a0dae04949bce5900b75868756378b6f864db7e1cb2ba6416a8072aab6",
+    "tag": "1.1.0",
+    "license": "OFL-1.1",
+    "license_files": ["LICENSE.txt"],
+    "ships": true,
+    "purpose": "Typeface for time, tempo and level readouts, embedded in the app"
   }
 }

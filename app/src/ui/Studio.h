@@ -5,6 +5,7 @@
 // and call perform(); it broadcasts a change after every edit. Message thread only.
 
 #include "Commands.h"
+#include "Waveform.h"
 
 #include "weft/arrange/Grid.h"
 #include "weft/arrange/Selection.h"
@@ -64,9 +65,9 @@ struct PanelLayout
     bool sidePanel = false;
     bool globalTracks = true;
     BottomTab bottom = BottomTab::none;
-    int inspectorWidth = 250;
-    int sidePanelWidth = 300;
-    int bottomHeight = 280;
+    int inspectorWidth = 240;
+    int sidePanelWidth = 304;
+    int bottomHeight = 288;
     bool darkTheme = true;
 
     juce::String toString() const;
@@ -92,7 +93,7 @@ struct PianoRollState
 };
 
 /** Track lane heights: local view state (F-TRK-12). */
-inline constexpr int minTrackHeight = 24, maxTrackHeight = 400, defaultTrackHeight = 72;
+inline constexpr int minTrackHeight = 24, maxTrackHeight = 400, defaultTrackHeight = 56;
 
 class Studio : public juce::ChangeBroadcaster
 {
@@ -230,6 +231,8 @@ public:
 
     /** Peak overview of a media file: max |sample| per `peakFrames` frames, all channels (cached). */
     static constexpr int peakFrames = 256;
+    /** The min/max/RMS overview a waveform is drawn from (cached). */
+    const WaveSummary& waveform (const std::string& hash);
     const std::vector<float>& peaks (const std::string& hash);
 
     /** Commands that need the window (tool menu, New Track dialog, About). */
@@ -276,7 +279,7 @@ public:
     // Automation (M7) --------------------------------------------------------------------
     /** Automation view (A): lanes under each track (local view state, F-AUT-1). */
     bool automationView = false;
-    static constexpr int automationLaneHeight = 60;
+    static constexpr int automationLaneHeight = 56;
     /** The lanes a track shows in automation view, top to bottom (first: Volume). */
     std::vector<model::AutomationTarget> shownLanes (const Id& trackId) const;
     /** The parameter selector of a shown lane. */
@@ -522,6 +525,7 @@ private:
     Ticks bounceFrom = 0;
     void stepBounce();
     std::map<std::string, std::vector<float>> peakCache;
+    std::map<std::string, WaveSummary> waveCache;
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
     std::int64_t locatedFrame = -1;
     bool audioOk = false;

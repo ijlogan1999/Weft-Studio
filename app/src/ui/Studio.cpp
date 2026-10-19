@@ -1105,6 +1105,7 @@ int Studio::locateMedia (const fs::path& searchFolder)
     if (! found.empty())
     {
         peakCache.clear();
+        waveCache.clear();
         edited();
     }
     return static_cast<int> (found.size());
@@ -1201,6 +1202,7 @@ void Studio::resetViewState()
     lanesShown.clear();
     pendingState.clear();
     peakCache.clear();
+    waveCache.clear();
     locatedAt.reset();
     locatedFrame = -1;
     pool.clear();
@@ -1306,11 +1308,11 @@ void Studio::playTestTone()
     eng->preview (std::move (tone));
 }
 
-const std::vector<float>& Studio::peaks (const std::string& hash)
+const WaveSummary& Studio::waveform (const std::string& hash)
 {
-    if (const auto it = peakCache.find (hash); it != peakCache.end())
+    if (const auto it = waveCache.find (hash); it != waveCache.end())
         return it->second;
-    auto& out = peakCache[hash];
+    auto& out = waveCache[hash];
     media::WavReader reader;
     const auto file = mediaDir() / media::mediaFileName (hash);
     if (fs::exists (file) && reader.open (file))
@@ -1321,35 +1323,45 @@ const std::vector<float>& Studio::peaks (const std::string& hash)
         std::vector<float*> ptrs;
         for (auto& b : buf)
             ptrs.push_back (b.data());
-        out.assign (static_cast<std::size_t> ((frames + peakFrames - 1) / peakFrames), 0.0f);
+        out.begin (frames);
         for (std::int64_t start = 0; start < frames; start += 65536)
         {
             const auto n = reader.read (start, std::min<std::int64_t> (65536, frames - start), ptrs.data());
-            for (const auto& b : buf)
-                for (std::int64_t i = 0; i < n; ++i)
-                {
-                    auto& p = out[static_cast<std::size_t> ((start + i) / peakFrames)];
-                    p = std::max (p, std::abs (b[static_cast<std::size_t> (i)]));
-                }
+            out.add (ptrs.data(), static_cast<int> (ptrs.size()), start, n);
         }
+        out.finish();
         return out;
     }
     // Media held only in memory (tests, generated audio).
     if (const auto source = pool.find (hash); source && source->numBlocks() > 0)
     {
-        out.assign (static_cast<std::size_t> ((source->numFrames() + peakFrames - 1) / peakFrames), 0.0f);
+        out.begin (source->numFrames());
         for (std::int64_t b = 0; b < source->numBlocks(); ++b)
+        {
+            std::vector<const float*> channels;
             for (int ch = 0; ch < source->numChannels(); ++ch)
-                if (const float* data = source->block (ch, b))
-                {
-                    const auto first = b * engine::MediaSource::blockFrames;
-                    const auto n = std::min (engine::MediaSource::blockFrames, source->numFrames() - first);
-                    for (std::int64_t i = 0; i < n; ++i)
-                    {
-                        auto& p = out[static_cast<std::size_t> ((first + i) / peakFrames)];
-                        p = std::max (p, std::abs (data[i]));
-                    }
-                }
+                channels.push_back (source->block (ch, b));
+            const auto first = b * engine::MediaSource::blockFrames;
+            out.add (channels.data(), static_cast<int> (channels.size()), first, std::min (engine::MediaSource::blockFrames, source->numFrames() - first));
+        }
+        out.finish();
+    }
+    return out;
+}
+
+const std::vector<float>& Studio::peaks (const std::string& hash)
+{
+    if (const auto it = peakCache.find (hash); it != peakCache.end())
+        return it->second;
+    auto& out = peakCache[hash];
+    const auto& wave = waveform (hash);
+    if (wave.empty())
+        return out;
+    out.resize (static_cast<std::size_t> ((wave.frames() + peakFrames - 1) / peakFrames));
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        const auto b = wave.range (static_cast<double> (i) * peakFrames, static_cast<double> (i + 1) * peakFrames);
+        out[i] = std::max (std::abs (b.lo), std::abs (b.hi));
     }
     return out;
 }
