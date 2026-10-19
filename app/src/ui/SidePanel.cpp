@@ -18,10 +18,11 @@ FileBrowser::FileBrowser (Studio& s, const juce::File& root) : studio (s), filte
     fileTree.setDragAndDropDescription ("weft-files");
     fileTree.setMultiSelectEnabled (true);
     fileTree.addListener (this);
-    fileTree.setColour (juce::TreeView::backgroundColourId, colour (Token::surface));
+    fileTree.setItemHeight (size::control);
     describe (up, "Up", "Go to the parent folder");
     up.onClick = [this] { setRoot (list.getDirectory().getParentDirectory()); };
-    path.setColour (juce::Label::textColourId, colour (Token::textDim));
+    path.setFont (font (Type::strong));
+    path.setMinimumHorizontalScale (1.0f);
     describe (path, "Folder");
     addAndMakeVisible (up);
     addAndMakeVisible (path);
@@ -41,7 +42,9 @@ void FileBrowser::setRoot (const juce::File& folder)
         list.refresh();
     else
         list.setDirectory (folder, true, true);
-    path.setText (folder.getFullPathName(), juce::dontSendNotification);
+    // The folder's name; the whole path is in the tooltip.
+    path.setText (folder.getFileName().isEmpty() ? folder.getFullPathName() : folder.getFileName(), juce::dontSendNotification);
+    path.setTooltip (folder.getFullPathName());
 }
 
 void FileBrowser::fileClicked (const juce::File& file, const juce::MouseEvent&)
@@ -55,11 +58,10 @@ void FileBrowser::fileClicked (const juce::File& file, const juce::MouseEvent&)
 
 void FileBrowser::resized()
 {
-    auto r = getLocalBounds().reduced (4);
-    auto top = r.removeFromTop (26);
-    up.setBounds (top.removeFromLeft (44));
-    path.setBounds (top.withTrimmedLeft (6));
-    r.removeFromTop (4);
+    auto r = getLocalBounds();
+    auto top = r.removeFromTop (size::panelHeader).reduced (space::s1, space::half);
+    up.setBounds (top.removeFromLeft (48));
+    path.setBounds (top.withTrimmedLeft (space::half));
     fileTree.setBounds (r);
 }
 
@@ -67,9 +69,8 @@ MediaList::MediaList (Studio& s) : studio (s)
 {
     setTitle ("Project media");
     box.setModel (this);
-    box.setRowHeight (36);
+    box.setRowHeight (space::s6 - space::s1);
     box.setTitle ("Project media");
-    box.setColour (juce::ListBox::backgroundColourId, colour (Token::surface));
     addAndMakeVisible (box);
     studio.addChangeListener (this);
     changeListenerCallback (nullptr);
@@ -97,14 +98,20 @@ void MediaList::paintListBoxItem (int row, juce::Graphics& g, int width, int hei
         return;
     const auto& item = items[static_cast<std::size_t> (row)];
     if (selected)
-        g.fillAll (colour (Token::surfaceRaised));
+    {
+        g.fillAll (colour (Token::hover));
+        g.setColour (colour (Token::accent));
+        g.fillRect (0, 0, 2, height);
+    }
+    g.setColour (colour (Token::lineSubtle));
+    g.fillRect (space::s2, height - 1, width - space::s2, 1);
     g.setColour (colour (Token::text));
     g.setFont (font (Type::body));
-    g.drawText (juce::String (item.name), 8, 2, width - 16, height / 2, juce::Justification::bottomLeft, true);
+    g.drawText (juce::String (item.name), space::s2, 2, width - space::s3, height / 2, juce::Justification::bottomLeft, true);
     g.setColour (colour (Token::textDim));
-    g.setFont (font (Type::small));
+    g.setFont (font (Type::monoSmall));
     const auto used = item.regions == 1 ? juce::String ("1 region") : juce::String (item.regions) + " regions";
-    g.drawText (juce::String (item.seconds, 1) + " s  ·  " + used, 8, height / 2, width - 16, height / 2 - 2, juce::Justification::topLeft);
+    g.drawText (juce::String (item.seconds, 1) + " s  ·  " + used, space::s2, height / 2, width - space::s3, height / 2 - 2, juce::Justification::topLeft);
 }
 
 SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
@@ -121,7 +128,7 @@ SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
     tabbed.addTab ("Comments", tab, commentsPanel, true);
     tabbed.addTab ("Chat", tab, chatPanel, true);
     tabbed.addTab ("History", tab, historyPanel, true);
-    tabbed.setTabBarDepth (28);
+    tabbed.setTabBarDepth (size::panelHeader);
     tabbed.setOutline (0);
     addAndMakeVisible (tabbed);
     studio.addChangeListener (this);

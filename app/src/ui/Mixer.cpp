@@ -428,7 +428,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     addAndMakeVisible (volume);
 
     readout.setJustificationType (juce::Justification::centred);
-    readout.setFont (font (Type::monoValue));
+    setField (readout);
     readout.setEditable (false, true);
     describe (readout, "Volume in dB", "Double-click to type a level");
     readout.onTextChange = [this] {

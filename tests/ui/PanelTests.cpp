@@ -262,4 +262,33 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     zoomFile.deleteFile();
     juce::FileOutputStream zoomStream (zoomFile);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (zoomed, zoomStream));
+
+    // The browser's rows, drawn with the look and feel the way the tree draws them (the tree
+    // itself only lays out rows from the message loop, which this test doesn't run).
+    auto& side = ui.main->side();
+    const auto header = side.createComponentSnapshot (side.getLocalBounds().withHeight (size::panelHeader * 2));
+    const int rowH = size::control;
+    juce::Image rows (juce::Image::RGB, side.getWidth(), header.getHeight() + 6 * rowH, true);
+    {
+        juce::Graphics g (rows);
+        g.fillAll (colour (Token::surface));
+        g.drawImageAt (header, 0, 0);
+        const std::tuple<const char*, bool, const char*> entries[] = {
+            { "Drums", true, "" }, { "Vocals", true, "" }, { "Bass take 2.wav", false, "1.6 MB" },
+            { "Guitar DI.wav", false, "1.6 MB" }, { "Room tone.wav", false, "1.6 MB" }, { "Keys.mid", false, "2 KB" } };
+        int i = 0;
+        for (const auto& [name, folder, bytes] : entries)
+        {
+            juce::Graphics::ScopedSaveState save (g);
+            g.setOrigin (0, header.getHeight() + i * rowH);
+            g.reduceClipRegion (0, 0, rows.getWidth(), rowH);
+            Theme::get().lookAndFeel().drawFileBrowserRow (g, rows.getWidth(), rowH, {}, name, nullptr, bytes, {}, folder, i == 3, i,
+                                                            side.browser().tree());
+            ++i;
+        }
+    }
+    const auto browserFile = out.getSiblingFile (out.getFileNameWithoutExtension() + "-browser.png");
+    browserFile.deleteFile();
+    juce::FileOutputStream browserStream (browserFile);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (rows, browserStream));
 }

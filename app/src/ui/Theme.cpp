@@ -348,6 +348,17 @@ public:
         }
     }
 
+    // Labels -------------------------------------------------------------------------------
+    void drawLabel (juce::Graphics& g, juce::Label& l) override
+    {
+        if (static_cast<bool> (l.getProperties()["weftField"]) && ! l.isBeingEdited())
+        {
+            const auto r = l.getLocalBounds().toFloat().reduced (0.0f, 1.0f);
+            depth::well (g, r, radius::r1);
+        }
+        LookAndFeel_V4::drawLabel (g, l);
+    }
+
     // Sliders ------------------------------------------------------------------------------
     void drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float, float, juce::Slider::SliderStyle style, juce::Slider& s) override
     {
@@ -491,6 +502,58 @@ public:
         g.fillRect (bar.getLocalBounds().removeFromBottom (1));
     }
     void drawTabAreaBehindFrontButton (juce::TabbedButtonBar&, juce::Graphics&, int, int) override {}
+
+    // File browser rows: a folder or file glyph, the name, and the size dimmed on the right.
+    void drawFileBrowserRow (juce::Graphics& g, int w, int h, const juce::File&, const juce::String& name, juce::Image*, const juce::String& size,
+                             const juce::String&, bool isDirectory, bool selected, int, juce::DirectoryContentsDisplayComponent&) override
+    {
+        auto r = juce::Rectangle<int> (0, 0, w, h);
+        if (selected)
+        {
+            g.setColour (colour (Token::hover));
+            g.fillRect (r);
+            g.setColour (colour (Token::accent));
+            g.fillRect (r.removeFromLeft (2));
+        }
+        const auto glyph = r.removeFromLeft (h).toFloat().withSizeKeepingCentre (12.0f, 10.0f);
+        g.setColour (isDirectory ? colour (Token::textDim) : colour (Token::textDim).withAlpha (0.7f));
+        if (isDirectory)
+        {
+            g.fillRoundedRectangle (glyph.withWidth (5.0f).withHeight (3.0f), 1.0f);
+            g.fillRoundedRectangle (glyph.withTrimmedTop (2.0f), 1.5f);
+        }
+        else
+        {
+            // A file: a small waveform-like set of bars.
+            for (int i = 0; i < 4; ++i)
+            {
+                const auto bh = std::array<float, 4> { 4.0f, 10.0f, 7.0f, 5.0f }[static_cast<std::size_t> (i)];
+                g.fillRect (glyph.getX() + static_cast<float> (i) * 3.0f + 1.0f, glyph.getCentreY() - bh / 2.0f, 2.0f, bh);
+            }
+        }
+        r.removeFromRight (space::s1);
+        if (! isDirectory && size.isNotEmpty())
+        {
+            g.setFont (font (Type::monoSmall));
+            g.setColour (colour (Token::textDim));
+            g.drawText (size, r.removeFromRight (64), juce::Justification::centredRight, false);
+        }
+        g.setFont (font (Type::body));
+        g.setColour (colour (Token::text));
+        g.drawText (name, r, juce::Justification::centredLeft, true);
+    }
+    void drawTreeviewPlusMinusBox (juce::Graphics& g, const juce::Rectangle<float>& area, juce::Colour, bool isOpen, bool over) override
+    {
+        const auto a = area.withSizeKeepingCentre (8.0f, 8.0f);
+        juce::Path p;
+        if (isOpen)
+            p.addTriangle (a.getX(), a.getY() + 2.0f, a.getRight(), a.getY() + 2.0f, a.getCentreX(), a.getBottom() - 1.0f);
+        else
+            p.addTriangle (a.getX() + 2.0f, a.getY(), a.getX() + 2.0f, a.getBottom(), a.getRight() - 1.0f, a.getCentreY());
+        g.setColour (over ? colour (Token::text) : colour (Token::textDim));
+        g.fillPath (p);
+    }
+    bool areLinesDrawnForTreeView (juce::TreeView&) override { return false; }
 
     int getDefaultScrollbarWidth() override { return space::s1 + 2; }
     void drawScrollbar (juce::Graphics& g, juce::ScrollBar&, int x, int y, int w, int h, bool vertical, int thumbStart, int thumbSize, bool over, bool down) override
@@ -782,6 +845,13 @@ void setRole (juce::Button& b, ButtonRole role, bool tintedWhenOff)
     b.getProperties().set ("weftTintedWhenOff", tintedWhenOff);
 }
 
+void setField (juce::Label& l)
+{
+    l.getProperties().set ("weftField", true);
+    l.setFont (font (Type::monoValue));
+    l.setBorderSize ({ 0, space::s1, 0, space::s1 });
+}
+
 ButtonRole roleOf (const juce::Component& c)
 {
     const auto v = c.getProperties()["weftRole"];
@@ -876,6 +946,7 @@ void Theme::apply()
     lnf->setColour (juce::TabbedComponent::backgroundColourId, t[Token::surface]);
     lnf->setColour (juce::TabbedComponent::outlineColourId, juce::Colours::transparentBlack);
     lnf->setColour (juce::ListBox::backgroundColourId, t[Token::surface]);
+    lnf->setColour (juce::TreeView::backgroundColourId, t[Token::surface]);
     lnf->setColour (juce::ListBox::textColourId, t[Token::text]);
     lnf->setColour (juce::DirectoryContentsDisplayComponent::textColourId, t[Token::text]);
     lnf->setColour (juce::DirectoryContentsDisplayComponent::highlightColourId, t[Token::hover]);

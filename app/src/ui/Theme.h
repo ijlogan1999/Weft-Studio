@@ -191,6 +191,8 @@ void paintGroup (juce::Graphics&, juce::Rectangle<int> bounds);
 /** `tintedWhenOff` keeps the role's colour on the label while off (the transport's record
     button, so it is found at a glance); otherwise an off button reads like any other. */
 void setRole (juce::Button&, ButtonRole, bool tintedWhenOff = false);
+/** Draws a label as an editable field: a well with mono text (values typed by hand). */
+void setField (juce::Label&);
 ButtonRole roleOf (const juce::Component&);
 /** The colour a button's label or icon is drawn in. */
 juce::Colour buttonTextColour (const juce::Button&, bool over, bool down);
