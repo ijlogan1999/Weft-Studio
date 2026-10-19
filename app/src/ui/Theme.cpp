@@ -855,7 +855,12 @@ void setField (juce::Label& l)
 ButtonRole roleOf (const juce::Component& c)
 {
     const auto v = c.getProperties()["weftRole"];
-    return v.isVoid() ? ButtonRole::normal : static_cast<ButtonRole> (static_cast<int> (v));
+    if (! v.isVoid())
+        return static_cast<ButtonRole> (static_cast<int> (v));
+    // A dialog's default button (the one Return presses) is its primary action.
+    if (const auto* b = dynamic_cast<const juce::Button*> (&c); b != nullptr && b->isRegisteredForShortcut (juce::KeyPress (juce::KeyPress::returnKey)))
+        return ButtonRole::primary;
+    return ButtonRole::normal;
 }
 
 // Tokens -------------------------------------------------------------------------------------

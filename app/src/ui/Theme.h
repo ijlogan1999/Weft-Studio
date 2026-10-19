@@ -193,6 +193,7 @@ void paintGroup (juce::Graphics&, juce::Rectangle<int> bounds);
 void setRole (juce::Button&, ButtonRole, bool tintedWhenOff = false);
 /** Draws a label as an editable field: a well with mono text (values typed by hand). */
 void setField (juce::Label&);
+/** The role set with `setRole`; otherwise primary for a button Return presses, else normal. */
 ButtonRole roleOf (const juce::Component&);
 /** The colour a button's label or icon is drawn in. */
 juce::Colour buttonTextColour (const juce::Button&, bool over, bool down);
