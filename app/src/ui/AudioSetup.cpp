@@ -314,7 +314,7 @@ void AudioSetupDialog::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surfaceRaised));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     const juce::StringArray labels { "Driver", "Output", "Input", "Sample rate", "Buffer size", "", "", "MIDI inputs" };
     for (int i = 0; i < labels.size(); ++i)
         g.drawText (labels[i], labelX, 16 + i * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);

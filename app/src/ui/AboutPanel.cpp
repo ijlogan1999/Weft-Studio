@@ -4,6 +4,8 @@
 
 using weft::ui::colour;
 using weft::ui::Token;
+using weft::ui::font;
+using weft::ui::Type;
 
 #include <BinaryData.h>
 
@@ -14,7 +16,7 @@ AboutPanel::AboutPanel()
     notices.setMultiLine (true);
     notices.setReadOnly (true);
     notices.setScrollbarsShown (true);
-    notices.setFont (juce::FontOptions (13.0f));
+    notices.setFont (font (Type::body));
     notices.setTitle ("Licenses");
     notices.setColour (juce::TextEditor::backgroundColourId, colour (Token::surfaceRaised));
     notices.setColour (juce::TextEditor::textColourId, colour (Token::text));
@@ -32,12 +34,12 @@ void AboutPanel::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::background));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
+    g.setFont (font (Type::display));
     const auto title = juce::String (weft::productName.data(), weft::productName.size());
     const auto version = juce::String (weft::versionString().data(), weft::versionString().size());
     g.drawText (title, 24, 16, getWidth() - 48, 34, juce::Justification::left);
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (14.0f));
+    g.setFont (font (Type::strong));
     g.drawText ("Version " + version + "  ·  Free software under the GNU AGPL v3", 24, 50, getWidth() - 48, 20,
                 juce::Justification::left);
 }

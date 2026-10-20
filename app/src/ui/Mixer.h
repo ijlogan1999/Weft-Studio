@@ -23,22 +23,35 @@ juce::String dbText (double db);
 std::optional<double> parseDb (const juce::String& text);
 } // namespace fader
 
-/** Knobs drawn to fill their bounds (the stock look leaves a 10 px margin, too much for a send knob). */
+/** Knobs drawn to fill their bounds (the stock look leaves a 10 px margin, too much for a send
+    knob); the drawing itself is the theme's, so knobs look the same everywhere. */
 struct KnobLook final : juce::LookAndFeel_V4
 {
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&) override;
 };
 
-/** A post-fader peak meter with peak hold and a clip light; clicking the light resets it (F-MIX-5). */
+/** A post-fader meter (F-MIX-5, D-UI-15): RMS as the solid bar, the peak above it in a lighter
+    tone, a peak-hold line, and a clip light on top that clicking resets. Its scale is the fader's,
+    so one set of dB marks between the two reads for both. */
 class MeterView final : public juce::Component
 {
 public:
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
-    void update (float peak, bool clip, double now);
+    void update (float peak, bool clip, double now) { update (peak, rmsLinear, clip, now); }
+    void update (float peak, float rms, bool clip, double now);
+    /** Where `db` sits in the bar area, 0 (bottom) to 1 (top): the fader's taper. */
+    static float proportion (float db);
+    /** The bar area: below the clip light, inset like the fader's travel. */
+    juce::Rectangle<float> barArea() const;
     engine::MeterBallistics ballistics;
+    float rmsDb = -144.0f;
     std::function<void()> onResetClip;
     static constexpr int clipHeight = 8;
+    static constexpr int clipGap = 4;
+
+private:
+    float rmsLinear = 0;
 };
 
 class ChannelStrip;
@@ -50,6 +63,8 @@ class InsertSlot final : public juce::Component, public juce::SettableTooltipCli
 public:
     InsertSlot (ChannelStrip& strip, std::size_t index, const model::PluginInstance* plugin, bool placeholder);
     void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -90,6 +105,7 @@ public:
     ChannelStrip (Studio& studio, Id trackId);
     ~ChannelStrip() override;
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     /** Reads the track again (the mixer calls it after every change). */
@@ -101,7 +117,7 @@ public:
     const Id& trackId() const noexcept { return id; }
     bool isMaster() const;
     const model::Track* track() const;
-    static constexpr int width = 104;
+    static constexpr int width = 104; // 13 grid units: room for an insert's name beside its bypass dot
     /** Slot rows to lay out (the mixer gives every strip the same, so faders line up). */
     int insertRows = 1, sendRows = 1;
     int shownInsertRows() const;
@@ -161,7 +177,16 @@ private:
     std::map<juce::Component*, juce::String> tipsBeforeLock; // restored on unlock
     juce::String busName (const Id& busId) const;
     void setVolume (double db);
-    juce::Rectangle<int> slotArea;
+    juce::Rectangle<int> slotArea, scaleArea, buttonRow;
+    /** Repaints the strip as the pointer enters or leaves the fader, for its value tag. */
+    struct FaderHover final : juce::MouseListener
+    {
+        explicit FaderHover (ChannelStrip& s) : strip (s) {}
+        void mouseEnter (const juce::MouseEvent&) override { strip.repaint(); }
+        void mouseExit (const juce::MouseEvent&) override { strip.repaint(); }
+        void mouseUp (const juce::MouseEvent&) override { strip.repaint(); }
+        ChannelStrip& strip;
+    } faderHover { *this };
     Id id;
     bool liveVolume = false, livePan = false; // the gesture in progress goes to live automation
     bool followed = false;

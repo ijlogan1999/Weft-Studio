@@ -24,6 +24,8 @@ Inspector::Inspector (Studio& s) : studio (s)
 {
     setTitle ("Inspector");
     regionName.setEditable (false, true, true);
+    regionName.setFont (font (Type::strong));
+    regionName.setBorderSize ({});
     describe (regionName, "Region name", "Region name (double-click to rename)");
     regionName.onTextChange = [this] {
         if (const auto* r = region(); r != nullptr && regionName.getText().trim().isNotEmpty())
@@ -48,7 +50,7 @@ Inspector::Inspector (Studio& s) : studio (s)
     };
     auto setupSlider = [] (juce::Slider& sl, double lo, double hi, double step, const juce::String& suffix) {
         sl.setSliderStyle (juce::Slider::LinearHorizontal);
-        sl.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 20);
+        sl.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, size::control);
         sl.setRange (lo, hi, step);
         sl.setTextValueSuffix (suffix);
     };
@@ -127,6 +129,7 @@ Inspector::Inspector (Studio& s) : studio (s)
 
     const auto noteField = [this] (juce::Label& l, const juce::String& name, std::function<void (const juce::String&)> apply) {
         l.setEditable (true, true, true);
+        setField (l);
         describe (l, name, name + " of the selected notes (click to type)");
         l.onTextChange = [this, &l, apply] {
             if (! refreshing && l.getText().trim().isNotEmpty() && l.getText() != juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94")))
@@ -175,6 +178,8 @@ Inspector::Inspector (Studio& s) : studio (s)
     });
 
     trackName.setEditable (false, true, true);
+    trackName.setFont (font (Type::strong));
+    trackName.setBorderSize ({});
     describe (trackName, "Track name", "Track name (double-click to rename)");
     trackName.onTextChange = [this] {
         const auto text = trackName.getText().trim();
@@ -203,7 +208,11 @@ Inspector::Inspector (Studio& s) : studio (s)
                                                                           &applyQuantize, &notePitch, &noteVelocity, &noteLength, &notePosition,
                                                                           &noteChannel, &trackName, &trackColour, &monitor })
     {
-        c->setWantsKeyboardFocus (dynamic_cast<juce::Label*> (c) != nullptr);
+        // Every control is reachable with Tab; a click doesn't take focus from the arrange window.
+        c->setWantsKeyboardFocus (true);
+        if (dynamic_cast<juce::Label*> (c) == nullptr)
+            c->setMouseClickGrabsKeyboardFocus (false);
+        c->setHasFocusOutline (true);
         addChildComponent (c);
     }
     studio.addChangeListener (this);
@@ -346,25 +355,44 @@ void Inspector::refresh()
     repaint();
 }
 
+namespace
+{
+constexpr int labelX = space::s2, labelWidth = 72, controlX = labelX + labelWidth + space::s1;
+}
+
 void Inspector::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surface));
-    g.setColour (colour (Token::border));
-    g.drawVerticalLine (getWidth() - 1, 0.0f, static_cast<float> (getHeight()));
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.setColour (colour (Token::textDim));
+    // Section headers: a caption on a slightly raised band, so Region, Note and Track read as
+    // separate groups at a glance.
+    auto header = [&] (int top, const juce::String& text) {
+        const auto band = juce::Rectangle<int> (0, top, getWidth(), size::panelHeader);
+        g.setColour (colour (Token::surfaceRaised));
+        g.fillRect (band);
+        depth::highlight (g, band.toFloat(), 0.0f);
+        g.setColour (colour (Token::lineSubtle));
+        g.fillRect (band.withTop (band.getBottom() - 1));
+        g.setColour (colour (Token::textDim));
+        g.setFont (font (Type::caption));
+        g.drawText (captionText (text), labelX, top, getWidth() - 2 * labelX, size::panelHeader, juce::Justification::centredLeft);
+    };
     if (regionName.isVisible())
-        g.drawText ("REGION", 12, regionTop, getWidth() - 24, 18, juce::Justification::left);
-    if (trackName.isVisible())
-        g.drawText ("TRACK", 12, trackTop, getWidth() - 24, 18, juce::Justification::left);
+        header (regionTop, "Region");
     if (notePitch.isVisible())
-        g.drawText ("NOTE", 12, noteTop, getWidth() - 24, 18, juce::Justification::left);
+        header (noteTop, "Note");
+    if (trackName.isVisible())
+        header (trackTop, "Track");
     if (! regionName.isVisible() && ! trackName.isVisible())
-        g.drawText ("Select a track or region.", getLocalBounds().reduced (12), juce::Justification::centredTop);
-    g.setFont (juce::FontOptions (12.0f));
+    {
+        g.setColour (colour (Token::textDim));
+        g.setFont (font (Type::body));
+        g.drawText ("Select a track or region.", getLocalBounds().reduced (space::s2), juce::Justification::centredTop);
+    }
+    g.setFont (font (Type::body));
+    g.setColour (colour (Token::textDim));
     auto label = [&] (juce::Component& c, const juce::String& text) {
         if (c.isVisible())
-            g.drawText (text, 12, c.getY(), 70, c.getHeight(), juce::Justification::centredLeft);
+            g.drawText (text, labelX, c.getY(), labelWidth, c.getHeight(), juce::Justification::centredLeft);
     };
     label (regionGain, "Gain");
     label (fadeIn, "Fade in");
@@ -383,17 +411,21 @@ void Inspector::paint (juce::Graphics& g)
 
 void Inspector::resized()
 {
-    auto r = getLocalBounds().reduced (8, 10);
-    auto row = [&r] (int h = 26) {
-        auto out = r.removeFromTop (h);
-        r.removeFromTop (4);
+    auto r = getLocalBounds();
+    auto row = [&r] {
+        auto out = r.removeFromTop (size::control).withTrimmedLeft (labelX).withTrimmedRight (space::s2);
+        r.removeFromTop (space::half);
         return out;
     };
-    auto withLabel = [] (juce::Rectangle<int> b) { return b.withTrimmedLeft (76); };
+    auto header = [&r] {
+        const auto top = r.getY();
+        r.removeFromTop (size::panelHeader + space::s1);
+        return top;
+    };
+    auto withLabel = [] (juce::Rectangle<int> b) { return b.withLeft (controlX); };
     if (regionName.isVisible())
     {
-        regionTop = r.getY();
-        row (18);
+        regionTop = header();
         regionName.setBounds (row());
         auto toggles = row();
         regionMute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2));
@@ -402,31 +434,29 @@ void Inspector::resized()
         {
             regionGain.setBounds (withLabel (row()));
             fadeIn.setBounds (withLabel (row()));
-            fadeInCurve.setBounds (withLabel (row (24)));
+            fadeInCurve.setBounds (withLabel (row()));
             fadeOut.setBounds (withLabel (row()));
-            fadeOutCurve.setBounds (withLabel (row (24)));
+            fadeOutCurve.setBounds (withLabel (row()));
         }
         if (regionQuantize.isVisible())
         {
-            regionQuantize.setBounds (withLabel (row (24)));
+            regionQuantize.setBounds (withLabel (row()));
             quantizeStrength.setBounds (withLabel (row()));
             quantizeSwing.setBounds (withLabel (row()));
-            applyQuantize.setBounds (withLabel (row (24)));
+            applyQuantize.setBounds (withLabel (row()));
         }
-        r.removeFromTop (14);
+        r.removeFromTop (space::s1);
     }
     if (notePitch.isVisible())
     {
-        noteTop = r.getY();
-        row (18);
+        noteTop = header();
         for (auto* l : { &notePitch, &noteVelocity, &noteLength, &notePosition, &noteChannel })
-            l->setBounds (withLabel (row (22)));
-        r.removeFromTop (14);
+            l->setBounds (withLabel (row()));
+        r.removeFromTop (space::s1);
     }
-    trackTop = r.getY();
-    row (18);
+    trackTop = header();
     trackName.setBounds (row());
-    trackColour.setBounds (withLabel (row (24)));
-    monitor.setBounds (withLabel (row (24)));
+    trackColour.setBounds (withLabel (row()));
+    monitor.setBounds (withLabel (row()));
 }
 } // namespace weft::ui

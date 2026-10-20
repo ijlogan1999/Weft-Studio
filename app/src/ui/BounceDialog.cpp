@@ -304,7 +304,7 @@ void BounceDialog::paint (juce::Graphics& g)
     if (current != Stage::settings)
         return;
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     for (int i = 0; i < rowLabels.size(); ++i)
         g.drawText (rowLabels[i], labelX, 16 + i * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
     g.drawText ("to", 252, 16, 28, 26, juce::Justification::centred);
@@ -333,8 +333,8 @@ void BounceDialog::resized()
     choose.setBounds (getWidth() - 105, row (7), 85, 26);
     name.setBounds (controlX, row (8), w, 26);
     warning.setBounds (labelX, row (9), getWidth() - 2 * labelX, 26);
-    cancel.setBounds (getWidth() - 200, getHeight() - 46, 85, 28);
-    bounceButton.setBounds (getWidth() - 105, getHeight() - 46, 85, 28);
+    bounceButton.setBounds (getWidth() - 200, getHeight() - 46, 85, 28); // primary first, as in every dialog
+    cancel.setBounds (getWidth() - 105, getHeight() - 46, 85, 28);
 
     notice.setBounds (labelX, getHeight() / 2 - 60, getWidth() - 2 * labelX, 40);
     bar.setBounds (labelX, getHeight() / 2 - 10, getWidth() - 2 * labelX, 22);

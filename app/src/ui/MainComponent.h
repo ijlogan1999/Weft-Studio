@@ -23,7 +23,7 @@ public:
     void resized() override;
     juce::Label message;
     juce::TextButton setup { "Audio Setup..." };
-    static constexpr int height = 34;
+    static constexpr int height = 32;
 };
 
 /** The read-only banner (05 §13): a Viewer, or removed from the project. */
@@ -34,7 +34,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     juce::Label message;
-    static constexpr int height = 30;
+    static constexpr int height = 32;
 };
 
 /** H · Status bar: the last message, the sync state (04 §10), the tool, snap and the project name. */
@@ -55,6 +55,25 @@ private:
     Studio& studio;
 };
 
+/** The 4 px gap between two zones, and the handle that resizes them (spec 04 §2, F-UI-1). */
+class Gutter final : public juce::Component
+{
+public:
+    explicit Gutter (bool vertical);
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override { repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    /** Called with the drag's distance in px since the press (right or down is positive). */
+    std::function<void (int)> onDrag;
+    std::function<void()> onPress, onDoubleClick;
+    const bool vertical;
+};
+
 class MainComponent final : public juce::Component, public juce::MenuBarModel, private juce::ChangeListener, private juce::Timer
 {
 public:
@@ -63,6 +82,7 @@ public:
     ~MainComponent() override;
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     bool keyStateChanged (bool isKeyDown) override;
@@ -144,6 +164,11 @@ private:
     NoAudioBanner banner;
     ReadOnlyBanner readOnly;
     PreviewBanner preview;
+    Gutter inspectorEdge { true }, sideEdge { true }, bottomEdge { false };
+    static constexpr int minInspector = 184, maxInspector = 424, minSide = 224, maxSide = 520, minBottom = 160;
+    int maxBottom() const;
+    int dragFrom = 0;    // the panel size when a gutter drag started
+    int restoreHeight = 0; // the bottom area's height before a double-click maximised it
     std::unique_ptr<juce::AlertWindow> question, projectAlert;
     std::function<void (int)> projectAnswer;
     juce::String projectAsked, alertText;

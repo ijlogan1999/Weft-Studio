@@ -44,7 +44,7 @@ public:
 
     const model::Region* region() const;
     juce::Rectangle<float> waveArea() const { return getLocalBounds().toFloat().withTrimmedTop (headerHeight).reduced (0, 4); }
-    static constexpr int headerHeight = 26;
+    static constexpr int headerHeight = size::panelHeader;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -67,7 +67,7 @@ public:
     {
         g.fillAll (colour (Token::surface));
         g.setColour (colour (Token::textDim));
-        g.setFont (juce::FontOptions (15.0f));
+        g.setFont (font (Type::title));
         g.drawText (getTitle() + ": " + text, getLocalBounds(), juce::Justification::centred);
     }
 

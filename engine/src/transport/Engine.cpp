@@ -721,7 +721,7 @@ Engine::Meter Engine::takeMeter (const Id& trackId)
     if (! state)
         return {};
     auto& m = state->meter;
-    return { m.peak.exchange (0), m.input.exchange (0), m.clip.load() };
+    return { m.peak.exchange (0), m.rms.load(), m.input.exchange (0), m.clip.load() };
 }
 
 void Engine::resetClip (const Id& trackId)
@@ -975,6 +975,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         masterGainRight = targetR;
         masterGainSet = true;
         float masterPeak = 0;
+        double masterPower = 0;
         for (int i = 0; i < numFrames; ++i)
         {
             const float x = static_cast<float> (i + 1) / static_cast<float> (numFrames);
@@ -982,6 +983,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
             mix[0][k] *= startL + (targetL - startL) * x;
             mix[1][k] *= startR + (targetR - startR) * x;
             masterPeak = std::max ({ masterPeak, std::abs (mix[0][k]), std::abs (mix[1][k]) });
+            masterPower += static_cast<double> (mix[0][k]) * mix[0][k] + static_cast<double> (mix[1][k]) * mix[1][k];
         }
         for (std::size_t ch = 0; ch < 2; ++ch)
             if (static_cast<int> (ch) < numOutputs)
@@ -991,7 +993,10 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
             for (int i = 0; i < numFrames; ++i)
                 outputs[0][i] += mix[1][static_cast<std::size_t> (i)];
         if (snap->masterState)
+        {
             snap->masterState->meter.add (masterPeak);
+            snap->masterState->meter.addPower (masterPower, 2 * numFrames, numFrames, snap->sampleRate);
+        }
         if (auto* cap = capture.load (std::memory_order_acquire); cap != nullptr && rolling)
         {
             // Real-time bounce: the master output by timeline position (cycle is suppressed).
@@ -1369,9 +1374,14 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                 sendTo (ch.sends[s], sendGain (s), true);
 
         float p = 0;
+        double power = 0;
         for (int k = 0; k < frames; ++k)
+        {
             p = std::max ({ p, std::abs (left[k]), std::abs (right[k]) });
+            power += static_cast<double> (left[k]) * left[k] + static_cast<double> (right[k]) * right[k];
+        }
         state.meter.add (p);
+        state.meter.addPower (power, 2 * frames, frames, snap.sampleRate);
 
         // Delay compensation for the output edge (F-MIX-13).
         if (ch.outputDelayLine)

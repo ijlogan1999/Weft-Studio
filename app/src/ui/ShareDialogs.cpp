@@ -10,7 +10,7 @@ void drawLabels (juce::Graphics& g, const juce::StringArray& labels)
 {
     g.fillAll (colour (Token::surfaceRaised));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     for (int i = 0; i < labels.size(); ++i)
         if (labels[i].isNotEmpty())
             g.drawText (labels[i], labelX, 16 + i * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
@@ -151,7 +151,7 @@ ShareDialog::ShareDialog (Studio& s) : studio (s)
     describe (close, "Close", "Close (Esc)");
     removalNote.setText ("Removing someone ends their access. A copy already on their computer stays there.", juce::dontSendNotification);
     removalNote.setColour (juce::Label::textColourId, colour (Token::textDim));
-    removalNote.setFont (juce::FontOptions (12.0f));
+    removalNote.setFont (font (Type::small));
     close.addShortcut (juce::KeyPress (juce::KeyPress::escapeKey));
     proceed.onClick = [this] { share(); };
     createLink.onClick = [this] { makeLink(); };
@@ -321,7 +321,7 @@ void ShareDialog::paint (juce::Graphics& g)
     if (! studio.shared())
         return;
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     g.drawText ("Invite link", labelX, 16, controlX - labelX, 26, juce::Justification::centredLeft);
     g.drawText ("Invite as", labelX, 16 + rowHeight, controlX - labelX, 26, juce::Justification::centredLeft);
     g.drawText ("Members", labelX, 16 + 2 * rowHeight + 8, controlX - labelX, 26, juce::Justification::centredLeft);

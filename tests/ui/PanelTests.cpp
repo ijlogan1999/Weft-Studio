@@ -196,7 +196,26 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     Ui ui;
     auto& s = ui.studio.session();
     const auto audio = ui.m().trackOrder.front();
-    const auto file = writeSine (ui.folder.path / "Guitar.wav", 6.0);
+    // Plucked notes, so the waveform has the shape of a real part rather than a flat tone.
+    const auto file = ui.folder.path / "Guitar.wav";
+    {
+        media::AudioData a;
+        a.sampleRate = 48000;
+        const auto n = static_cast<std::size_t> (6.0 * a.sampleRate);
+        a.channels.assign (2, std::vector<float> (n));
+        const double freqs[] = { 196.0, 246.9, 293.7, 392.0, 329.6, 246.9 };
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const auto t = static_cast<double> (i) / a.sampleRate;
+            const auto note = static_cast<int> (t / 0.25);
+            const auto since = t - note * 0.25;
+            const auto accent = note % 4 == 0 ? 0.9 : 0.45 + 0.1 * (note % 3);
+            const auto v = accent * std::exp (-since * 9.0) * std::sin (2.0 * 3.141592653589793 * freqs[note % 6] * t);
+            a.channels[0][i] = static_cast<float> (v);
+            a.channels[1][i] = static_cast<float> (v * 0.9);
+        }
+        REQUIRE (media::writeWav (file, a, media::SampleFormat::int24));
+    }
     engine::DropTarget target;
     target.at = bar;
     target.trackId = audio;
@@ -232,4 +251,82 @@ TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")
     out.deleteFile();
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+
+    // Zoomed in on the start of the audio region, to check the waveform stays crisp.
+    ui.studio.view.pixelsPerTick *= 24.0;
+    ui.studio.view.originTick = bar;
+    ui.studio.edited();
+    ui.settle();
+    const auto zoomed = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
+    const auto zoomFile = out.getSiblingFile (out.getFileNameWithoutExtension() + "-zoom.png");
+    zoomFile.deleteFile();
+    juce::FileOutputStream zoomStream (zoomFile);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (zoomed, zoomStream));
+
+    // The browser's rows, drawn with the look and feel the way the tree draws them (the tree
+    // itself only lays out rows from the message loop, which this test doesn't run).
+    auto& side = ui.main->side();
+    const auto header = side.createComponentSnapshot (side.getLocalBounds().withHeight (size::panelHeader * 2));
+    const int rowH = size::control;
+    juce::Image rows (juce::Image::RGB, side.getWidth(), header.getHeight() + 6 * rowH, true);
+    {
+        juce::Graphics g (rows);
+        g.fillAll (colour (Token::surface));
+        g.drawImageAt (header, 0, 0);
+        const std::tuple<const char*, bool, const char*> entries[] = {
+            { "Drums", true, "" }, { "Vocals", true, "" }, { "Bass take 2.wav", false, "1.6 MB" },
+            { "Guitar DI.wav", false, "1.6 MB" }, { "Room tone.wav", false, "1.6 MB" }, { "Keys.mid", false, "2 KB" } };
+        int i = 0;
+        for (const auto& [name, folder, bytes] : entries)
+        {
+            juce::Graphics::ScopedSaveState save (g);
+            g.setOrigin (0, header.getHeight() + i * rowH);
+            g.reduceClipRegion (0, 0, rows.getWidth(), rowH);
+            Theme::get().lookAndFeel().drawFileBrowserRow (g, rows.getWidth(), rowH, {}, name, nullptr, bytes, {}, folder, i == 3, i,
+                                                            side.browser().tree());
+            ++i;
+        }
+    }
+    const auto browserFile = out.getSiblingFile (out.getFileNameWithoutExtension() + "-browser.png");
+    browserFile.deleteFile();
+    juce::FileOutputStream browserStream (browserFile);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (rows, browserStream));
+
+    // The audio editor on the Guitar region, trimmed so both parts of the file show.
+    const auto guitar = ui.m().regionsOnTrack (audio).front()->id;
+    REQUIRE (s.trimAudioStartSamples (guitar, 24000));
+    REQUIRE (s.trimRegionLength (guitar, 96000));
+    ui.studio.editorRegion = guitar;
+    ui.main->run (Cmd::toggleAudioEditor);
+    ui.studio.edited();
+    ui.settle();
+    const auto editor = ui.main->createComponentSnapshot (ui.main->getLocalBounds());
+    const auto editorFile = out.getSiblingFile (out.getFileNameWithoutExtension() + "-editor.png");
+    editorFile.deleteFile();
+    juce::FileOutputStream editorStream (editorFile);
+    REQUIRE (juce::PNGImageFormat().writeImageToStream (editor, editorStream));
+}
+
+TEST_CASE ("D-UI-13 controls take keyboard focus with a visible ring, and clicks don't steal it", "[U][UI]")
+{
+    Ui ui;
+    ui.instrumentTracks (1);
+    ui.main->run (Cmd::toggleMixer);
+    ui.settle();
+    int checked = 0;
+    forEachComponent (*ui.main, [&] (juce::Component& c) {
+        const bool control = dynamic_cast<juce::Button*> (&c) != nullptr || dynamic_cast<juce::Slider*> (&c) != nullptr || dynamic_cast<juce::ComboBox*> (&c) != nullptr;
+        if (! control || dynamic_cast<juce::TabBarButton*> (&c) != nullptr || ! c.isVisible() || c.getParentComponent() == nullptr
+            || dynamic_cast<juce::ScrollBar*> (c.getParentComponent()) != nullptr || dynamic_cast<juce::Slider*> (c.getParentComponent()) != nullptr
+            || dynamic_cast<juce::TabbedButtonBar*> (c.getParentComponent()) != nullptr) // the tab bar's own overflow button
+            return;
+        ++checked;
+        INFO (c.getTitle() << " in " << c.getParentComponent()->getTitle());
+        CHECK (c.getWantsKeyboardFocus());
+        CHECK (c.hasFocusOutline());
+        CHECK_FALSE (c.getMouseClickGrabsKeyboardFocus());
+    });
+    CHECK (checked > 40);
+    // The ring itself: the theme makes one for any focusable component.
+    CHECK (Theme::get().lookAndFeel().createFocusOutlineForComponent (*ui.main) != nullptr);
 }

@@ -1,6 +1,7 @@
 #include "TracksArea.h"
 
 #include "PresenceUi.h"
+#include "Waveform.h"
 
 #include "weft/time/Position.h"
 
@@ -10,12 +11,22 @@ namespace weft::ui
 {
 namespace
 {
-constexpr float nameBar = 15.0f, edge = 8.0f;
+constexpr float nameBar = 16.0f, edge = 8.0f;
 
 juce::Colour regionColour (const model::ProjectModel& m, const model::Region& r)
 {
     const auto c = m.regionColor (r);
     return colourFor (c.palette, c.rgb);
+}
+
+/** The playhead: a 1 px line with a dark halo, readable over any region colour. */
+void drawPlayheadLine (juce::Graphics& g, float x, float top, float bottom)
+{
+    const auto px = static_cast<float> (juce::roundToInt (x));
+    g.setColour (depth::shade (0.45f, 0.15f));
+    g.fillRect (px - 1.0f, top, 3.0f, bottom - top);
+    g.setColour (colour (Token::playhead));
+    g.fillRect (px, top, 1.0f, bottom - top);
 }
 
 void askForText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)
@@ -75,57 +86,96 @@ void Ruler::paint (juce::Graphics& g)
 {
     const auto& m = studio.model();
     const auto& v = studio.view;
-    g.fillAll (colour (Token::surface));
+    // The ruler is raised over the canvas: a lit band with a top highlight.
+    const auto band = getLocalBounds().toFloat().withHeight (static_cast<float> (rulerHeight));
+    g.setGradientFill (juce::ColourGradient::vertical (colour (Token::surfaceRaised), 0.0f, colour (Token::surface), band.getBottom()));
+    g.fillRect (band);
+    depth::highlight (g, band, 0.0f);
     // Cycle strip.
     const auto& cyc = m.info.cycle;
     const auto cx1 = static_cast<float> (v.tickToX (static_cast<double> (cyc.start)));
     const auto cx2 = static_cast<float> (v.tickToX (static_cast<double> (cyc.end)));
-    g.setColour (cyc.enabled ? colour (Token::playhead) : colour (Token::gridStrong));
-    g.fillRoundedRectangle (cx1, 1.0f, std::max (2.0f, cx2 - cx1), cycleStrip - 2.0f, 4.0f);
+    const auto cycleBox = juce::Rectangle<float> (cx1, 1.0f, std::max (2.0f, cx2 - cx1), cycleStrip - 2.0f);
+    if (cyc.enabled)
+    {
+        depth::tinted (g, cycleBox, radius::r1, colour (Token::loop));
+    }
+    else
+    {
+        // Off: a faint band, so the range can be found and dragged without reading as a rule.
+        g.setColour (colour (Token::loop).withAlpha (0.18f));
+        g.fillRoundedRectangle (cycleBox, radius::r1);
+    }
     if (m.info.punch.enabled)
     {
-        g.setColour (colour (Token::record).withAlpha (0.8f));
+        g.setColour (colour (Token::record));
         const auto px1 = static_cast<float> (v.tickToX (static_cast<double> (m.info.punch.start)));
         const auto px2 = static_cast<float> (v.tickToX (static_cast<double> (m.info.punch.end)));
-        g.fillRect (px1, cycleStrip - 3.0f, px2 - px1, 3.0f);
+        g.fillRect (px1, cycleStrip - 2.0f, px2 - px1, 2.0f);
     }
-    // Bars.
-    g.setFont (juce::FontOptions (12.0f));
-    for (const auto& [bar, x] : barLabels (m, v, getWidth()))
+    // Bars: a full tick and its number; beats as short ticks when there is room.
+    g.setFont (font (Type::monoSmall));
+    const auto labels = barLabels (m, v, getWidth());
     {
-        g.setColour (colour (Token::gridStrong));
-        g.drawVerticalLine (juce::roundToInt (x), static_cast<float> (cycleStrip), static_cast<float> (rulerHeight));
-        g.setColour (colour (Token::textDim));
-        g.drawText (juce::String (bar), juce::roundToInt (x) + 3, cycleStrip + 2, 40, 18, juce::Justification::left);
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            const auto [bar, x] = labels[i];
+            g.setColour (colour (Token::border));
+            g.fillRect (static_cast<float> (juce::roundToInt (x)), static_cast<float> (cycleStrip), 1.0f, static_cast<float> (rulerHeight - cycleStrip));
+            g.setColour (colour (Token::textDim));
+            g.drawText (juce::String (bar), juce::roundToInt (x) + space::half, cycleStrip + space::half, 40, 16, juce::Justification::left);
+            const auto barTick = m.signatures.barStart (bar - 1);
+            const auto beat = 4 * ticksPerQuarter / m.signatures.signatureAtBar (bar - 1).denominator;
+            if (beat * v.pixelsPerTick >= 12.0)
+                for (Ticks t = barTick + beat; t < barTick + m.signatures.barLength (bar - 1); t += beat)
+                {
+                    const auto bx = static_cast<float> (juce::roundToInt (v.tickToX (static_cast<double> (t))));
+                    g.setColour (colour (Token::gridStrong));
+                    g.fillRect (bx, static_cast<float> (rulerHeight - 6), 1.0f, 6.0f);
+                    // Zoomed in far enough, beats are numbered too ("2.3").
+                    if (beat * v.pixelsPerTick >= 48.0)
+                    {
+                        g.setColour (colour (Token::textDim));
+                        g.drawText (juce::String (bar) + "." + juce::String ((t - barTick) / beat + 1), juce::roundToInt (bx) + space::half,
+                                    cycleStrip + space::half, 40, 16, juce::Justification::left);
+                    }
+                }
+        }
     }
-    // Markers.
+    g.setColour (colour (Token::border));
+    g.fillRect (0, rulerHeight - 1, getWidth(), 1);
+    // Markers: raised chips with their colour on the left edge.
     if (studio.layout.globalTracks)
     {
         const auto lane = juce::Rectangle<int> (0, rulerHeight, getWidth(), markerLane);
-        g.setColour (colour (Token::lane));
+        g.setColour (colour (Token::surface));
         g.fillRect (lane);
+        g.setFont (font (Type::body));
         for (const auto* marker : arrange::markersInOrder (m))
         {
             const auto x = static_cast<float> (v.tickToX (static_cast<double> (marker->pos)));
-            const auto c = marker->color ? colourFor (marker->color->palette, marker->color->rgb) : colour (Token::accent);
+            const auto c = marker->color ? colourFor (marker->color->palette, marker->color->rgb) : colour (Token::textDim);
+            const auto chip = juce::Rectangle<float> (x, lane.getY() + 3.0f, 72.0f, markerLane - 6.0f);
+            depth::raised (g, chip, radius::r1);
             g.setColour (c);
-            g.fillRoundedRectangle (x, lane.getY() + 3.0f, 70.0f, markerLane - 6.0f, 6.0f);
-            g.setColour (colour (Token::onAccent));
-            g.drawText (juce::String (marker->name), juce::Rectangle<float> (x + 5, lane.getY() + 3.0f, 64.0f, markerLane - 6.0f),
-                        juce::Justification::centredLeft, true);
+            g.fillRect (chip.withWidth (3.0f));
+            g.setColour (colour (Token::text));
+            g.drawText (juce::String (marker->name), chip.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
         }
         for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
             drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
+        g.setColour (colour (Token::border));
+        g.fillRect (0, getHeight() - 1, getWidth(), 1);
     }
-    g.setColour (colour (Token::border));
-    g.drawHorizontalLine (getHeight() - 1, 0.0f, static_cast<float> (getWidth()));
     // Playhead handle.
-    const auto px = static_cast<float> (v.tickToX (static_cast<double> (studio.playhead())));
-    g.setColour (colour (Token::playhead));
+    const auto px = static_cast<float> (juce::roundToInt (v.tickToX (static_cast<double> (studio.playhead())))) + 0.5f;
     juce::Path handle;
-    handle.addTriangle (px - 6, cycleStrip, px + 6, cycleStrip, px, cycleStrip + 8);
+    handle.addTriangle (px - 5.0f, static_cast<float> (cycleStrip), px + 5.0f, static_cast<float> (cycleStrip), px, cycleStrip + 7.0f);
+    g.setColour (depth::shade (0.4f, 0.2f));
+    g.fillPath (handle, juce::AffineTransform::translation (0.0f, 1.0f));
+    g.setColour (colour (Token::playhead));
     g.fillPath (handle);
-    g.drawVerticalLine (juce::roundToInt (px), static_cast<float> (cycleStrip), static_cast<float> (getHeight()));
+    drawPlayheadLine (g, px - 0.5f, static_cast<float> (cycleStrip), static_cast<float> (getHeight()));
 }
 
 juce::Rectangle<float> Ruler::pinBounds (const model::Comment& thread) const
@@ -237,7 +287,8 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio (s), number (n)
 {
     name.setEditable (false, true, true);
-    name.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    name.setFont (font (Type::strong));
+    name.setBorderSize ({});
     describe (name, "Track name", "Track name (double-click to rename)");
     name.onTextChange = [this] {
         const auto text = name.getText().trim();
@@ -256,14 +307,19 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
     };
     solo.onClick = [this] { studio.toggleSolo (trackId, juce::ModifierKeys::currentModifiers.isCommandDown()); };
     arm.onClick = [this] { studio.toggleArm (trackId); };
+    setRole (mute, ButtonRole::mute);
+    setRole (solo, ButtonRole::solo);
+    setRole (arm, ButtonRole::record);
     for (auto* b : { &mute, &solo, &arm })
     {
-        b->setWantsKeyboardFocus (false);
+        b->setWantsKeyboardFocus (true);
+        b->setMouseClickGrabsKeyboardFocus (false);
+        b->setHasFocusOutline (true);
         addAndMakeVisible (*b);
     }
     mode.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
     describe (mode, "Automation mode");
-    mode.setWantsKeyboardFocus (false);
+    makeFocusable (mode);
     mode.onChange = [this] {
         static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
         const auto i = mode.getSelectedItemIndex();
@@ -271,13 +327,8 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
             studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
     };
     addChildComponent (mode);
-    juce::Path padlock;
-    padlock.addRoundedRectangle (0.0f, 6.0f, 10.0f, 8.0f, 1.5f);
-    padlock.addRectangle (1.5f, 0.0f, 1.6f, 6.0f);
-    padlock.addRectangle (6.9f, 0.0f, 1.6f, 6.0f);
-    padlock.addRectangle (1.5f, 0.0f, 7.0f, 1.6f);
-    lock.setShape (padlock, false, true, false);
-    lock.setWantsKeyboardFocus (false);
+    lock.setShape (icon::lock(), false, true, false);
+    makeFocusable (lock);
     lock.onClick = [this] { lockClicked(); };
     addChildComponent (lock);
     setTitle ("Track header");
@@ -351,7 +402,7 @@ void TrackHeader::rebuildAutomation()
         {
             auto box = std::make_unique<juce::ComboBox>();
             describe (*box, "Automation parameter");
-            box->setWantsKeyboardFocus (false);
+            makeFocusable (*box);
             for (std::size_t c = 0; c < choices.size(); ++c)
                 box->addItem (juce::String (choices[c].name), static_cast<int> (c) + 1);
             for (std::size_t c = 0; c < choices.size(); ++c)
@@ -366,7 +417,7 @@ void TrackHeader::rebuildAutomation()
             parameters.push_back (std::move (box));
             auto plus = std::make_unique<juce::TextButton> ("+");
             describe (*plus, "Add automation lane", "Show another automation lane");
-            plus->setWantsKeyboardFocus (false);
+            makeFocusable (*plus);
             plus->onClick = [this] { studio.addShownLane (trackId); };
             addAndMakeVisible (*plus);
             addLane.push_back (std::move (plus));
@@ -390,8 +441,6 @@ void TrackHeader::refresh()
     solo.setToggleState (studio.localView().soloed.contains (trackId), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (trackId), juce::dontSendNotification);
     arm.setVisible (commands::LocalView::canArm (*t));
-    arm.setColour (juce::TextButton::buttonOnColourId, colour (Token::record));
-    arm.setColour (juce::TextButton::textColourOnId, colour (Token::onRecord));
     rebuildAutomation();
 
     // A lock (04 §6.1, §9.6): the icon shows; someone else's lock disables the shared controls.
@@ -436,28 +485,48 @@ void TrackHeader::paint (juce::Graphics& g)
 {
     const auto* t = studio.model().track (trackId);
     const bool selected = studio.selectedTrack() == trackId;
-    g.fillAll (colour (selected ? Token::surfaceRaised : Token::surface));
+    const auto trackPart = getLocalBounds().withHeight (studio.trackHeight (trackId)).toFloat();
+    g.fillAll (colour (Token::surface));
+    if (selected)
+    {
+        g.setColour (colour (Token::hover));
+        g.fillRect (trackPart);
+    }
+    depth::highlight (g, trackPart, 0.0f);
+    // The track's colour runs down the left edge; selection adds an accent rule beside it.
     if (t != nullptr)
     {
         g.setColour (colourFor (t->color.palette, t->color.rgb));
-        g.fillRoundedRectangle (4.0f, 4.0f, 6.0f, getHeight() - 8.0f, 3.0f);
+        g.fillRect (trackPart.withWidth (static_cast<float> (space::half)));
+    }
+    if (selected)
+    {
+        g.setColour (colour (Token::accent));
+        g.fillRect (trackPart.withX (static_cast<float> (space::half)).withWidth (2.0f));
     }
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (12.0f));
-    g.drawText (juce::String (number), 14, 4, 22, 20, juce::Justification::centredLeft);
+    g.setFont (font (Type::monoSmall));
+    g.drawText (juce::String (number), space::s1, space::s1, space::s3 - space::half, size::control, juce::Justification::centredRight);
+    if (t != nullptr && trackPart.getHeight() >= 48.0f)
+    {
+        g.setFont (font (Type::body));
+        const auto kind = t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
+        g.drawText (kind, space::s4, space::s1 + size::control, 120, 16, juce::Justification::centredLeft);
+    }
     // Collaborators working on this track (04 §6.1): a badge each, red while they record on it.
-    auto badge = juce::Rectangle<float> (static_cast<float> (getWidth()) - 22.0f, 30.0f, 18.0f, 18.0f);
+    auto badge = juce::Rectangle<float> (static_cast<float> (getWidth() - space::s1 - 16), static_cast<float> (space::s1 + size::control + 2), 16.0f, 16.0f);
     for (const auto* who : badges())
     {
-        if (badge.getX() < 36.0f || badge.getBottom() > static_cast<float> (studio.trackHeight (trackId)))
+        if (badge.getX() < 96.0f || badge.getBottom() > static_cast<float> (studio.trackHeight (trackId)))
             break;
         drawBadge (g, badge, colourOf (*who), initials (who->displayName), who->state.status == collab::Presence::Status::recording);
-        badge.translate (-21.0f, 0.0f);
+        badge.translate (-20.0f, 0.0f);
     }
-    g.setColour (colour (Token::border));
-    g.drawHorizontalLine (getHeight() - 1, 0.0f, static_cast<float> (getWidth()));
+    g.setColour (colour (Token::background));
+    g.fillRect (0, getHeight() - 1, getWidth(), 1);
+    g.setColour (colour (Token::lineSubtle));
     for (std::size_t i = 0; i < parameters.size(); ++i)
-        g.drawHorizontalLine (studio.trackHeight (trackId) + static_cast<int> (i) * Studio::automationLaneHeight, 32.0f, static_cast<float> (getWidth()));
+        g.fillRect (space::s4, studio.trackHeight (trackId) + static_cast<int> (i) * Studio::automationLaneHeight, getWidth() - space::s4, 1);
 }
 
 std::vector<const collab::RemotePresence*> TrackHeader::badges() const
@@ -471,30 +540,36 @@ std::vector<const collab::RemotePresence*> TrackHeader::badges() const
 
 void TrackHeader::resized()
 {
+    // Colour edge and number on the left; name, then M S R on the top line (8 px grid).
     const auto trackPart = getLocalBounds().withHeight (studio.trackHeight (trackId));
-    auto r = trackPart.reduced (4).withTrimmedLeft (32);
-    auto row = r.removeFromTop (24);
+    auto r = trackPart.withTrimmedLeft (space::s4).withTrimmedRight (space::s1);
+    auto row = r.withTrimmedTop (std::min (space::s1, std::max (0, (trackPart.getHeight() - size::control) / 2))).withHeight (size::control);
     if (lock.isVisible())
-        lock.setBounds (row.removeFromRight (16).withSizeKeepingCentre (11, 15));
+    {
+        lock.setBounds (row.removeFromRight (size::icon).withSizeKeepingCentre (size::icon, size::icon));
+        row.removeFromRight (space::half);
+    }
     for (auto* b : { &arm, &solo, &mute })
     {
-        b->setBounds (row.removeFromRight (24));
-        row.removeFromRight (3);
+        if (b == &arm && ! arm.isVisible())
+            continue;
+        b->setBounds (row.removeFromRight (size::control));
+        row.removeFromRight (space::half);
     }
-    name.setBounds (row);
+    name.setBounds (row.withTrimmedRight (space::half));
     // Automation lanes: the parameter and "+" on each; the track's mode on the first (W-8 step 1).
     for (std::size_t i = 0; i < parameters.size(); ++i)
     {
         auto lane = juce::Rectangle<int> (0, trackPart.getBottom() + static_cast<int> (i) * Studio::automationLaneHeight, getWidth(),
                                           Studio::automationLaneHeight)
-                        .reduced (4)
-                        .withTrimmedLeft (32);
-        auto top = lane.removeFromTop (22);
-        addLane[i]->setBounds (top.removeFromRight (24));
-        top.removeFromRight (3);
+                        .reduced (space::s1, space::half)
+                        .withTrimmedLeft (space::s3);
+        auto top = lane.removeFromTop (size::control);
+        addLane[i]->setBounds (top.removeFromRight (size::control));
+        top.removeFromRight (space::half);
         parameters[i]->setBounds (top);
         if (i == 0)
-            mode.setBounds (lane.removeFromTop (24).withTrimmedTop (2).withWidth (std::min (lane.getWidth(), 90)));
+            mode.setBounds (lane.removeFromTop (size::control).withWidth (std::min (lane.getWidth(), 88)));
     }
 }
 
@@ -721,7 +796,7 @@ void Timeline::paintAutomation (juce::Graphics& g, const AutomationHit& lane)
         g.drawEllipse (dot, 1.5f);
     }
     g.setColour (colour (Token::textDim));
-    g.setFont (juce::FontOptions (11.0f));
+    g.setFont (font (Type::small));
     g.drawText (studio.automationTargetName (lane.trackId, lane.target), lane.box.reduced (6.0f, 2.0f), juce::Justification::topLeft);
     if (autoDrag == AutoDrag::band && autoLane.box == lane.box)
     {
@@ -926,7 +1001,7 @@ void Timeline::paintGrid (juce::Graphics& g, juce::Rectangle<float> area)
             const auto x = static_cast<float> (v.tickToX (static_cast<double> (t)));
             if (beat * v.pixelsPerTick < 6.0 && t != start)
                 continue;
-            g.setColour (t == start ? colour (Token::gridStrong) : colour (Token::gridWeak));
+            g.setColour (t == start ? colour (Token::gridStrong) : (t - start) % beat == 0 ? colour (Token::gridWeak) : colour (Token::gridSub));
             g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
         }
     }
@@ -938,22 +1013,38 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
     const bool selected = studio.selection.contains (r.id);
     auto c = regionColour (m, r);
     if (r.muted)
-        c = c.withSaturation (0.1f).withAlpha (0.55f);
-    if (ghost)
-        c = c.withAlpha (0.45f);
-    // Loop iterations, lighter.
+        c = c.withSaturation (c.getSaturation() * 0.2f);
+    const auto alpha = ghost ? 0.5f : r.muted ? 0.6f : 1.0f;
+    const auto bodyColour = regionBody (c).withAlpha (alpha);
+    // Loop iterations: the body only, with a dashed start edge.
     if (r.loop && r.loop->enabled && ! ghost)
     {
         const auto loopEnd = static_cast<float> (studio.view.tickToX (static_cast<double> (r.loop->endTicks)));
-        g.setColour (c.withAlpha (0.35f));
         for (auto x = box.getRight(); x < loopEnd; x += box.getWidth())
-            g.fillRoundedRectangle (x, box.getY(), std::min (box.getWidth(), loopEnd - x) - 1.0f, box.getHeight(), 6.0f);
+        {
+            const auto it = juce::Rectangle<float> (x, box.getY(), std::min (box.getWidth(), loopEnd - x) - 1.0f, box.getHeight());
+            g.setColour (bodyColour.withMultipliedAlpha (0.6f));
+            g.fillRoundedRectangle (it, radius::r1);
+            g.setColour (c.withAlpha (0.6f));
+            g.fillRect (it.withHeight (2.0f));
+        }
     }
-    g.setColour (c);
-    g.fillRoundedRectangle (box, 6.0f);
-    auto body = box.withTrimmedTop (nameBar);
-    // Content overview.
-    g.setColour (colour (Token::regionText).withAlpha (r.muted ? 0.35f : 0.6f));
+    if (! ghost)
+        depth::shadow (g, box, radius::r1, depth::Level::raised);
+    g.setColour (bodyColour);
+    g.fillRoundedRectangle (box, radius::r1);
+    // The name bar carries the track colour at full strength; the body stays dark so content reads.
+    const auto bar = box.withHeight (static_cast<float> (nameBar));
+    {
+        const juce::Graphics::ScopedSaveState save (g);
+        g.reduceClipRegion (bar.toNearestInt());
+        g.setColour (c.withAlpha (alpha));
+        g.fillRoundedRectangle (box, radius::r1);
+    }
+    g.setColour (colour (Token::regionText).withAlpha (0.08f));
+    g.fillRect (bar.withHeight (1.0f));
+    auto body = box.withTrimmedTop (static_cast<float> (nameBar));
+    const auto content = c.brighter (0.6f).withAlpha (alpha);
     if (r.isMidi)
     {
         if (const auto* seq = m.sequence (r.midi.sequenceId))
@@ -962,45 +1053,41 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
             for (const auto* n : seq->sortedNotes())
                 lo = std::min (lo, n->pitch), hi = std::max (hi, n->pitch);
             const auto range = static_cast<float> (std::max (12, hi - lo + 1));
+            const auto noteH = std::clamp ((body.getHeight() - 8.0f) / range, 2.0f, 4.0f);
+            g.setColour (content);
             for (const auto* n : seq->sortedNotes())
             {
                 if (n->pos < r.midi.sequenceOffset || n->pos >= r.midi.sequenceOffset + r.length)
                     continue;
                 const auto x = static_cast<float> (studio.view.tickToX (static_cast<double> (r.start + n->pos - r.midi.sequenceOffset)));
-                const auto w = std::max (2.0f, static_cast<float> (n->length * studio.view.pixelsPerTick));
-                const auto y = body.getBottom() - 3.0f - (static_cast<float> (n->pitch - lo) + 1.0f) / range * (body.getHeight() - 6.0f);
-                g.fillRect (x, y, std::min (w, box.getRight() - x), 2.0f);
+                const auto w = std::max (2.0f, static_cast<float> (n->length * studio.view.pixelsPerTick) - 1.0f);
+                const auto y = body.getBottom() - 4.0f - (static_cast<float> (n->pitch - lo) + 1.0f) / range * (body.getHeight() - 8.0f);
+                g.fillRoundedRectangle (x, y, std::min (w, box.getRight() - x), noteH, 1.0f);
             }
         }
     }
     else if (body.getHeight() > 6)
     {
-        const auto& pk = studio.peaks (r.audio.media);
-        if (! pk.empty())
+        const auto& wave = studio.waveform (r.audio.media);
+        if (! wave.empty())
         {
             const auto rate = static_cast<double> (m.info.sampleRate);
-            const double samplesPerPixel = rate / (m.tempo.bpmAt (r.start) / 60.0 * ticksPerQuarter) / studio.view.pixelsPerTick;
-            const auto mid = body.getCentreY();
-            const auto half = body.getHeight() * 0.45f;
-            const auto gain = static_cast<float> (std::pow (10.0, r.audio.gainDb / 20.0));
-            for (int px = 0; px < static_cast<int> (box.getWidth()); ++px)
-            {
-                const auto from = static_cast<std::int64_t> (r.audio.sourceOffset + px * samplesPerPixel) / Studio::peakFrames;
-                const auto to = static_cast<std::int64_t> (r.audio.sourceOffset + (px + 1) * samplesPerPixel) / Studio::peakFrames;
-                float peak = 0;
-                for (auto i = from; i <= to && i < static_cast<std::int64_t> (pk.size()); ++i)
-                    peak = std::max (peak, pk[static_cast<std::size_t> (std::max<std::int64_t> (i, 0))]);
-                const auto h = std::min (1.0f, peak * gain) * half;
-                g.drawVerticalLine (juce::roundToInt (box.getX()) + px, mid - h, mid + h);
-            }
+            const double framesPerPixel = rate / (m.tempo.bpmAt (r.start) / 60.0 * ticksPerQuarter) / studio.view.pixelsPerTick;
+            WaveformStyle style;
+            style.peak = content.withMultipliedAlpha (0.55f);
+            style.rms = content;
+            style.gain = static_cast<float> (std::pow (10.0, r.audio.gainDb / 20.0));
+            const juce::Graphics::ScopedSaveState save (g);
+            g.reduceClipRegion (body.toNearestInt());
+            drawWaveform (g, wave, body.reduced (0.0f, 2.0f), static_cast<double> (r.audio.sourceOffset), framesPerPixel, style);
         }
         // Fades.
         auto fadeX = [&] (Samples s) { return static_cast<float> (s) / static_cast<float> (r.length) * box.getWidth(); };
-        g.setColour (colour (Token::regionText));
+        g.setColour (colour (Token::regionText).withAlpha (0.8f));
         if (r.audio.fadeIn.length > 0)
-            g.drawLine (box.getX(), body.getBottom(), box.getX() + fadeX (r.audio.fadeIn.length), body.getY(), 1.5f);
+            g.drawLine (box.getX(), body.getBottom(), box.getX() + fadeX (r.audio.fadeIn.length), body.getY(), 1.0f);
         if (r.audio.fadeOut.length > 0)
-            g.drawLine (box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom(), 1.5f);
+            g.drawLine (box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom(), 1.0f);
     }
     // Audio still on its way (F-COL-10): the part not here yet is hatched, with how far it got.
     juce::String transfer;
@@ -1023,16 +1110,16 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
             transfer = d->failed ? "Download failed" : d->waiting ? "Waiting for upload" : "Downloading " + juce::String (juce::roundToInt (d->fraction * 100.0)) + "%";
         }
     // Name bar.
-    g.setColour (colour (Token::regionText));
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.setColour (colour (Token::regionText).withAlpha (alpha));
+    g.setFont (font (Type::caption).withExtraKerningFactor (0.0f));
     auto label = juce::String (r.name);
     if (transfer.isNotEmpty())
         label << "  (" << transfer << ")";
     if (r.muted)
         label = "(muted) " + label;
     // Keep the name readable when the region starts left of the view.
-    auto nameArea = box.withHeight (nameBar).reduced (6, 0);
-    nameArea.setLeft (std::max (nameArea.getX(), 6.0f));
+    auto nameArea = bar.reduced (static_cast<float> (space::half), 0.0f);
+    nameArea.setLeft (std::max (nameArea.getX(), static_cast<float> (space::half)));
     g.drawText (label, nameArea, juce::Justification::centredLeft, true);
     if (! r.takeFolderId.empty())
         if (const auto f = m.takeFolders.find (r.takeFolderId); f != m.takeFolders.end())
@@ -1040,22 +1127,23 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
             const auto& takes = f->second->takeIds;
             const auto it = std::find (takes.begin(), takes.end(), r.id);
             const auto text = "Take " + juce::String (static_cast<int> (it - takes.begin()) + 1) + "/" + juce::String (static_cast<int> (takes.size()));
-            g.drawText (text, box.withHeight (nameBar).withTrimmedLeft (box.getWidth() - 62).reduced (2, 0), juce::Justification::centredRight, true);
+            g.drawText (text, bar.withTrimmedLeft (box.getWidth() - 64.0f).reduced (static_cast<float> (space::half), 0.0f), juce::Justification::centredRight, true);
         }
     if (selected)
     {
         g.setColour (colour (Token::accent));
-        g.drawRoundedRectangle (box.reduced (1.0f), 6.0f, 2.5f);
+        g.drawRoundedRectangle (box.reduced (1.0f), radius::r1, 2.0f);
     }
     if (ghost)
         return;
-    // Collaborators' selections, in their colours; several stack 1 px apart (05 §5).
-    float offset = 0.0f;
+    // Collaborators' selections, in their colours; several stack 1.5 px apart (05 §5). The first
+    // sits just inside the region's edge so it covers whole pixels against the dark body.
+    float offset = -0.75f;
     for (const auto* who : studio.collaborators())
         if (std::find (who->state.regions.begin(), who->state.regions.end(), r.id) != who->state.regions.end())
         {
             g.setColour (colourOf (*who));
-            g.drawRoundedRectangle (box.expanded (offset), 6.0f + offset, 1.5f);
+            g.drawRoundedRectangle (box.expanded (offset), std::max (0.0f, radius::r1 + offset), 1.5f);
             offset += 1.5f;
         }
 }
@@ -1066,18 +1154,31 @@ void Timeline::paint (juce::Graphics& g)
     g.fillAll (colour (Token::lane));
     for (int row = 0; row < rows(); ++row)
     {
-        const auto lane = laneBounds (row);
+        const auto lane = rowBounds (row);
         if (lane.getBottom() < 0 || lane.getY() > getHeight())
             continue;
-        g.setColour (colour (row % 2 == 0 ? Token::lane : Token::laneAlt));
-        g.fillRect (lane);
         if (m.trackOrder[static_cast<std::size_t> (row)] == studio.selectedTrack())
         {
-            g.setColour (colour (Token::accent).withAlpha (0.06f));
+            g.setColour (colour (Token::laneAlt));
             g.fillRect (lane);
         }
     }
     paintGrid (g, getLocalBounds().toFloat());
+    // Lane separators over the grid.
+    g.setColour (colour (Token::background).withAlpha (0.8f));
+    for (int row = 0; row < rows(); ++row)
+    {
+        const auto lane = rowBounds (row);
+        if (lane.getBottom() >= 0 && lane.getY() <= getHeight())
+            g.fillRect (0.0f, lane.getBottom() - 1.0f, static_cast<float> (getWidth()), 1.0f);
+    }
+    // Below the last track the canvas recedes, so the end of the track list is plain.
+    const auto end = rows() > 0 ? rowBounds (rows() - 1).getBottom() : 0.0f;
+    if (end < static_cast<float> (getHeight()))
+    {
+        g.setColour (colour (Token::background).withAlpha (0.7f));
+        g.fillRect (0.0f, end, static_cast<float> (getWidth()), static_cast<float> (getHeight()) - end);
+    }
     if (studio.automationView)
         for (int row = 0; row < rows(); ++row)
         {
@@ -1092,10 +1193,14 @@ void Timeline::paint (juce::Graphics& g)
         }
     if (m.info.cycle.enabled)
     {
-        g.setColour (colour (Token::playhead).withAlpha (0.06f));
-        const auto x1 = static_cast<float> (studio.view.tickToX (static_cast<double> (m.info.cycle.start)));
-        const auto x2 = static_cast<float> (studio.view.tickToX (static_cast<double> (m.info.cycle.end)));
+        // The loop region: a light wash with its edges marked, so it reads across every lane.
+        const auto x1 = static_cast<float> (juce::roundToInt (studio.view.tickToX (static_cast<double> (m.info.cycle.start))));
+        const auto x2 = static_cast<float> (juce::roundToInt (studio.view.tickToX (static_cast<double> (m.info.cycle.end))));
+        g.setColour (depth::wash (0.045f, 0.04f));
         g.fillRect (x1, 0.0f, x2 - x1, static_cast<float> (getHeight()));
+        g.setColour (colour (Token::loop).withAlpha (0.7f));
+        g.fillRect (x1, 0.0f, 1.0f, static_cast<float> (getHeight()));
+        g.fillRect (x2 - 1.0f, 0.0f, 1.0f, static_cast<float> (getHeight()));
     }
 
     // Regions: lowest first, so the top one is drawn last. Inactive takes are hidden.
@@ -1134,7 +1239,7 @@ void Timeline::paint (juce::Graphics& g)
                     paintRegion (g, moved, box, true);
                 }
         g.setColour (colour (Token::text));
-        g.setFont (juce::FontOptions (12.0f));
+        g.setFont (font (Type::monoValue));
         g.drawText (juce::String (formatBarsBeats (regionDrag->anchorStart(), m.signatures)) + (regionDrag->copying() ? "  (copy)" : ""),
                     juce::Rectangle<float> (lastAt.x + 12, lastAt.y - 22, 160, 18), juce::Justification::left);
     }
@@ -1149,7 +1254,7 @@ void Timeline::paint (juce::Graphics& g)
     if (m.regions.empty())
     {
         g.setColour (colour (Token::textDim));
-        g.setFont (juce::FontOptions (16.0f));
+        g.setFont (font (Type::strong));
         g.drawText ("Drop audio or MIDI files here, or press R to record.", getLocalBounds().withTrimmedTop (contentHeight()).withHeight (60),
                     juce::Justification::centred);
     }
@@ -1157,9 +1262,7 @@ void Timeline::paint (juce::Graphics& g)
         if (const auto box = pinBounds (*c))
             drawCommentPin (g, *box, userColour (studio, c->author), c->resolved);
     paintCollaborators (g);
-    const auto px = static_cast<float> (studio.view.tickToX (static_cast<double> (studio.playhead())));
-    g.setColour (colour (Token::playhead));
-    g.drawVerticalLine (juce::roundToInt (px), 0.0f, static_cast<float> (getHeight()));
+    drawPlayheadLine (g, static_cast<float> (studio.view.tickToX (static_cast<double> (studio.playhead()))), 0.0f, static_cast<float> (getHeight()));
 }
 
 std::optional<juce::Rectangle<float>> Timeline::pinBounds (const model::Comment& thread) const
@@ -1700,16 +1803,41 @@ void TracksArea::scrollBarMoved (juce::ScrollBar* bar, double start)
     repaint();
 }
 
-void TracksArea::paint (juce::Graphics& g) { g.fillAll (colour (Token::surface)); }
+void TracksArea::paint (juce::Graphics& g)
+{
+    g.fillAll (colour (Token::surface));
+    // The corner over the track headers: the panel's caption, level with the ruler.
+    const auto corner = juce::Rectangle<int> (0, 0, headerWidth, rulerComponent.getHeight());
+    g.setGradientFill (juce::ColourGradient::vertical (colour (Token::surfaceRaised), 0.0f, colour (Token::surface), static_cast<float> (Ruler::rulerHeight)));
+    g.fillRect (corner);
+    depth::highlight (g, corner.toFloat(), 0.0f);
+    g.setColour (colour (Token::textDim));
+    g.setFont (font (Type::caption));
+    g.drawText (captionText ("Tracks"), corner.withHeight (Ruler::rulerHeight).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
+    g.setColour (colour (Token::border));
+    g.fillRect (corner.withTop (corner.getBottom() - 1));
+}
+
+void TracksArea::paintOverChildren (juce::Graphics& g)
+{
+    // The header column sits above the canvas: a short shadow falls onto the lanes.
+    const auto x = static_cast<float> (headerWidth);
+    const auto a = depth::shade (0.3f, 0.1f);
+    g.setGradientFill (juce::ColourGradient::horizontal (a, x, a.withAlpha (0.0f), x + 5.0f));
+    g.fillRect (x, static_cast<float> (rulerComponent.getY()), 5.0f, static_cast<float> (getHeight()));
+    g.setColour (colour (Token::border));
+    g.fillRect (x - 1.0f, 0.0f, 1.0f, static_cast<float> (getHeight()));
+}
 
 void TracksArea::resized()
 {
     auto r = getLocalBounds();
     auto top = r.removeFromTop (rulerComponent.preferredHeight());
     top.removeFromLeft (headerWidth);
-    rulerComponent.setBounds (top.withTrimmedRight (12));
-    horizontal.setBounds (r.removeFromBottom (12).withTrimmedLeft (headerWidth).withTrimmedRight (12));
-    vertical.setBounds (r.removeFromRight (12));
+    const auto bar = getLookAndFeel().getDefaultScrollbarWidth();
+    rulerComponent.setBounds (top.withTrimmedRight (bar));
+    horizontal.setBounds (r.removeFromBottom (bar).withTrimmedLeft (headerWidth).withTrimmedRight (bar));
+    vertical.setBounds (r.removeFromRight (bar));
     headerColumn.setBounds (r.removeFromLeft (headerWidth));
     lanes.setBounds (r);
     layoutHeaders();

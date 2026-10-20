@@ -53,7 +53,7 @@ void NewTrackDialog::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surfaceRaised));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     g.drawText ("Type", 20, 20, 90, 26, juce::Justification::centredLeft);
     g.drawText ("Count", 20, 56, 90, 26, juce::Justification::centredLeft);
     g.drawText ("Channels", 20, 92, 90, 26, juce::Justification::centredLeft);

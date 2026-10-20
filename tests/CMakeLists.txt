@@ -64,6 +64,11 @@ add_test(NAME AT-SYS-1.license-manifest
          COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/third_party.py" --check ${cpp_src_args}
          WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+# D-UI-13: every colour and font size in the UI comes from the design tokens.
+add_test(NAME ui-token-lint
+         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/ui_token_lint.py"
+         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
 # AT-PRJ-11 / AT-PRJ-12 [E]: kill the CLI after unsaved edits, then recover or discard.
 foreach(mode IN ITEMS recover discard)
     if(mode STREQUAL "recover")

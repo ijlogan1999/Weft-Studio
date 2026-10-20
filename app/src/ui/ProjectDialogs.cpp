@@ -12,7 +12,7 @@ void drawLabels (juce::Graphics& g, const juce::StringArray& labels)
 {
     g.fillAll (colour (Token::surfaceRaised));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     for (int i = 0; i < labels.size(); ++i)
         g.drawText (labels[i], labelX, 16 + i * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
 }
@@ -381,9 +381,9 @@ void WelcomeDialog::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surfaceRaised));
     g.setColour (colour (Token::text));
-    g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+    g.setFont (font (Type::display));
     g.drawText ("Weft Studio", labelX, 12, getWidth() - 40, 30, juce::Justification::centredLeft);
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (font (Type::body));
     g.setColour (colour (Token::textDim));
     g.drawText (recent.isEmpty() ? "No recent projects yet." : "Recent projects", labelX, 96, getWidth() - 40, 22, juce::Justification::centredLeft);
 }

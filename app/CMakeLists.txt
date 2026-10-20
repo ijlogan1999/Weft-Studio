@@ -32,9 +32,20 @@ add_library(weft_app_lib STATIC
     src/ui/Studio.cpp
     src/ui/StudioCollab.cpp
     src/ui/Theme.cpp
-    src/ui/TracksArea.cpp)
+    src/ui/TracksArea.cpp
+    src/ui/Waveform.cpp)
 add_library(weft::app_lib ALIAS weft_app_lib)
 target_include_directories(weft_app_lib PUBLIC src)
+
+# The UI and numbers typefaces (spec 04 §1, D-UI-13), embedded so every machine draws the same.
+weft_fetch(PlexSans)
+weft_fetch(PlexMono)
+set(weft_fonts
+    "${WEFT_SRC_PlexSans}/fonts/complete/ttf/IBMPlexSans-Regular.ttf"
+    "${WEFT_SRC_PlexSans}/fonts/complete/ttf/IBMPlexSans-Medium.ttf"
+    "${WEFT_SRC_PlexSans}/fonts/complete/ttf/IBMPlexSans-SemiBold.ttf"
+    "${WEFT_SRC_PlexMono}/fonts/complete/ttf/IBMPlexMono-Regular.ttf"
+    "${WEFT_SRC_PlexMono}/fonts/complete/ttf/IBMPlexMono-Medium.ttf")
 
 # Third-party notices for the About box (F-SYS-1), generated from the license manifest.
 get_property(fetched GLOBAL PROPERTY WEFT_FETCHED_DEPS)
@@ -49,7 +60,7 @@ add_custom_command(OUTPUT "${notices}"
             "${PROJECT_SOURCE_DIR}/Cargo.lock"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     COMMENT "Generating third-party notices")
-juce_add_binary_data(WeftStudioData SOURCES "${notices}" "${PROJECT_SOURCE_DIR}/LICENSE")
+juce_add_binary_data(WeftStudioData SOURCES "${notices}" "${PROJECT_SOURCE_DIR}/LICENSE" ${weft_fonts})
 
 target_compile_definitions(weft_app_lib PUBLIC
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:WeftStudio,JUCE_PRODUCT_NAME>"

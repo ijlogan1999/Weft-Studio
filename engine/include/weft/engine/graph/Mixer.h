@@ -6,6 +6,7 @@
 #include "weft/core/Id.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -37,12 +38,26 @@ private:
     int current = 0, previous = 0, fadePos = 0, fadeLength = 0;
 };
 
-/** Peaks since the last read, and a clip flag that stays set until reset (F-MIX-5). */
+/** Peaks since the last read, a running RMS, and a clip flag that stays set until reset (F-MIX-5). */
 struct MeterState
 {
     std::atomic<float> peak { 0 };
     std::atomic<float> input { 0 };
     std::atomic<bool> clip { false };
+    /** RMS over about the last 300 ms (D-UI-15), linear. Written by the audio thread only. */
+    std::atomic<float> rms { 0 };
+    static constexpr double rmsSeconds = 0.3;
+
+    /** Audio thread: one block's summed squares over `samples` samples (all channels). */
+    void addPower (double sumSquares, int samples, int frames, double sampleRate) noexcept
+    {
+        if (samples <= 0 || frames <= 0 || sampleRate <= 0)
+            return;
+        const auto meanSquare = sumSquares / samples;
+        const auto k = 1.0 - std::exp (-static_cast<double> (frames) / (sampleRate * rmsSeconds));
+        power += k * (meanSquare - power);
+        rms.store (static_cast<float> (std::sqrt (std::max (0.0, power))), std::memory_order_relaxed);
+    }
 
     void add (float value) noexcept
     {
@@ -51,6 +66,9 @@ struct MeterState
         if (value > 1.0f)
             clip.store (true, std::memory_order_relaxed);
     }
+
+private:
+    double power = 0; // audio thread: the smoothed mean square
 };
 
 /** One mixer channel's persistent state, keyed by track id. */

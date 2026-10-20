@@ -21,7 +21,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-    static constexpr int cycleStrip = 10, rulerHeight = 34, markerLane = 22;
+    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24;
     int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane : 0); }
 
     /** Bar numbers (1-based) and their x, thinned so labels don't collide (AT-ARR-1). */
@@ -205,13 +205,14 @@ public:
     explicit TracksArea (Studio& studio);
     ~TracksArea() override;
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
     Ruler& ruler() noexcept { return rulerComponent; }
     Timeline& timeline() noexcept { return lanes; }
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
 
-    static constexpr int headerWidth = 210;
+    static constexpr int headerWidth = 208;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
