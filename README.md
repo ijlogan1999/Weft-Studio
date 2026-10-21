@@ -32,6 +32,7 @@ The first release covers the core of a professional DAW:
 - Automation lanes
 - Bounce to WAV and MP3
 - Real-time collaboration: shared projects, live cursors, comments, chat and version history
+- Sharing without a server: keep a project in a Google Drive, Dropbox or OneDrive folder and Weft merges everyone's changes
 
 The full behavior is specified in [`docs/spec`](docs/spec/00-README.md), and the
 design in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

@@ -6,6 +6,8 @@
 #include "weft/media/Blobs.h"
 #include "weft/media/Decoder.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -13,6 +15,27 @@
 namespace weft::ui
 {
 namespace fs = std::filesystem;
+
+namespace
+{
+/** This computer's id (D-COL-45): read from `file`, or made up once and written there. */
+std::string loadDeviceId (const fs::path& file)
+{
+    if (const auto bytes = project::readFile (file))
+    {
+        std::string id (bytes->begin(), bytes->end());
+        id.erase (std::remove_if (id.begin(), id.end(), [] (char c) { return ! std::isxdigit (static_cast<unsigned char> (c)); }), id.end());
+        if (id.size() == 16)
+            return id;
+    }
+    juce::Random random;
+    const auto id = juce::String::toHexString (random.nextInt64()).paddedLeft ('0', 16).substring (0, 16).toStdString();
+    std::error_code ec;
+    fs::create_directories (file.parent_path(), ec);
+    project::writeFileAtomic (file, { reinterpret_cast<const std::uint8_t*> (id.data()), id.size() });
+    return id;
+}
+} // namespace
 
 juce::String toolName (Tool t)
 {
@@ -87,6 +110,7 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     recent = project::RecentProjects (settingsFolder() / "recent-projects.txt");
     recent.load();
     loadAccount();
+    deviceIdText = loadDeviceId (settingsFolder() / "device-id.txt");
     std::string error;
     const auto made = newProject (projectParent, {}, &error, true);
     jassert (made);
@@ -356,6 +380,14 @@ void Studio::tick()
         }
         mediaSyncer->poll();
     }
+    if (inSharedFolder())
+    {
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        pollSharedFolder (now);
+        // A shared folder saves itself, so collaborators get this computer's changes.
+        if (unsaved && ! previewing() && ! sess->inGesture() && now - lastSharedSave >= sharedFolderSaveMs)
+            writeProject (false);
+    }
     stepBounce();
     flushPluginStates();
     if (sess->inGesture() && lastParamChange > 0 && juce::Time::getMillisecondCounterHiRes() - lastParamChange > 500)
@@ -622,7 +654,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
-        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::joinProject: case Cmd::signIn:
+        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
             break;
     }
@@ -837,6 +869,7 @@ bool Studio::perform (Cmd command)
         case Cmd::projectSettings:
         case Cmd::audioSettings:
         case Cmd::shareProject:
+        case Cmd::shareFolder:
         case Cmd::joinProject:
         case Cmd::signIn:
         case Cmd::addComment:
@@ -958,7 +991,9 @@ bool Studio::previewFile (const fs::path& file)
 
 // Projects ------------------------------------------------------------------------------
 
-bool Studio::save()
+bool Studio::save() { return writeProject (true); }
+
+bool Studio::writeProject (bool announce)
 {
     flushPluginStates (true);
     std::string error;
@@ -971,9 +1006,78 @@ bool Studio::save()
     saveViewState();
     unsaved = false;
     scratch = false; // the user saved it: it stays when replaced
-    recent.add (folder->root());
-    setStatus ("Saved.");
+    lastSharedSave = juce::Time::getMillisecondCounterHiRes();
+    if (announce)
+    {
+        recent.add (folder->root());
+        setStatus ("Saved.");
+    }
+    else
+        sendChangeMessage(); // the title loses its "*"
     return true;
+}
+
+// Shared folder (D-COL-45) ----------------------------------------------------------------
+
+bool Studio::inSharedFolder() const { return folder != nullptr && folder->shared(); }
+
+bool Studio::shareInFolder (const fs::path& parent, std::string* error)
+{
+    auto fail = [error] (const std::string& m) {
+        if (error != nullptr)
+            *error = m;
+        return false;
+    };
+    if (inSharedFolder())
+        return fail ("This project is already in a shared folder.");
+    std::error_code ec;
+    if (parent.empty() || ! fs::is_directory (parent, ec))
+        return fail ("Choose a folder that your sync app copies to your other computers.");
+    if (! fs::equivalent (folder->root().parent_path(), parent, ec))
+    {
+        auto target = project::ProjectFolder::folderFor (parent, model().info.name);
+        if (fs::exists (target, ec))
+            return fail (project::utf8 (target.filename()) + " is already in that folder.");
+        if (! saveAs (target, true, error))
+            return false;
+    }
+    if (! folder->makeShared (sess->document(), error))
+        return false;
+    unsaved = false;
+    scratch = false;
+    recent.add (folder->root());
+    setStatus ("Shared. Open " + juce::String (project::utf8 (folder->root())) + " on your other computers.");
+    return true;
+}
+
+void Studio::pollSharedFolder (double now)
+{
+    if (now - lastPeerPoll < sharedFolderPollMs)
+        return;
+    lastPeerPoll = now;
+    const auto headsBefore = sess->document().heads();
+    for (const auto& bytes : folder->pollPeers())
+        sess->applyChanges (bytes);
+    if (sess->document().heads() != headsBefore)
+    {
+        // Same as a relay change: orphaned regions land on the one Recovered track (D-ARCH-11).
+        if (! sess->model().syntheticTracks.empty() && sess->access() == commands::Session::Access::full)
+            sess->materializeRecoveredTracks();
+        remoteChanged();
+    }
+    // A collaborator's audio can arrive after the change that uses it: pick it up when it lands.
+    bool loaded = false;
+    const auto folders = project::mediaFolders (folder->root());
+    for (const auto& [hash, ref] : model().media)
+        if (! pool.available (hash))
+            if (const auto file = project::findMediaFile (folders, hash); file && pool.load (file->parent_path(), hash) != nullptr)
+                loaded = true;
+    if (loaded)
+    {
+        peakCache.clear();
+        waveCache.clear();
+        edited();
+    }
 }
 
 juce::String Studio::windowTitle() const
@@ -1005,7 +1109,7 @@ bool Studio::newProject (const fs::path& parent, const commands::NewProjectOptio
         if (! fs::exists (dir))
             break;
     }
-    auto projectFolder = std::make_unique<project::ProjectFolder> (dir);
+    auto projectFolder = std::make_unique<project::ProjectFolder> (dir, deviceIdText);
     if (! projectFolder->create (error))
         return false;
     auto created = commands::Session::createNew (opts, "local", error);
@@ -1025,7 +1129,7 @@ Studio::OpenResult Studio::openProject (const fs::path& picked, Recovery recover
         result.error = project::utf8 (root.filename()) + " isn't a Weft project.";
         return result;
     }
-    auto projectFolder = std::make_unique<project::ProjectFolder> (root);
+    auto projectFolder = std::make_unique<project::ProjectFolder> (root, deviceIdText);
     auto opened = projectFolder->open();
     if (! opened.document)
     {
@@ -1064,7 +1168,7 @@ bool Studio::saveAs (const fs::path& newRoot, bool copyMedia, std::string* error
     if (! project::saveProjectAs (sess->document(), model(), folder->root(), newRoot, { copyMedia }, error))
         return false;
     // The session (and its undo history) carries on in the new folder.
-    folder = std::make_unique<project::ProjectFolder> (newRoot);
+    folder = std::make_unique<project::ProjectFolder> (newRoot, deviceIdText);
     eng->setProjectFolder (folder->root());
     auto name = project::utf8 (newRoot.filename());
     if (name.ends_with (".weft"))
@@ -1222,6 +1326,12 @@ void Studio::loadProjectMedia()
             pool.load (file->parent_path(), hash);
 }
 
+fs::path Studio::viewStateFile() const
+{
+    // Each computer keeps its own view in a shared folder, so a collaborator's scrolling doesn't move it.
+    return folder->root() / "Cache" / (inSharedFolder() ? "view-" + deviceIdText + ".txt" : std::string ("view.txt"));
+}
+
 void Studio::saveViewState() const
 {
     if (folder == nullptr || ! fs::exists (folder->root()))
@@ -1232,12 +1342,12 @@ void Studio::saveViewState() const
     std::error_code ec;
     fs::create_directories (folder->root() / "Cache", ec);
     const auto* p = reinterpret_cast<const std::uint8_t*> (text.data());
-    project::writeFileAtomic (folder->root() / "Cache" / "view.txt", { p, text.size() });
+    project::writeFileAtomic (viewStateFile(), { p, text.size() });
 }
 
 void Studio::loadViewState()
 {
-    const auto bytes = project::readFile (folder->root() / "Cache" / "view.txt");
+    const auto bytes = project::readFile (viewStateFile());
     if (! bytes)
         return;
     const auto lines = juce::StringArray::fromLines (juce::String (reinterpret_cast<const char*> (bytes->data()), bytes->size()));
@@ -1958,7 +2068,7 @@ bool Studio::joinProject (const std::string& inviteLink, std::string* error, fs:
 juce::String Studio::syncStatus() const
 {
     if (! shared())
-        return "Local only";
+        return inSharedFolder() ? "Shared folder" : "Local only";
     if (! signedIn())
         return juce::String::fromUTF8 ("Signed out \xe2\x80\x93 sign in to sync");
     if (syncClient == nullptr)
@@ -1973,7 +2083,9 @@ juce::String Studio::syncStatus() const
 juce::String Studio::syncDetails() const
 {
     if (! shared())
-        return "This project is only on this computer. Share it to work on it with others.";
+        return inSharedFolder() ? "This project is in a shared folder: " + juce::String (project::utf8 (folder->root()))
+                                      + "\nYour sync app copies it to your collaborators, and Weft merges their changes every few seconds."
+                                : juce::String ("This project is only on this computer. Share it to work on it with others.");
     juce::String text = "Relay: " + juce::String (sess->relayUrl());
     if (syncClient != nullptr)
     {

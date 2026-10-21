@@ -420,6 +420,8 @@ void MainComponent::handleUiCommand (Cmd command)
             if (desktopWindows())
                 launchDialog (std::make_unique<ShareDialog> (studio), studio.shared() ? "Invite" : "Share Project", this);
         });
+    else if (command == Cmd::shareFolder)
+        chooseSharedFolder();
     else if (command == Cmd::joinProject)
         whenSignedIn ([this] {
             whenSaved ([this] {
@@ -532,6 +534,35 @@ void MainComponent::chooseProjectToOpen()
                                       // The question about unsaved changes was already answered.
                                       safe->opened (safe->studio.openProject (textPath (fc.getResult().getFullPathName())));
                                   }
+                              });
+}
+
+void MainComponent::chooseSharedFolder()
+{
+    if (! desktopWindows())
+        return;
+    // Google Drive for desktop's usual drive; otherwise start in the home folder.
+    juce::File start (juce::File::getSpecialLocation (juce::File::userHomeDirectory));
+    for (const auto* guess : { "G:\\My Drive", "G:\\" })
+        if (juce::File::isAbsolutePath (guess) && juce::File (guess).isDirectory())
+        {
+            start = juce::File (guess);
+            break;
+        }
+    openChooser = std::make_unique<juce::FileChooser> ("Choose a folder your sync app (Google Drive, Dropbox, OneDrive) shares", start);
+    openChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                  if (safe == nullptr || fc.getResult() == juce::File())
+                                      return;
+                                  std::string error;
+                                  if (safe->studio.shareInFolder (textPath (fc.getResult().getFullPathName()), &error))
+                                      safe->alert ("Shared in a synced folder",
+                                                   "Your collaborators open this project from their copy of the folder with File > Open:\n"
+                                                       + pathText (safe->studio.projectRoot())
+                                                       + "\n\nWeft saves your changes there and merges theirs every few seconds. Use the "
+                                                         "relay for live sessions with cursors and presence.");
+                                  else
+                                      safe->alert ("Couldn't share the project", juce::String::fromUTF8 (error.c_str()));
                               });
 }
 
@@ -726,6 +757,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             share.itemID = static_cast<int> (Cmd::shareProject) + 1;
             menu.addItem (share);
             add (Cmd::joinProject);
+            menu.addSeparator();
+            {
+                juce::PopupMenu::Item folderShare (commandInfo (Cmd::shareFolder).name);
+                folderShare.itemID = static_cast<int> (Cmd::shareFolder) + 1;
+                folderShare.isEnabled = ! studio.inSharedFolder();
+                menu.addItem (folderShare);
+            }
             menu.addSeparator();
             if (studio.signedIn())
             {
