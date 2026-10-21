@@ -859,3 +859,68 @@ TEST_CASE ("Loop Region loops up to the next region, else to the cycle end, else
     ui.main->run (Cmd::loopRegion); // toggles back off
     CHECK (loopEnd (d) == -1);
 }
+
+TEST_CASE ("AT-TRN-3 Space plays and stops in the tracks area, and types a space in a text field", "[UI][transport][AT-TRN-3]")
+{
+    Ui ui;
+    CHECK (ui.key (juce::KeyPress::spaceKey));
+    ui.renderAudio();
+    CHECK (ui.studio.playing());
+    CHECK (ui.key (juce::KeyPress::spaceKey));
+    ui.renderAudio();
+    CHECK_FALSE (ui.studio.playing());
+
+    // Renaming a track: the key goes to the text field, which types it, and the transport stays put.
+    auto& header = *ui.main->tracks().headers().front();
+    header.name.showEditor();
+    auto* editor = header.name.getCurrentTextEditor();
+    REQUIRE (editor != nullptr);
+    editor->setText ("Lead", false);
+    editor->moveCaretToEnd();
+    CHECK (editor->keyPressed (juce::KeyPress (juce::KeyPress::spaceKey, {}, ' ')));
+    ui.renderAudio();
+    CHECK (editor->getText() == "Lead ");
+    CHECK_FALSE (ui.studio.playing());
+}
+
+TEST_CASE ("AT-TRN-18 With follow on, playing past the right edge scrolls the view; with follow off it doesn't", "[UI][transport][AT-TRN-18]")
+{
+    Ui ui;
+    const auto width = static_cast<double> (ui.timeline().getWidth());
+    REQUIRE (width > 300);
+    auto showFourBars = [&] {
+        ui.studio.view.originTick = 0;
+        ui.studio.view.pixelsPerTick = width / (4.0 * bar);
+    };
+    auto visible = [&] {
+        const auto x = ui.studio.view.tickToX (static_cast<double> (ui.studio.playhead()));
+        return x >= 0.0 && x <= width;
+    };
+
+    showFourBars();
+    REQUIRE (ui.studio.follow);
+    ui.main->run (Cmd::playStop);
+    for (int i = 0; i < 100; ++i) // 12.5 s at 120 BPM: past bar 6
+    {
+        ui.renderAudio (6000);
+        ui.main->tracks().followPlayhead();
+        CHECK (visible());
+    }
+    CHECK (ui.studio.view.originTick > 0.0);
+    ui.main->run (Cmd::playStop);
+    ui.renderAudio();
+
+    ui.studio.follow = false;
+    ui.studio.locate (0);
+    showFourBars();
+    ui.main->run (Cmd::playStop);
+    for (int i = 0; i < 100; ++i)
+    {
+        ui.renderAudio (6000);
+        ui.main->tracks().followPlayhead();
+    }
+    CHECK (ui.studio.view.originTick == 0.0);
+    CHECK_FALSE (visible());
+    ui.main->run (Cmd::playStop);
+    ui.renderAudio();
+}

@@ -2168,19 +2168,15 @@ void Studio::setOnline (bool online)
 
 bool Studio::changesDocument (Cmd command)
 {
-    switch (command)
-    {
-        case Cmd::record: case Cmd::newTrack: case Cmd::undo: case Cmd::redo: case Cmd::cut: case Cmd::paste:
-        case Cmd::deleteSelection: case Cmd::split: case Cmd::join: case Cmd::muteRegions: case Cmd::nudgeLeft:
-        case Cmd::nudgeRight: case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::addMarker:
-        case Cmd::muteNotes: case Cmd::quantize: case Cmd::transposeUp: case Cmd::transposeDown: case Cmd::octaveUp:
-        case Cmd::octaveDown: case Cmd::notesLeft: case Cmd::notesRight: case Cmd::applyQuantize: case Cmd::deleteTrack:
-        case Cmd::newBus: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack: case Cmd::importAudio:
-        case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp: case Cmd::moveTrackDown:
-            return true;
-        default:
-            return false;
-    }
+    static constexpr Cmd editing[] = {
+        Cmd::record, Cmd::newTrack, Cmd::undo, Cmd::redo, Cmd::cut, Cmd::paste, Cmd::deleteSelection, Cmd::split,
+        Cmd::join, Cmd::muteRegions, Cmd::nudgeLeft, Cmd::nudgeRight, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion,
+        Cmd::addMarker, Cmd::muteNotes, Cmd::quantize, Cmd::transposeUp, Cmd::transposeDown, Cmd::octaveUp,
+        Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
+        Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
+        Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown,
+    };
+    return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }
 
 juce::String Studio::readOnlyReason() const

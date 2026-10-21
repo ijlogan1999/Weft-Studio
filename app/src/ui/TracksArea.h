@@ -255,6 +255,8 @@ public:
     Ruler& ruler() noexcept { return rulerComponent; }
     Timeline& timeline() noexcept { return lanes; }
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
+    /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
+    void followPlayhead();
 
     static constexpr int headerWidth = 208;
 

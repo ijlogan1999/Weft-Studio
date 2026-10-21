@@ -44,7 +44,10 @@ add_executable(weft_engine_tests
     engine/TransportEngineTests.cpp
 )
 target_link_libraries(weft_engine_tests PRIVATE weft::engine weft::codec Catch2::Catch2WithMain)
-catch_discover_tests(weft_engine_tests)
+# Real-time deadline tests ([rt]) run on their own: under a parallel ctest the machine's load,
+# not the engine, decides whether a callback makes its deadline.
+catch_discover_tests(weft_engine_tests TEST_SPEC "~[rt]")
+catch_discover_tests(weft_engine_tests TEST_SPEC "[rt]" PROPERTIES RUN_SERIAL TRUE)
 
 # [S] sync tests: clients with real Sessions against a weft-relay process on localhost.
 add_executable(weft_sync_tests sync/SyncTests.cpp sync/MediaTests.cpp sync/PresenceTests.cpp sync/CollabTests.cpp)

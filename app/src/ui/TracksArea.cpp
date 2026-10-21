@@ -2176,15 +2176,18 @@ void TracksArea::changeListenerCallback (juce::ChangeBroadcaster*)
     repaint();
 }
 
+void TracksArea::followPlayhead()
+{
+    if (! studio.follow || ! studio.playing())
+        return;
+    const auto x = studio.view.tickToX (static_cast<double> (studio.playhead()));
+    if (x > lanes.getWidth() * 0.9 || x < 0)
+        studio.view.originTick = static_cast<double> (studio.playhead()) - lanes.getWidth() * 0.1 / studio.view.pixelsPerTick;
+}
+
 void TracksArea::timerCallback()
 {
-    // Follow playhead: page when it leaves the view.
-    if (studio.follow && studio.playing())
-    {
-        const auto x = studio.view.tickToX (static_cast<double> (studio.playhead()));
-        if (x > lanes.getWidth() * 0.9 || x < 0)
-            studio.view.originTick = static_cast<double> (studio.playhead()) - lanes.getWidth() * 0.1 / studio.view.pixelsPerTick;
-    }
+    followPlayhead();
     rulerComponent.repaint();
     lanes.repaint();
     if (! studio.collaborators().empty() || hadCollaborators)

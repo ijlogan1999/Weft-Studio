@@ -142,7 +142,7 @@ void MeterView::paint (juce::Graphics& g)
     // Tick lines every 6 dB down to -48, the 0 dB line brighter.
     for (const auto db : { 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f })
     {
-        g.setColour (db == 0.0f ? colour (Token::text).withAlpha (0.35f) : colour (Token::well).withAlpha (0.6f));
+        g.setColour (db >= 0.0f ? colour (Token::text).withAlpha (0.35f) : colour (Token::well).withAlpha (0.6f));
         g.fillRect (inner.getX(), std::round (yOf (db)), inner.getWidth(), 1.0f);
     }
     if (ballistics.holdDb() > static_cast<float> (fader::minDb))
@@ -734,7 +734,7 @@ void ChannelStrip::paint (juce::Graphics& g)
         {
             const auto y = std::round (travel.getBottom() - travel.getHeight() * MeterView::proportion (db));
             // Numbers only: the meter carries the tick lines, so the scale stays quiet.
-            g.setColour (db == 0.0f ? colour (Token::text) : colour (Token::textDim));
+            g.setColour (std::abs (db) < 0.5f ? colour (Token::text) : colour (Token::textDim));
             const auto label = db <= -90.0f ? juce::String ("inf") : db > 0.0f ? "+" + juce::String (juce::roundToInt (db)) : juce::String (juce::roundToInt (db));
             g.drawText (label, juce::Rectangle<float> (travel.getX(), y - 6.0f, travel.getWidth() - 2.0f, 12.0f), juce::Justification::centredRight, false);
         }
