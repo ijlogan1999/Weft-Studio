@@ -698,7 +698,16 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::cycle: return check (s.setCycle (! m.info.cycle.enabled, m.info.cycle.start, m.info.cycle.end));
-        case Cmd::autopunch: return check (s.setPunch (! m.info.punch.enabled, m.info.punch.start, m.info.punch.end));
+        case Cmd::autopunch:
+        {
+            if (m.info.punch.enabled)
+                return check (s.setPunch (false, m.info.punch.start, m.info.punch.end));
+            // D-W1-9: turning it on places the range at the cycle when the cycle is on, else 4 bars from the bar at the playhead.
+            if (m.info.cycle.enabled)
+                return check (s.setPunch (true, m.info.cycle.start, m.info.cycle.end));
+            const auto bar = m.signatures.barAt (playhead()).bar;
+            return check (s.setPunch (true, m.signatures.barStart (bar), m.signatures.barStart (bar + 4)));
+        }
         case Cmd::metronome:
         {
             auto settings = eng->settings();

@@ -79,6 +79,7 @@ Same as W-1a with several tracks armed. Each armed track records its own input. 
 3. At punch-in the system starts writing audio; at punch-out it stops writing. The transport keeps going until stopped.
 4. The result is a new region covering exactly the punch range (plus 10 ms on each side, faded, see D-W1-5) on top of existing material.
 5. **Decision D-W1-5:** the punched region gets 10 ms of pre/post handle with 10 ms crossfades against the material underneath, to avoid clicks.
+6. **Decision D-W1-9:** each time Autopunch is turned on the range is set again: the cycle range when the cycle is on, else 4 bars from the start of the bar at the playhead. With Autopunch on, dragging either end of the red range in the ruler's top strip moves it, and Shift+drag in the strip sets a new range; each drag is one undo step.
 
 **Collaboration notes**
 - Recording is local. While recording, the system emits presence "recording on track X" so others see a red indicator on that track.
@@ -426,6 +427,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W1-4 | One WAV per track per recording pass; takes reference offsets. |
 | D-W1-5 | Punch regions get 10 ms handles with crossfades. |
 | D-W1-6 | Recording onto a track deleted remotely lands on a recovered track. |
+| D-W1-9 | Autopunch on sets the range to the cycle, else 4 bars from the playhead's bar; drag its ends (Shift+drag for a new range). |
 | D-W2-1 | Selected instrument track receives live MIDI unarmed. |
 | D-W2-2 | Recorded MIDI regions round outward to whole bars. |
 | D-W3-1 | Move snaps region start. |

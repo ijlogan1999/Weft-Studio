@@ -657,3 +657,49 @@ TEST_CASE ("AT-TMP-6 G toggles the global tracks; the marker, tempo and signatur
         ui.studio.view.originTick = 2.0 * 3840.0;
     }
 }
+
+TEST_CASE ("W-1d Autopunch defaults to the cycle or 4 bars from the playhead; its ends drag in the ruler", "[UI][punch]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    const auto bar = Ticks (3840);
+    const auto& punch = [&]() -> const model::TimeRange& { return ui.m().info.punch; };
+
+    // Cycle off: 4 bars from the bar the playhead is in.
+    ui.studio.locate (2 * bar + 500);
+    CHECK (ui.studio.perform (Cmd::autopunch));
+    CHECK (punch().enabled);
+    CHECK (punch().start == 2 * bar);
+    CHECK (punch().end == 6 * bar);
+
+    // Dragging the end moves it, as one undo step.
+    const auto y = static_cast<float> (Ruler::cycleStrip / 2);
+    const auto endX = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (6 * bar)));
+    const auto newEnd = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (8 * bar)));
+    ruler.pointerDown ({ endX - 1.0f, y }, {});
+    ruler.pointerDrag ({ (endX + newEnd) / 2.0f, y });
+    ruler.pointerDrag ({ newEnd, y });
+    ruler.pointerUp();
+    CHECK (punch().start == 2 * bar);
+    CHECK (punch().end == 8 * bar);
+    CHECK_FALSE (ui.m().info.cycle.enabled); // the cycle wasn't touched
+    CHECK (ui.studio.perform (Cmd::undo));
+    CHECK (punch().end == 6 * bar);
+
+    // Shift+drag sets a new range.
+    const auto x10 = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (10 * bar)));
+    const auto x12 = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (12 * bar)));
+    ruler.pointerDown ({ x10, y }, juce::ModifierKeys::shiftModifier);
+    ruler.pointerDrag ({ x12, y });
+    ruler.pointerUp();
+    CHECK (punch().start == 10 * bar);
+    CHECK (punch().end == 12 * bar);
+
+    // Off, then on with the cycle on: the cycle's range.
+    CHECK (ui.studio.perform (Cmd::autopunch));
+    CHECK_FALSE (punch().enabled);
+    REQUIRE (ui.studio.session().setCycle (true, 4 * bar, 5 * bar));
+    CHECK (ui.studio.perform (Cmd::autopunch));
+    CHECK (punch().start == 4 * bar);
+    CHECK (punch().end == 5 * bar);
+}

@@ -210,6 +210,9 @@ void Ruler::paint (juce::Graphics& g)
         const auto px1 = static_cast<float> (v.tickToX (static_cast<double> (m.info.punch.start)));
         const auto px2 = static_cast<float> (v.tickToX (static_cast<double> (m.info.punch.end)));
         g.fillRect (px1, cycleStrip - 2.0f, px2 - px1, 2.0f);
+        // Its ends are handles (W-1d): drag them to move the range.
+        g.fillRect (px1, 1.0f, 2.0f, cycleStrip - 1.0f);
+        g.fillRect (px2 - 2.0f, 1.0f, 2.0f, cycleStrip - 1.0f);
     }
     // Bars: a full tick and its number; beats as short ticks when there is room.
     g.setFont (font (Type::monoSmall));
@@ -343,6 +346,13 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
     if (p.y < cycleStrip)
     {
         drag = Drag::cycle;
+        if (const auto& punch = studio.model().info.punch; punch.enabled)
+        {
+            const auto near = [&] (Ticks edge) { return std::abs (studio.view.tickToX (static_cast<double> (edge)) - p.x) <= 4.0; };
+            drag = near (punch.start) ? Drag::punchStart : near (punch.end) ? Drag::punchEnd : mods.isShiftDown() ? Drag::punch : Drag::cycle;
+            if (drag != Drag::cycle)
+                studio.session().beginGesture ("Set Punch");
+        }
         dragFrom = t;
         return;
     }
@@ -415,6 +425,17 @@ void Ruler::pointerDrag (juce::Point<float> p)
                 studio.check (studio.session().setCycle (true, std::min (t, dragFrom), std::max (t, dragFrom)));
             break;
         case Drag::playhead: studio.locate (t); break;
+        case Drag::punchStart:
+        case Drag::punchEnd:
+        case Drag::punch:
+        {
+            const auto& punch = studio.model().info.punch;
+            auto start = drag == Drag::punchEnd ? punch.start : drag == Drag::punch ? std::min (t, dragFrom) : t;
+            auto end = drag == Drag::punchStart ? punch.end : drag == Drag::punch ? std::max (t, dragFrom) : t;
+            if (end > start)
+                studio.check (studio.session().setPunch (true, start, end));
+            break;
+        }
         case Drag::marker: studio.check (studio.session().moveMarker (draggedMarker, t)); break;
         case Drag::tempo:
         {
@@ -434,7 +455,7 @@ void Ruler::pointerDrag (juce::Point<float> p)
 
 void Ruler::pointerUp()
 {
-    if (drag == Drag::marker || drag == Drag::tempo)
+    if (drag == Drag::marker || drag == Drag::tempo || drag == Drag::punchStart || drag == Drag::punchEnd || drag == Drag::punch)
     {
         studio.session().endGesture();
         studio.edited();

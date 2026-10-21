@@ -46,7 +46,8 @@ public:
     bool setSignatureFromText (int bar, const juce::String& text);
 
     /** Pointer actions, also used by tests: click in the ruler moves the playhead; in the cycle strip drags the cycle;
-        on a marker jumps to it (AT-ARR-21). In the tempo lane Ctrl+click (or the pencil) adds a change, dragging a point
+        on a marker jumps to it (AT-ARR-21). With Autopunch on, dragging an end of the punch range in the strip moves it and
+        Shift+drag sets a new one (W-1d). In the tempo lane Ctrl+click (or the pencil) adds a change, dragging a point
         changes its BPM (vertical) and position (horizontal), right-click deletes; right-click deletes a signature change. */
     void pointerDown (juce::Point<float> p, juce::ModifierKeys mods);
     void pointerDrag (juce::Point<float> p);
@@ -54,7 +55,7 @@ public:
 
 private:
     Studio& studio;
-    enum class Drag { none, cycle, playhead, marker, tempo } drag = Drag::none;
+    enum class Drag { none, cycle, playhead, marker, tempo, punchStart, punchEnd, punch } drag = Drag::none;
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
