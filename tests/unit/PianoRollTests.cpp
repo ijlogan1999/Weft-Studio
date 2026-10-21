@@ -335,3 +335,54 @@ TEST_CASE ("AT-QNT-3 Q is one undo step named Quantize", "[U]")
     REQUIRE (roll.s.undo().done);
     CHECK (roll.s.undoName() == "Add Note");
 }
+
+TEST_CASE ("Note and controller edits refresh just that event and leave the projection equal to a full read", "[U]")
+{
+    // Session::refreshFor re-reads one event for a note edit (functionality audit F12); this checks
+    // the shortcut against reading the whole document after every kind of event edit, undo and redo.
+    Roll r;
+    auto sequence = [&] (const model::ProjectModel& m) { return m.sequence (m.region (r.region)->midi.sequenceId); };
+    auto same = [&] {
+        const auto full = model::Projector::project (r.s.document());
+        const auto* a = sequence (r.s.model());
+        const auto* b = sequence (full);
+        REQUIRE (a != nullptr);
+        REQUIRE (b != nullptr);
+        return a->notes == b->notes && a->controllers.size() == b->controllers.size();
+    };
+    std::vector<Id> notes;
+    for (int i = 0; i < 20; ++i)
+    {
+        model::Note n;
+        n.pos = i * 120;
+        n.pitch = 40 + i;
+        notes.push_back (r.s.addNote (r.region, n).value());
+    }
+    CHECK (same());
+    auto edited = sequence (r.s.model())->notes.at (notes[3]);
+    edited.velocity = 20;
+    edited.pos += 7;
+    REQUIRE (r.s.updateNote (r.region, edited));
+    CHECK (same());
+    REQUIRE (r.s.deleteNotes (r.region, { notes[5], notes[6] }));
+    CHECK (same());
+    model::CcEvent cc;
+    cc.pos = 300;
+    const auto ccId = r.s.addController (r.region, cc);
+    REQUIRE (ccId);
+    CHECK (same());
+    REQUIRE (r.s.deleteControllers (r.region, { *ccId }));
+    CHECK (same());
+    for (int i = 0; i < 24; ++i) // back to the empty region
+    {
+        REQUIRE (r.s.undo().done);
+        CHECK (same());
+    }
+    CHECK (sequence (r.s.model())->notes.empty());
+    for (int i = 0; i < 24; ++i)
+    {
+        REQUIRE (r.s.redo().done);
+        CHECK (same());
+    }
+    CHECK (sequence (r.s.model())->notes.size() == 18);
+}
