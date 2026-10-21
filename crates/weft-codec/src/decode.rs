@@ -1,5 +1,5 @@
 //! MP3 decoding over Symphonia, with gapless trimming from the LAME/Info header. Weft
-//! uses it to check its own bounces against an independent decoder.
+//! uses it to import MP3s, and to check its own bounces against an independent decoder.
 
 use crate::{set_error, text};
 use std::ffi::{c_char, c_int};

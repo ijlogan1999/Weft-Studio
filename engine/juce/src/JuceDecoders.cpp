@@ -1,5 +1,7 @@
 #include "weft/engine/media/JuceDecoders.h"
 
+#include "weft/engine/media/Mp3Decoder.h"
+
 #include <juce_audio_formats/juce_audio_formats.h>
 
 namespace weft::engine
@@ -54,6 +56,7 @@ media::DecoderSet importDecoders()
 {
     media::DecoderSet set;
     set.add (makePlatformAudioDecoder());
+    set.add (makeMp3Decoder()); // tried first: it trims the encoder delay; the platform one is the fallback
     return set;
 }
 } // namespace weft::engine
