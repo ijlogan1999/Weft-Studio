@@ -50,10 +50,17 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
     std::vector<DecodedAudio> audio;
     std::vector<ParsedMidi> midi;
 
+    std::vector<std::string> missing, narrowed;
     // Read everything first, so a bad file doesn't leave half a drop behind.
     for (const auto& file : files)
     {
         std::string error;
+        if (std::error_code ec; ! std::filesystem::is_regular_file (file, ec))
+        {
+            out.rejected.push_back (file.filename().string());
+            missing.push_back (file.filename().string());
+            continue;
+        }
         if (isMidiFile (file))
         {
             if (auto data = media::readMidiFile (file, &error))
@@ -74,7 +81,10 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
             continue;
         }
         if (decoded->numChannels() > 2)
+        {
             decoded->channels.resize (2); // D-ARR-7: tracks are mono or stereo
+            narrowed.push_back (file.filename().string());
+        }
         auto converted = media::resample (*decoded, info.sampleRate);
         const auto hash = media::storeMedia (converted, media::formatForBitDepth (info.recordBitDepth), mediaDir, &error);
         if (! hash)
@@ -97,13 +107,24 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
         a.ref.addedBy = session.user();
         audio.push_back (std::move (a));
     }
-    if (! out.rejected.empty())
-    {
-        out.message = "Couldn't import ";
-        for (std::size_t i = 0; i < out.rejected.size(); ++i)
-            out.message += (i > 0 ? ", " : "") + out.rejected[i];
-        out.message += ": unsupported or damaged file" + std::string (out.rejected.size() > 1 ? "s." : ".");
-    }
+    // Status text: missing files, then unreadable ones, then multichannel files cut to stereo.
+    auto names = [] (const std::vector<std::string>& list) {
+        std::string text;
+        for (std::size_t i = 0; i < list.size(); ++i)
+            text += (i > 0 ? ", " : "") + list[i];
+        return text;
+    };
+    auto append = [&] (const std::string& sentence) { out.message += (out.message.empty() ? "" : " ") + sentence; };
+    std::vector<std::string> unreadable;
+    for (const auto& name : out.rejected)
+        if (std::find (missing.begin(), missing.end(), name) == missing.end())
+            unreadable.push_back (name);
+    if (! missing.empty())
+        append ("Couldn't find " + names (missing) + ".");
+    if (! unreadable.empty())
+        append ("Couldn't import " + names (unreadable) + ": unsupported or damaged file" + std::string (unreadable.size() > 1 ? "s." : "."));
+    if (! narrowed.empty())
+        append ("Kept the first two channels of " + names (narrowed) + ".");
     if (audio.empty() && midi.empty())
         return out;
 

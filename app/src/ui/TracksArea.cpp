@@ -539,10 +539,7 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
     describe (mute, "Mute", "Mute track");
     describe (solo, "Solo", "Solo track (Ctrl+click: solo only this)");
     describe (arm, "Record enable", "Record enable");
-    mute.onClick = [this] {
-        if (const auto* t = studio.model().track (trackId))
-            studio.check (studio.session().setTrackMute (trackId, ! t->mute));
-    };
+    mute.onClick = [this] { studio.toggleMute (trackId); };
     solo.onClick = [this] { studio.toggleSolo (trackId, juce::ModifierKeys::currentModifiers.isCommandDown()); };
     arm.onClick = [this] { studio.toggleArm (trackId); };
     setRole (mute, ButtonRole::mute);

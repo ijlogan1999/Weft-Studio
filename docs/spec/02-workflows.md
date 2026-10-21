@@ -437,7 +437,8 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-ARR-4 | Joined audio keeps the first fade-in and the last fade-out. |
 | D-ARR-5 | Smart snap uses the finest note grid whose lines are at least 16 px apart, else whole bars. |
 | D-ARR-6 | A take moves, copies and pastes with its whole take folder. |
-| D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels keep the first 2. |
+| D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels keep the first 2, and the status bar says so. |
+| D-ARR-8 | The Loop Region command (no drag) loops up to the next region on the track; with none after it, to the cycle end when the cycle is on and ends later; otherwise for 3 repeats. A region directly followed by another isn't looped. |
 | D-W3-4 | Undo history is per session, not persisted. |
 | D-W4-1 | MIDI 60 is labeled C3. |
 | D-W4-2 | The pencil places a note on the grid line at or before the click; dragging on lengthens it in the same undo step. |

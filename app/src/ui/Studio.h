@@ -147,6 +147,8 @@ public:
     const commands::LocalView& localView() const noexcept { return local; }
     void toggleArm (const Id& trackId);
     void toggleSolo (const Id& trackId, bool exclusive = false);
+    /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */
+    void toggleMute (const Id& trackId);
 
     int trackHeight (const Id& trackId) const;
     void setTrackHeight (const Id& trackId, int height);

@@ -451,22 +451,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
-    mute.onClick = [this] {
-        const auto* t = track();
-        if (t == nullptr)
-            return;
-        const auto mutes = targetOf ("mute");
-        if (studio.automationLive (id, mutes))
-        {
-            // A click is a touch and a release: Latch and Write hold it until stop.
-            const auto now = studio.automationValue (id, mutes).value_or (t->mute ? 1.0 : 0.0);
-            studio.touchControl (id, mutes, automation::toMute (now) ? 0.0 : 1.0);
-            studio.releaseControl (id, mutes);
-            return;
-        }
-        studio.check (studio.session().setTrackMute (id, ! t->mute));
-        studio.edited();
-    };
+    mute.onClick = [this] { studio.toggleMute (id); };
     solo.onClick = [this] { studio.toggleSolo (id, juce::ModifierKeys::currentModifiers.isCommandDown()); };
     arm.onClick = [this] { studio.toggleArm (id); };
     monitor.onClick = [this] {

@@ -825,3 +825,37 @@ TEST_CASE ("F-TRN-3 Ctrl+Space pauses where the playhead is; Space returns to th
     ui.renderAudio();
     CHECK (ui.studio.playhead() == paused);
 }
+
+TEST_CASE ("Loop Region loops up to the next region, else to the cycle end, else 3 repeats (D-ARR-8)", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (2);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 6 * bar, bar);
+    const auto c = *s.createMidiRegion (tracks[0], 7 * bar, bar);
+    const auto d = *s.createMidiRegion (tracks[1], 0, 2 * bar);
+    ui.studio.edited();
+    ui.settle();
+    auto loopEnd = [&] (const Id& id) { const auto& l = ui.m().region (id)->loop; return l ? l->endTicks : Ticks (-1); };
+
+    ui.studio.selection.set ({ a });
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (a) == 6 * bar);
+
+    ui.studio.selection.set ({ b }); // c starts right after it
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (b) == -1);
+    CHECK (ui.studio.status.contains ("no room"));
+
+    ui.studio.selection.set ({ c }); // nothing after it, no cycle: 3 repeats
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (c) == 11 * bar);
+
+    REQUIRE (s.setCycle (true, 0, 9 * bar));
+    ui.studio.selection.set ({ d });
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (d) == 9 * bar);
+    ui.main->run (Cmd::loopRegion); // toggles back off
+    CHECK (loopEnd (d) == -1);
+}

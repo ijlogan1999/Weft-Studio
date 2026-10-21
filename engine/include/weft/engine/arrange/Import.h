@@ -25,7 +25,7 @@ struct ImportOutcome
     std::vector<Id> regions;
     std::vector<Id> tracks;          // tracks the drop created
     std::vector<std::string> rejected; // file names that couldn't be imported
-    std::string message;             // status bar text naming the rejected files
+    std::string message;             // status bar text: missing, unreadable and narrowed files
 };
 
 bool isMidiFile (const std::filesystem::path& file);

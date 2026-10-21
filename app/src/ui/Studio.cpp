@@ -181,6 +181,25 @@ void Studio::toggleArm (const Id& trackId)
     edited();
 }
 
+void Studio::toggleMute (const Id& trackId)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr)
+        return;
+    model::AutomationTarget mutes;
+    mutes.kind = "mute";
+    if (automationLive (trackId, mutes))
+    {
+        // A click is a touch and a release: Latch and Write hold it until stop.
+        const auto now = automationValue (trackId, mutes).value_or (t->mute ? 1.0 : 0.0);
+        touchControl (trackId, mutes, automation::toMute (now) ? 0.0 : 1.0);
+        releaseControl (trackId, mutes);
+        return;
+    }
+    check (session().setTrackMute (trackId, ! t->mute));
+    edited();
+}
+
 void Studio::toggleSolo (const Id& trackId, bool exclusive)
 {
     if (exclusive)
@@ -820,8 +839,23 @@ bool Studio::perform (Cmd command)
             for (const auto& id : ids)
                 if (const auto* r = m.region (id))
                 {
+                    // D-ARR-8: up to the next region on the track, else to the cycle end, else 3 repeats.
                     const auto end = static_cast<Ticks> (std::ceil (m.regionEndTick (*r)));
-                    if (! check (s.setRegionLoop (id, r->loop ? std::nullopt : std::optional<Ticks> (end + (end - r->start) * 3))))
+                    auto until = end + (end - r->start) * 3;
+                    std::optional<Ticks> next;
+                    for (const auto* other : m.regionsOnTrack (r->trackId))
+                        if (other->id != id && other->start >= end && (! next || other->start < *next))
+                            next = other->start;
+                    if (next)
+                        until = *next;
+                    else if (m.info.cycle.enabled && m.info.cycle.end > end)
+                        until = m.info.cycle.end;
+                    if (! r->loop && until <= end)
+                    {
+                        setStatus ("There's no room to loop \"" + juce::String (r->name) + "\": the next region starts right after it.");
+                        continue;
+                    }
+                    if (! check (s.setRegionLoop (id, r->loop ? std::nullopt : std::optional<Ticks> (until))))
                         return false;
                 }
             break;

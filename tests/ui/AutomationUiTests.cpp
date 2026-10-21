@@ -232,3 +232,37 @@ TEST_CASE ("Screenshot of automation lanes", "[.screenshot-automation]")
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
 }
+
+TEST_CASE ("The track header's mute writes automation in Latch, like the mixer's", "[UI]")
+{
+    Ui ui;
+    const auto track = ui.m().trackOrder.front();
+    auto& s = ui.studio.session();
+    REQUIRE (s.addAutomationPoint (track, target ("mute"), 0, 0.0));
+    REQUIRE (s.setTrackAutomationMode (track, "latch"));
+    ui.studio.edited();
+    ui.settle();
+    TrackHeader* header = nullptr;
+    for (const auto& h : ui.main->tracks().headers())
+        if (h->trackId == track)
+            header = h.get();
+    REQUIRE (header != nullptr);
+
+    ui.main->run (Cmd::playStop);
+    ui.renderAudio (4800);
+    ui.studio.tick();
+    REQUIRE (ui.studio.automationLive (track, target ("mute")));
+    header->mute.onClick();
+    ui.settle();
+    ui.renderAudio (9600);
+    ui.studio.tick();
+    CHECK_FALSE (ui.m().track (track)->mute); // the static mute is untouched
+    ui.main->run (Cmd::playStop);
+    ui.renderAudio (512);
+    ui.studio.tick();
+    ui.settle();
+    bool wroteMuted = false;
+    for (const auto& p : points (ui, track, "mute"))
+        wroteMuted = wroteMuted || automation::toMute (p.value);
+    CHECK (wroteMuted);
+}
