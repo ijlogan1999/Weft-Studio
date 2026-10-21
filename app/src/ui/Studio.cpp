@@ -649,7 +649,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
-        case Cmd::moveTrackDown:
+        case Cmd::moveTrackDown: case Cmd::pause:
             break;
     }
     return std::nullopt;
@@ -675,6 +675,14 @@ bool Studio::perform (Cmd command)
         case Cmd::playStop:
             if (playing())
                 eng->stop();
+            else
+                eng->play (playhead());
+            locatedAt.reset();
+            break;
+        case Cmd::pause:
+            // Stops where it is (F-TRN-3, D-INV-6); pressed again, plays on from there.
+            if (playing())
+                eng->pause();
             else
                 eng->play (playhead());
             locatedAt.reset();

@@ -34,7 +34,9 @@ enum class Cmd
     // M12
     addComment, saveVersion, lockTrack,
     // File and Track menus (04 §2), track header menu and reordering (F-TRK-6, F-TRK-7)
-    importAudio, quit, duplicateTrack, duplicateTrackWithRegions, moveTrackUp, moveTrackDown
+    importAudio, quit, duplicateTrack, duplicateTrackWithRegions, moveTrackUp, moveTrackDown,
+    // Pause (F-TRN-3)
+    pause
 };
 
 struct CommandInfo

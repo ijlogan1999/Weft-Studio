@@ -803,3 +803,25 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
     CHECK (settings().midiMergeLinear == keep.midiMergeLinear);
     CHECK (settings().metronomeDuring == engine::ClickDuring::record);
 }
+
+TEST_CASE ("F-TRN-3 Ctrl+Space pauses where the playhead is; Space returns to the play start", "[UI][transport]")
+{
+    Ui ui;
+    REQUIRE (ui.studio.engine().settings().returnToStartOnStop);
+    ui.studio.locate (3840);
+    ui.renderAudio();
+    CHECK (ui.key (juce::KeyPress::spaceKey, juce::ModifierKeys::commandModifier)); // plays
+    ui.renderAudio (48000);
+    CHECK (ui.studio.playing());
+    CHECK (ui.key (juce::KeyPress::spaceKey, juce::ModifierKeys::commandModifier)); // pauses
+    ui.renderAudio();
+    CHECK_FALSE (ui.studio.playing());
+    const auto paused = ui.studio.playhead();
+    CHECK (paused > 3840 + 1500);
+
+    CHECK (ui.key (juce::KeyPress::spaceKey)); // plays on from there...
+    ui.renderAudio (48000);
+    CHECK (ui.key (juce::KeyPress::spaceKey)); // ...and Stop goes back to where that started
+    ui.renderAudio();
+    CHECK (ui.studio.playhead() == paused);
+}

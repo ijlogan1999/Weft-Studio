@@ -14,6 +14,7 @@ std::vector<CommandInfo> build()
 {
     std::vector<CommandInfo> t {
         { Cmd::playStop, "Play/Stop", "Space", { key (K::spaceKey) } },
+        { Cmd::pause, "Pause", "Ctrl+Space", { key (K::spaceKey, ctrl) } },
         { Cmd::record, "Record", "R", { key ('R') } },
         { Cmd::cycle, "Cycle", "C", { key ('C') } },
         { Cmd::metronome, "Metronome", "K", { key ('K') } },

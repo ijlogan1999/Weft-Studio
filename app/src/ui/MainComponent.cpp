@@ -751,7 +751,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         case 4:
         {
-            for (auto c : { Cmd::playStop, Cmd::record, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
+            for (auto c : { Cmd::playStop, Cmd::pause, Cmd::record, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch })
                 add (c);
             const auto settings = studio.engine().settings();

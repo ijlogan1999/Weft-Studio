@@ -126,6 +126,8 @@ public:
     void play();                  // from the playhead
     void play (Ticks from);
     void stop();
+    /** Stops and keeps the playhead where it is, whatever returnToStartOnStop says (Pause, F-TRN-3). */
+    void pause();
     void togglePlay();
     /** Starts recording at the playhead (or `from`), with the count-in from the settings. */
     RecordResult record();
@@ -250,7 +252,7 @@ private:
     struct Command
     {
         CommandType type = CommandType::stop;
-        std::int64_t a = 0, b = 0; // play/locate/record: position (or fromPlayhead); record: b = count-in bars
+        std::int64_t a = 0, b = 0; // play/locate/record: position (or fromPlayhead); record: b = count-in bars; stop: a = 1 stays put
         RecordPass* pass = nullptr;
         // settings
         bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
