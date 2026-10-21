@@ -243,6 +243,15 @@ void Ruler::paint (juce::Graphics& g)
                 }
         }
     }
+    // The project end (set from the timeline's right-click menu): a flag at its bar position.
+    if (const auto end = m.info.endMarker)
+    {
+        const auto x = static_cast<float> (juce::roundToInt (v.tickToX (static_cast<double> (*end))));
+        g.setColour (colour (Token::text));
+        g.fillRect (x, static_cast<float> (cycleStrip), 2.0f, static_cast<float> (rulerHeight - cycleStrip));
+        g.setFont (font (Type::caption));
+        g.drawText (captionText ("End"), juce::roundToInt (x) - 40, rulerHeight - 14, 37, 12, juce::Justification::centredRight);
+    }
     g.setColour (colour (Token::border));
     g.fillRect (0, rulerHeight - 1, getWidth(), 1);
     // Markers: raised chips with their colour on the left edge.
@@ -1614,14 +1623,81 @@ juce::PopupMenu Timeline::contextMenu (juce::Point<float> p) const
 {
     juce::PopupMenu menu;
     const auto* r = regionAt (p);
-    menu.addItem (1, r != nullptr ? "Add Comment on \"" + juce::String (r->name) + "\"" : juce::String ("Add Comment"), ! studio.previewing());
+    const bool editable = ! studio.previewing();
+    const auto add = [&] (Cmd c, bool enabled) {
+        const auto& info = commandInfo (c);
+        juce::PopupMenu::Item item (info.name);
+        item.itemID = contextCommand + static_cast<int> (c) + 1;
+        item.shortcutKeyDescription = info.shortcut;
+        item.isEnabled = enabled;
+        menu.addItem (item);
+    };
+    if (r != nullptr)
+    {
+        add (Cmd::cut, editable);
+        add (Cmd::copy, true);
+        add (Cmd::paste, editable);
+        add (Cmd::deleteSelection, editable);
+        menu.addSeparator();
+        menu.addItem (contextSplitHere, "Split Here", editable);
+        for (auto c : { Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::loopRegion, Cmd::crossfade })
+            add (c, editable);
+        if (r->isMidi)
+            add (Cmd::applyQuantize, editable);
+        menu.addSeparator();
+        auto colours = colourMenu (contextTrackColour, r->color && r->color->rgb.empty() ? r->color->palette : -1);
+        colours.addSeparator();
+        colours.addItem (contextTrackColour, "Track Color", true, ! r->color.has_value());
+        menu.addSubMenu ("Color", colours, editable);
+    }
+    else
+    {
+        add (Cmd::paste, editable);
+        menu.addSeparator();
+        menu.addItem (contextSetEnd, "Set Project End Here", editable);
+        if (studio.model().info.endMarker)
+            menu.addItem (contextClearEnd, "Clear Project End", editable);
+    }
+    menu.addSeparator();
+    menu.addItem (contextComment, r != nullptr ? "Add Comment on \"" + juce::String (r->name) + "\"" : juce::String ("Add Comment"), editable);
     return menu;
 }
 
 void Timeline::pickContext (int item, juce::Point<float> p)
 {
-    if (item != 1)
+    const auto at = std::max<Ticks> (0, studio.snapped (tickAt (p.x)));
+    if (item > contextCommand)
+    {
+        if (static_cast<Cmd> (item - contextCommand - 1) == Cmd::paste)
+            studio.locate (at); // paste where the menu was opened
+        studio.perform (static_cast<Cmd> (item - contextCommand - 1));
         return;
+    }
+    if (item >= contextTrackColour && item <= contextTrackColour + paletteSize)
+    {
+        // One undo step for the whole selection.
+        std::optional<model::Color> c;
+        if (item > contextTrackColour)
+            c = model::Color { item - contextTrackColour - 1, {} };
+        studio.session().beginGesture ("Region Color");
+        for (const auto& id : studio.selection.ids())
+            studio.session().setRegionColor (id, c);
+        studio.session().endGesture();
+        studio.edited();
+        return;
+    }
+    switch (item)
+    {
+        case contextSplitHere:
+            if (studio.session().splitRegionsAt (studio.selection.ids(), at).empty())
+                studio.setStatus (juce::String (studio.session().lastError()));
+            studio.edited();
+            return;
+        case contextSetEnd: studio.check (studio.session().setEndMarker (at)); return;
+        case contextClearEnd: studio.check (studio.session().setEndMarker (std::nullopt)); return;
+        case contextComment: break;
+        default: return;
+    }
     const auto& m = studio.model();
     commands::CommentAnchor a;
     a.pos = std::max<Ticks> (0, studio.snapped (tickAt (p.x)));
@@ -1725,6 +1801,11 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
         studio.selectTrack (trackId);
     if (mods.isPopupMenu())
     {
+        if (r != nullptr && ! studio.selection.contains (r->id))
+        {
+            studio.selection.click (r->id, false);
+            studio.sendChangeMessage();
+        }
         juce::Component::SafePointer<Timeline> self (this);
         contextMenu (p).showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self, p] (int item) {
             if (self != nullptr)

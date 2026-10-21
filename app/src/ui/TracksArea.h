@@ -140,9 +140,19 @@ public:
     /** A thread's pin on its track's lane, when it's pinned to a track that's shown (04 §9.3). */
     std::optional<juce::Rectangle<float>> pinBounds (const model::Comment& thread) const;
     const model::Comment* commentPinAt (juce::Point<float> p) const;
-    /** Right-click on the timeline or a region: Add Comment (04 §9.3). */
+    /** Right-click on a region: edit commands, Split Here, Color and Add Comment; on an empty lane: Paste,
+        Set/Clear Project End and Add Comment (04 §9.3). The region is selected first if it wasn't. */
     juce::PopupMenu contextMenu (juce::Point<float> p) const;
     void pickContext (int item, juce::Point<float> p);
+    enum ContextItem
+    {
+        contextComment = 1,
+        contextSplitHere,
+        contextSetEnd,
+        contextClearEnd,
+        contextTrackColour = 1000, // regions back to their track's colour; + 1 .. paletteSize: a swatch
+        contextCommand = 2000      // + Cmd + 1
+    };
     /** Where a collaborator's pointer is drawn (its lane's centre), when it's on a track (AT-COL-11). */
     std::optional<juce::Point<float>> collaboratorPointer (const std::string& clientId) const;
 

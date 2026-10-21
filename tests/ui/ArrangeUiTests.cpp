@@ -703,3 +703,63 @@ TEST_CASE ("W-1d Autopunch defaults to the cycle or 4 bars from the playhead; it
     CHECK (punch().start == 4 * bar);
     CHECK (punch().end == 5 * bar);
 }
+
+TEST_CASE ("Region and lane right-click menus: edit commands, Split Here, Color, project end", "[UI][context]")
+{
+    Ui ui;
+    const auto bar = Ticks (3840);
+    const auto inst = ui.instrumentTracks (1).front();
+    const auto a = ui.studio.session().createMidiRegion (inst, 0, 4 * bar).value();
+    const auto b = ui.studio.session().createMidiRegion (inst, 4 * bar, 4 * bar).value();
+    ui.studio.edited();
+    ui.settle();
+    auto& tl = ui.timeline();
+
+    auto labels = [] (const juce::PopupMenu& menu) {
+        juce::StringArray out;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (! it.getItem().isSeparator)
+                out.add (it.getItem().text);
+        return out;
+    };
+    const auto onA = ui.centreOf (a);
+    CHECK (labels (tl.contextMenu (onA))
+           == juce::StringArray { "Cut", "Copy", "Paste", "Delete", "Split Here", "Join", "Mute Regions", "Repeat Regions", "Loop Region", "Crossfade",
+                                  "Apply Quantize", "Color", "Add Comment on \"" + juce::String (ui.region (a).name) + "\"" });
+
+    // Color applies to the whole selection as one undo step; Track Color clears the override.
+    ui.studio.selection.set ({ a, b });
+    tl.pickContext (Timeline::contextTrackColour + 5, onA);
+    REQUIRE (ui.region (a).color.has_value());
+    CHECK (ui.region (a).color->palette == 4);
+    CHECK (ui.region (b).color->palette == 4);
+    CHECK (ui.studio.perform (Cmd::undo));
+    CHECK_FALSE (ui.region (a).color.has_value());
+    CHECK_FALSE (ui.region (b).color.has_value());
+    CHECK (ui.studio.perform (Cmd::redo));
+    tl.pickContext (Timeline::contextTrackColour, onA);
+    CHECK_FALSE (ui.region (a).color.has_value());
+
+    // Split Here cuts the selection where the menu was opened.
+    ui.studio.selection.set ({ a });
+    const auto at = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (2.0 * bar)), onA.y);
+    tl.pickContext (Timeline::contextSplitHere, at);
+    CHECK (ui.region (a).length == 2 * bar);
+
+    // A command item runs the command.
+    ui.studio.selection.set ({ b });
+    tl.pickContext (Timeline::contextCommand + static_cast<int> (Cmd::muteRegions) + 1, ui.centreOf (b));
+    CHECK (ui.region (b).muted);
+
+    // On an empty lane: Paste, Set Project End Here, then Clear Project End.
+    const auto empty = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (12.0 * bar)), onA.y);
+    CHECK (labels (tl.contextMenu (empty)) == juce::StringArray { "Paste", "Set Project End Here", "Add Comment" });
+    tl.pickContext (Timeline::contextSetEnd, empty);
+    REQUIRE (ui.m().info.endMarker.has_value());
+    CHECK (*ui.m().info.endMarker == 12 * bar);
+    CHECK (ui.studio.perform (Cmd::goToEnd));
+    CHECK (ui.studio.playhead() == 12 * bar);
+    CHECK (labels (tl.contextMenu (empty)).contains ("Clear Project End"));
+    tl.pickContext (Timeline::contextClearEnd, empty);
+    CHECK_FALSE (ui.m().info.endMarker.has_value());
+}
