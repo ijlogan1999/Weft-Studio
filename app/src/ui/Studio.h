@@ -142,6 +142,8 @@ public:
 
     const Id& selectedTrack() const noexcept { return local.selectedTrack; }
     void selectTrack (const Id& trackId);
+    /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
+    bool moveTrackTo (const Id& trackId, std::size_t index);
     const commands::LocalView& localView() const noexcept { return local; }
     void toggleArm (const Id& trackId);
     void toggleSolo (const Id& trackId, bool exclusive = false);
@@ -165,6 +167,8 @@ public:
 
     /** Drop of files on the arrange view (W-3, F-ARR-26/27). */
     engine::ImportOutcome importFiles (const std::vector<std::filesystem::path>& files, engine::DropTarget target);
+    /** File › Import Audio: at the playhead, on the selected track when it's an audio track, else on new tracks. */
+    engine::ImportOutcome importAtPlayhead (const std::vector<std::filesystem::path>& files);
     /** Plays a file in the browser (F-LIB-1). False when it can't be read. */
     bool previewFile (const std::filesystem::path& file);
 

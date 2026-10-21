@@ -408,6 +408,13 @@ void MainComponent::handleUiCommand (Cmd command)
         });
     else if (command == Cmd::openProject)
         whenSaved ([this] { chooseProjectToOpen(); });
+    else if (command == Cmd::importAudio)
+        chooseAudioToImport();
+    else if (command == Cmd::quit)
+    {
+        if (auto* app = juce::JUCEApplicationBase::getInstance())
+            app->systemRequestedQuit(); // asks about unsaved changes first
+    }
     else if (command == Cmd::saveAs)
     {
         if (desktopWindows())
@@ -538,6 +545,22 @@ void MainComponent::chooseProjectToOpen()
                                       safe->opened (safe->studio.openProject (textPath (fc.getResult().getFullPathName())));
                                   }
                               });
+}
+
+void MainComponent::chooseAudioToImport()
+{
+    if (! desktopWindows())
+        return;
+    importChooser = std::make_unique<juce::FileChooser> ("Import Audio", juce::File(), "*.wav;*.wave;*.bwf;*.aif;*.aiff;*.aifc;*.flac;*.mp3");
+    importChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                                    | juce::FileBrowserComponent::canSelectMultipleItems,
+                                [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                    std::vector<std::filesystem::path> files;
+                                    for (const auto& f : fc.getResults())
+                                        files.push_back (textPath (f.getFullPathName()));
+                                    if (safe != nullptr && ! files.empty())
+                                        safe->studio.importAtPlayhead (files);
+                                });
 }
 
 void MainComponent::openProject (const std::filesystem::path& picked)
@@ -681,9 +704,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::saveVersion);
             menu.addSeparator();
             add (Cmd::bounce);
+            add (Cmd::importAudio);
             menu.addSeparator();
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);
+            menu.addSeparator();
+            add (Cmd::quit);
             break;
         }
         case 1:
@@ -702,10 +728,21 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::addComment);
             break;
         case 2:
+        {
             add (Cmd::newTrack);
+            add (Cmd::duplicateTrack);
+            add (Cmd::duplicateTrackWithRegions);
             add (Cmd::deleteTrack);
+            menu.addSeparator();
+            const auto* t = studio.model().track (studio.selectedTrack());
+            const bool colourable = t != nullptr && t->kind != model::TrackKind::master;
+            menu.addSubMenu ("Color", colourMenu (colourMenuBase, colourable && t->color.rgb.empty() ? t->color.palette : -1), colourable);
+            add (Cmd::moveTrackUp);
+            add (Cmd::moveTrackDown);
+            menu.addSeparator();
             add (Cmd::lockTrack);
             break;
+        }
         case 3:
             add (Cmd::newBus);
             add (Cmd::toggleMixer);
@@ -756,7 +793,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > recentMenuBase)
+    if (itemId > colourMenuBase)
+        studio.check (studio.session().setTrackColor (studio.selectedTrack(), model::Color { itemId - colourMenuBase - 1, {} }));
+    else if (itemId > recentMenuBase)
         openRecent (itemId - recentMenuBase - 1);
     else if (itemId > 0)
         run (static_cast<Cmd> (itemId - 1));

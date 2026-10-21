@@ -53,6 +53,7 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void refresh();
 
@@ -61,15 +62,26 @@ public:
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
     juce::ShapeButton lock { "Lock", {}, {}, {} };
-    /** Right-click menu: Lock/Unlock, Break Lock (the Owner), Add Comment. */
+    /** Right-click menu: Rename, Duplicate, Color, Move, Delete, Lock/Unlock, Break Lock (the Owner), Add Comment. */
     juce::PopupMenu menu() const;
     void pickMenu (int item);
     enum MenuItem
     {
         itemLock = 1,
         itemBreakLock,
-        itemComment
+        itemComment,
+        itemRename,
+        itemDuplicate,
+        itemDuplicateWithRegions,
+        itemMoveUp,
+        itemMoveDown,
+        itemDelete,
+        itemColour = 100 // + 1 .. paletteSize
     };
+    /** The header the pointer is over while this one is dragged to reorder; nullptr when not dragging. */
+    const TrackHeader* dropTarget() const noexcept { return reorderOver; }
+    /** Where a dragged header would land on this one: -1 above it, 1 below it, 0 not a drop target. */
+    int dropMark = 0;
     // Automation view (W-8): the mode, and per lane the parameter selector and "+".
     juce::ComboBox mode;
     std::vector<std::unique_ptr<juce::ComboBox>> parameters;
@@ -86,6 +98,10 @@ private:
     std::vector<std::string> shownChoices; // what the parameter selectors were built from
     int number;
     int resizeFrom = -1;
+    bool reordering = false;
+    TrackHeader* reorderOver = nullptr;
+    TrackHeader* headerAt (juce::Point<int> inParent) const;
+    void showDropTarget (TrackHeader* over);
 };
 
 /** The lanes and regions. Pointer handling goes through pointerDown/Drag/Up so tests can drive it. */

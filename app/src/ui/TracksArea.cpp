@@ -1,5 +1,6 @@
 #include "TracksArea.h"
 
+#include "Commands.h"
 #include "PresenceUi.h"
 #include "Waveform.h"
 
@@ -353,6 +354,19 @@ juce::PopupMenu TrackHeader::menu() const
     juce::PopupMenu m;
     const auto lockText = studio.lockTooltip (trackId);
     const bool other = studio.lockedByOther (trackId);
+    const auto* t = studio.model().track (trackId);
+    const bool editable = ! other && ! studio.previewing() && t != nullptr;
+    const bool master = t != nullptr && t->kind == model::TrackKind::master;
+    const auto& order = studio.model().trackOrder;
+    const auto at = std::find (order.begin(), order.end(), trackId);
+    m.addItem (itemRename, "Rename", editable);
+    m.addItem (itemDuplicate, commandInfo (Cmd::duplicateTrack).name, editable && ! master);
+    m.addItem (itemDuplicateWithRegions, commandInfo (Cmd::duplicateTrackWithRegions).name, editable && ! master);
+    m.addSubMenu ("Color", colourMenu (itemColour, t != nullptr && t->color.rgb.empty() ? t->color.palette : -1), editable);
+    m.addItem (itemMoveUp, commandInfo (Cmd::moveTrackUp).name, ! studio.previewing() && at != order.end() && at != order.begin());
+    m.addItem (itemMoveDown, commandInfo (Cmd::moveTrackDown).name, ! studio.previewing() && at != order.end() && at + 1 != order.end());
+    m.addItem (itemDelete, commandInfo (Cmd::deleteTrack).name, editable && ! master);
+    m.addSeparator();
     m.addItem (itemLock, lockText.isEmpty() ? "Lock Track" : "Unlock Track", ! other && ! studio.previewing());
     if (other && studio.session().isOwner() && ! studio.previewing())
         m.addItem (itemBreakLock, "Break Lock (" + lockText + ")...");
@@ -365,6 +379,12 @@ void TrackHeader::pickMenu (int item)
 {
     switch (item)
     {
+        case itemRename: name.showEditor(); break;
+        case itemDuplicate: studio.selectTrack (trackId); studio.perform (Cmd::duplicateTrack); break;
+        case itemDuplicateWithRegions: studio.selectTrack (trackId); studio.perform (Cmd::duplicateTrackWithRegions); break;
+        case itemMoveUp: studio.selectTrack (trackId); studio.perform (Cmd::moveTrackUp); break;
+        case itemMoveDown: studio.selectTrack (trackId); studio.perform (Cmd::moveTrackDown); break;
+        case itemDelete: studio.selectTrack (trackId); studio.perform (Cmd::deleteTrack); break;
         case itemLock: studio.toggleLock (trackId); break;
         case itemBreakLock:
             if (studio.confirmBreakLock)
@@ -378,7 +398,10 @@ void TrackHeader::pickMenu (int item)
             studio.startComment (a);
             break;
         }
-        default: break;
+        default:
+            if (item > itemColour && item <= itemColour + paletteSize)
+                studio.check (studio.session().setTrackColor (trackId, model::Color { item - itemColour - 1, {} }));
+            break;
     }
 }
 
@@ -524,6 +547,11 @@ void TrackHeader::paint (juce::Graphics& g)
     }
     g.setColour (colour (Token::background));
     g.fillRect (0, getHeight() - 1, getWidth(), 1);
+    if (dropMark != 0) // a dragged track lands here
+    {
+        g.setColour (colour (Token::accent));
+        g.fillRect (0, dropMark < 0 ? 0 : getHeight() - 2, getWidth(), 2);
+    }
     g.setColour (colour (Token::lineSubtle));
     for (std::size_t i = 0; i < parameters.size(); ++i)
         g.fillRect (space::s4, studio.trackHeight (trackId) + static_cast<int> (i) * Studio::automationLaneHeight, getWidth() - space::s4, 1);
@@ -599,7 +627,73 @@ void TrackHeader::mouseDown (const juce::MouseEvent& e)
 void TrackHeader::mouseDrag (const juce::MouseEvent& e)
 {
     if (resizeFrom > 0)
+    {
         studio.setTrackHeight (trackId, resizeFrom + e.getDistanceFromDragStartY());
+        return;
+    }
+    // Dragging a header reorders the tracks (F-TRK-7); the master stays where it is.
+    const auto* t = studio.model().track (trackId);
+    if (! reordering && (std::abs (e.getDistanceFromDragStartY()) < 6 || t == nullptr || t->kind == model::TrackKind::master || studio.previewing()))
+        return;
+    reordering = true;
+    setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+    showDropTarget (headerAt (e.getPosition() + getPosition()));
+}
+
+void TrackHeader::showDropTarget (TrackHeader* over)
+{
+    if (over == this)
+        over = nullptr;
+    if (reorderOver != nullptr)
+    {
+        reorderOver->dropMark = 0;
+        reorderOver->repaint();
+    }
+    reorderOver = over;
+    if (over != nullptr)
+    {
+        over->dropMark = over->getY() < getY() ? -1 : 1;
+        over->repaint();
+    }
+}
+
+void TrackHeader::mouseUp (const juce::MouseEvent& e)
+{
+    if (! std::exchange (reordering, false))
+        return;
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    showDropTarget (nullptr);
+    if (const auto* over = headerAt (e.getPosition() + getPosition()); over != nullptr && over != this)
+    {
+        const auto& order = studio.model().trackOrder;
+        const auto to = std::find (order.begin(), order.end(), over->trackId);
+        if (to != order.end())
+            studio.moveTrackTo (trackId, static_cast<std::size_t> (to - order.begin()));
+    }
+}
+
+TrackHeader* TrackHeader::headerAt (juce::Point<int> inParent) const
+{
+    // Above the first header picks the first; below the last picks the last.
+    const auto* parent = getParentComponent();
+    if (parent == nullptr)
+        return nullptr;
+    TrackHeader *first = nullptr, *last = nullptr;
+    for (auto* c : parent->getChildren())
+        if (auto* h = dynamic_cast<TrackHeader*> (c); h != nullptr && h->isVisible())
+        {
+            if (h->getBounds().contains (inParent.withX (h->getX())))
+                return h;
+            if (first == nullptr || h->getY() < first->getY())
+                first = h;
+            if (last == nullptr || h->getBottom() > last->getBottom())
+                last = h;
+        }
+    if (first != nullptr && inParent.y < first->getY())
+        return first;
+    if (last != nullptr && inParent.y >= last->getBottom())
+        return last;
+    return nullptr;
 }
 
 // Timeline ---------------------------------------------------------------------------------

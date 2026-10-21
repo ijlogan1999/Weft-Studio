@@ -152,6 +152,29 @@ void Studio::selectTrack (const Id& trackId)
     sendChangeMessage();
 }
 
+bool Studio::moveTrackTo (const Id& trackId, std::size_t index)
+{
+    // `index` is the position among the tracks as shown; the stored order can also hold ids the
+    // projection hides (D-DM-18), so place the track before the shown track it lands on.
+    const auto& shown = model().trackOrder;
+    std::vector<Id> others;
+    for (const auto& id : shown)
+        if (id != trackId)
+            others.push_back (id);
+    if (others.size() == shown.size())
+        return false;
+    auto stored = model().storedTrackOrder;
+    stored.erase (std::remove (stored.begin(), stored.end(), trackId), stored.end());
+    auto at = stored.size();
+    if (index < others.size())
+        at = static_cast<std::size_t> (std::find (stored.begin(), stored.end(), others[index]) - stored.begin());
+    if (std::find (shown.begin(), shown.end(), trackId) - shown.begin() == static_cast<std::ptrdiff_t> (std::min (index, others.size())))
+        return false; // already there
+    const bool ok = check (sess->moveTrack (trackId, at));
+    edited();
+    return ok;
+}
+
 void Studio::toggleArm (const Id& trackId)
 {
     local.toggleArm (model(), trackId);
@@ -625,6 +648,8 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
+        case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
+        case Cmd::moveTrackDown:
             break;
     }
     return std::nullopt;
@@ -842,9 +867,45 @@ bool Studio::perform (Cmd command)
         case Cmd::signIn:
         case Cmd::addComment:
         case Cmd::saveVersion:
+        case Cmd::importAudio:
+        case Cmd::quit:
             if (uiCommand)
                 uiCommand (command);
             break;
+        case Cmd::duplicateTrack:
+        case Cmd::duplicateTrackWithRegions:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr || t->kind == model::TrackKind::master)
+            {
+                setStatus ("Select a track to duplicate.");
+                return false;
+            }
+            const auto copy = sess->duplicateTrack (local.selectedTrack, command == Cmd::duplicateTrackWithRegions);
+            if (! copy)
+            {
+                setStatus (juce::String (sess->lastError()));
+                return false;
+            }
+            selectTrack (*copy);
+            edited();
+            break;
+        }
+        case Cmd::moveTrackUp:
+        case Cmd::moveTrackDown:
+        {
+            const auto& order = m.trackOrder;
+            const auto it = std::find (order.begin(), order.end(), local.selectedTrack);
+            if (it == order.end())
+            {
+                setStatus ("Select a track to move.");
+                return false;
+            }
+            const auto at = static_cast<std::size_t> (it - order.begin());
+            if (command == Cmd::moveTrackUp ? at == 0 : at + 1 >= order.size())
+                return false;
+            return moveTrackTo (local.selectedTrack, command == Cmd::moveTrackUp ? at - 1 : at + 1);
+        }
         case Cmd::lockTrack:
             if (local.selectedTrack.empty())
             {
@@ -942,6 +1003,15 @@ engine::ImportOutcome Studio::importFiles (const std::vector<fs::path>& files, e
     status = juce::String (outcome.message);
     edited();
     return outcome;
+}
+
+engine::ImportOutcome Studio::importAtPlayhead (const std::vector<fs::path>& files)
+{
+    engine::DropTarget target;
+    target.at = playhead();
+    if (const auto* t = model().track (local.selectedTrack); t != nullptr && t->kind == model::TrackKind::audio)
+        target.trackId = t->id;
+    return importFiles (files, target);
 }
 
 bool Studio::previewFile (const fs::path& file)
@@ -2043,7 +2113,8 @@ bool Studio::changesDocument (Cmd command)
         case Cmd::nudgeRight: case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::addMarker:
         case Cmd::muteNotes: case Cmd::quantize: case Cmd::transposeUp: case Cmd::transposeDown: case Cmd::octaveUp:
         case Cmd::octaveDown: case Cmd::notesLeft: case Cmd::notesRight: case Cmd::applyQuantize: case Cmd::deleteTrack:
-        case Cmd::newBus: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
+        case Cmd::newBus: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack: case Cmd::importAudio:
+        case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp: case Cmd::moveTrackDown:
             return true;
         default:
             return false;

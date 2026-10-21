@@ -292,6 +292,109 @@ TEST_CASE ("AT-TRK-6 renaming in the track header: Enter, Esc, empty", "[UI]")
     CHECK (label.getText() == "Vox");
 }
 
+TEST_CASE ("AT-TRK-5 dragging track 3 above track 1 makes the order 3, 1, 2; Move Track Up/Down", "[UI]")
+{
+    Ui ui;
+    const auto added = ui.instrumentTracks (2);
+    const auto order = [&] { return ui.m().trackOrder; };
+    const std::vector<Id> start = order();
+    REQUIRE (start.size() == 3);
+    auto headerOf = [&] (const Id& id) -> TrackHeader& {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return *h;
+        FAIL ("no header");
+        throw;
+    };
+
+    // Drag the third header up onto the first: it shows where it lands, then drops there.
+    auto& third = headerOf (start[2]);
+    const auto& first = headerOf (start[0]);
+    const juce::Point<float> from { 60.0f, 10.0f };
+    const auto onto = from.translated (0.0f, static_cast<float> (first.getY() - third.getY()));
+    third.mouseDown (mouse (third, from));
+    third.mouseDrag (mouse (third, onto, {}, 1, from));
+    CHECK (third.dropTarget() == &first);
+    CHECK (first.dropMark == -1);
+    third.mouseUp (mouse (third, onto, {}, 1, from));
+    ui.settle();
+    CHECK (order() == std::vector<Id> { start[2], start[0], start[1] });
+    CHECK (first.dropMark == 0);
+
+    // One undo step puts it back.
+    CHECK (ui.studio.perform (Cmd::undo));
+    CHECK (order() == start);
+
+    // A short wiggle isn't a drag.
+    auto& second = headerOf (start[1]);
+    second.mouseDown (mouse (second, from));
+    second.mouseDrag (mouse (second, from.translated (0.0f, 3.0f), {}, 1, from));
+    second.mouseUp (mouse (second, from.translated (0.0f, 3.0f), {}, 1, from));
+    CHECK (order() == start);
+
+    // Move Track Up/Down act on the selected track and stop at the ends.
+    ui.studio.selectTrack (start[0]);
+    CHECK_FALSE (ui.studio.perform (Cmd::moveTrackUp));
+    CHECK (ui.studio.perform (Cmd::moveTrackDown));
+    CHECK (order() == std::vector<Id> { start[1], start[0], start[2] });
+    CHECK (ui.studio.perform (Cmd::moveTrackUp));
+    CHECK (order() == start);
+    juce::ignoreUnused (added);
+}
+
+TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu and the header menu", "[UI]")
+{
+    Ui ui;
+    const auto audio = ui.m().trackOrder.front();
+    ui.studio.selectTrack (audio);
+
+    // Ctrl+D copies the settings below the original and selects the copy; Ctrl+Shift+D brings regions.
+    CHECK (ui.key ('D', juce::ModifierKeys::commandModifier));
+    REQUIRE (ui.m().trackOrder.size() == 2);
+    const auto copy = ui.m().trackOrder[1];
+    CHECK (ui.m().track (copy)->name == ui.m().track (audio)->name + " copy");
+    CHECK (ui.studio.selectedTrack() == copy);
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (2, "Track");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+            items.add (it.getItem().text);
+    CHECK (items == juce::StringArray { "New Track", "Duplicate Track", "Duplicate Track with Regions", "Delete Track", "Color", "Move Track Up",
+                                        "Move Track Down", "Lock/Unlock Track" });
+
+    // Color › swatch 7 from the menu bar.
+    ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);
+    CHECK (ui.m().track (copy)->color.palette == 6);
+
+    // The header's right-click menu offers the same, and acts on its own track.
+    TrackHeader* header = nullptr;
+    for (const auto& h : ui.main->tracks().headers())
+        if (h->trackId == audio)
+            header = h.get();
+    REQUIRE (header != nullptr);
+    juce::StringArray headerItems;
+    const auto hm = header->menu();
+    for (juce::PopupMenu::MenuItemIterator it (hm); it.next();)
+        if (! it.getItem().isSeparator)
+            headerItems.add (it.getItem().text);
+    CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
+                                              "Delete Track", "Lock Track", "Add Comment" });
+    header->pickMenu (TrackHeader::itemColour + 3);
+    CHECK (ui.m().track (audio)->color.palette == 2);
+    header->pickMenu (TrackHeader::itemMoveDown);
+    ui.settle();
+    CHECK (ui.m().trackOrder.back() == audio);
+    header = nullptr;
+    for (const auto& h : ui.main->tracks().headers())
+        if (h->trackId == audio)
+            header = h.get();
+    REQUIRE (header != nullptr);
+    header->pickMenu (TrackHeader::itemDelete); // nothing on it: no question
+    ui.settle();
+    CHECK (ui.m().track (audio) == nullptr);
+}
+
 TEST_CASE ("AT-TRK-11 dragging a header's lower edge resizes; Ctrl+Shift+wheel resizes all", "[UI]")
 {
     Ui ui;
@@ -423,4 +526,31 @@ TEST_CASE ("AT-ARR-20 a 200-event drag in the tracks area is one undo step", "[U
     ui.main->run (Cmd::undo);
     ui.settle();
     CHECK (ui.region (id).start == bar);
+}
+
+TEST_CASE ("File › Import Audio puts files at the playhead, on the selected audio track or new tracks", "[UI][import]")
+{
+    Ui ui;
+    media::AudioData a;
+    a.sampleRate = 48000;
+    a.channels.assign (1, std::vector<float> (4800, 0.25f));
+    const auto file = ui.folder.path / "browse" / "hit.wav";
+    REQUIRE (media::writeWav (file, a, media::SampleFormat::int24));
+    CHECK (commandInfo (Cmd::importAudio).shortcut == "Ctrl+I");
+
+    const auto audio = ui.m().trackOrder.front();
+    ui.studio.selectTrack (audio);
+    ui.studio.locate (2 * 3840);
+    const auto onTrack = ui.studio.importAtPlayhead ({ file });
+    REQUIRE (onTrack.regions.size() == 1);
+    CHECK (ui.region (onTrack.regions[0]).trackId == audio);
+    CHECK (ui.region (onTrack.regions[0]).start == 2 * 3840);
+
+    // With an instrument track selected the file gets a track of its own.
+    const auto inst = ui.instrumentTracks (1).front();
+    ui.studio.selectTrack (inst);
+    const auto newTrack = ui.studio.importAtPlayhead ({ file });
+    REQUIRE (newTrack.regions.size() == 1);
+    CHECK (newTrack.tracks.size() == 1);
+    CHECK (ui.region (newTrack.regions[0]).trackId == newTrack.tracks[0]);
 }
