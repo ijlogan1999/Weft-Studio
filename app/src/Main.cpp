@@ -121,6 +121,13 @@ private:
         ~MainWindow() override { setMenuBar (nullptr); }
 
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        /** When the window itself is given focus (say, as a dialog in front of it closes), the keys
+            belong to the main view, or shortcuts like Space do nothing until something is clicked. */
+        void focusGained (FocusChangeType) override
+        {
+            if (auto* c = getContentComponent(); c != nullptr && c->isShowing())
+                c->grabKeyboardFocus();
+        }
 
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainWindow)
