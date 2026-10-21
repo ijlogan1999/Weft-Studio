@@ -750,10 +750,24 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::pluginManager);
             break;
         case 4:
+        {
             for (auto c : { Cmd::playStop, Cmd::record, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch })
                 add (c);
+            const auto settings = studio.engine().settings();
+            menu.addSeparator();
+            juce::PopupMenu during;
+            during.addItem (clickDuringRecord, "Recording", true, settings.metronomeDuring == engine::ClickDuring::record);
+            during.addItem (clickDuringPlay, "Playback", true, settings.metronomeDuring == engine::ClickDuring::play);
+            during.addItem (clickDuringBoth, "Recording and Playback", true, settings.metronomeDuring == engine::ClickDuring::both);
+            menu.addSubMenu ("Click During", during);
+            menu.addItem (returnToStart, "Return to Start on Stop", true, settings.returnToStartOnStop);
+            juce::PopupMenu midi;
+            midi.addItem (mergeLinear, "Merge into Existing Region", true, settings.midiMergeLinear);
+            midi.addItem (mergeCycle, "Merge Cycle Passes", true, settings.midiMergeCycle);
+            menu.addSubMenu ("MIDI Recording", midi);
             break;
+        }
         case 5:
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
@@ -793,7 +807,23 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > colourMenuBase)
+    if (itemId > clickDuringRecord - 1 && itemId <= mergeCycle)
+    {
+        auto settings = studio.engine().settings();
+        switch (itemId)
+        {
+            case clickDuringRecord: settings.metronomeDuring = engine::ClickDuring::record; break;
+            case clickDuringPlay: settings.metronomeDuring = engine::ClickDuring::play; break;
+            case clickDuringBoth: settings.metronomeDuring = engine::ClickDuring::both; break;
+            case returnToStart: settings.returnToStartOnStop = ! settings.returnToStartOnStop; break;
+            case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
+            case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
+            default: return;
+        }
+        studio.engine().setSettings (settings);
+        studio.sendChangeMessage();
+    }
+    else if (itemId > colourMenuBase)
         studio.check (studio.session().setTrackColor (studio.selectedTrack(), model::Color { itemId - colourMenuBase - 1, {} }));
     else if (itemId > recentMenuBase)
         openRecent (itemId - recentMenuBase - 1);

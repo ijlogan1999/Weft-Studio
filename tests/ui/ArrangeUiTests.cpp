@@ -763,3 +763,43 @@ TEST_CASE ("Region and lane right-click menus: edit commands, Split Here, Color,
     tl.pickContext (Timeline::contextClearEnd, empty);
     CHECK_FALSE (ui.m().info.endMarker.has_value());
 }
+
+TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Recording options; K says when the click plays", "[UI][transport]")
+{
+    Ui ui;
+    auto settings = [&] { return ui.studio.engine().settings(); };
+    REQUIRE (settings().metronomeDuring == engine::ClickDuring::record);
+    if (settings().metronomeOn)
+        CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (settings().metronomeOn);
+    CHECK (ui.studio.status.contains ("while recording"));
+
+    ui.main->menuItemSelected (MainComponent::clickDuringBoth, 4);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::both);
+    const auto returned = settings().returnToStartOnStop;
+    ui.main->menuItemSelected (MainComponent::returnToStart, 4);
+    CHECK (settings().returnToStartOnStop != returned);
+    const auto merge = settings().midiMergeLinear;
+    ui.main->menuItemSelected (MainComponent::mergeLinear, 4);
+    CHECK (settings().midiMergeLinear != merge);
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+            items.add (it.getItem().text);
+    CHECK (items.contains ("Click During"));
+    CHECK (items.contains ("Return to Start on Stop"));
+    CHECK (items.contains ("MIDI Recording"));
+
+    // Opening another project keeps these options but takes the project's metronome defaults.
+    const auto keep = settings();
+    std::string error;
+    commands::NewProjectOptions second;
+    second.name = "Second";
+    REQUIRE (ui.studio.newProject (ui.folder.path / "projects", second, &error));
+    CHECK (settings().returnToStartOnStop == keep.returnToStartOnStop);
+    CHECK (settings().midiMergeLinear == keep.midiMergeLinear);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::record);
+}

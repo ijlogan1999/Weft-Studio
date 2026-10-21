@@ -140,6 +140,16 @@ public:
     PreviewBanner& previewBanner() noexcept { return preview; }
     const ReadOnlyBanner& readOnlyBanner() const noexcept { return readOnly; }
     static constexpr int recentMenuBase = 10000, colourMenuBase = 20000;
+    /** Navigate menu options kept in the local transport settings (F-TRN-7, F-REC-7). */
+    enum TransportItem
+    {
+        clickDuringRecord = 30001,
+        clickDuringPlay,
+        clickDuringBoth,
+        returnToStart = 30010,
+        mergeLinear = 30020,
+        mergeCycle
+    };
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;

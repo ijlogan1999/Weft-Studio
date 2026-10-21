@@ -713,6 +713,11 @@ bool Studio::perform (Cmd command)
             auto settings = eng->settings();
             settings.metronomeOn = ! settings.metronomeOn;
             eng->setSettings (settings);
+            // The default only clicks while recording (02 W-1a step 6): say so, or turning it on mid-playback seems to do nothing.
+            if (settings.metronomeOn && settings.metronomeDuring == engine::ClickDuring::record)
+                setStatus ("Click is on while recording. Navigate > Click During changes when it plays.");
+            else
+                setStatus (settings.metronomeOn ? "Click on." : "Click off.");
             break;
         }
         case Cmd::goToStart: locate (0); break;
@@ -1232,7 +1237,13 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     resetViewState();
     local.selectedTrack = model().trackOrder.empty() ? Id {} : model().trackOrder.front();
     eng->setProjectFolder (folder->root());
-    eng->setSettings (engine::TransportSettings::fromDefaults (model().info.metronomeDefaults));
+    // The project's metronome defaults; this user's other transport options carry over.
+    auto settings = engine::TransportSettings::fromDefaults (model().info.metronomeDefaults);
+    const auto before = eng->settings();
+    settings.returnToStartOnStop = before.returnToStartOnStop;
+    settings.midiMergeLinear = before.midiMergeLinear;
+    settings.midiMergeCycle = before.midiMergeCycle;
+    eng->setSettings (settings);
     loadProjectMedia();
     syncEngine();
     loadViewState();
