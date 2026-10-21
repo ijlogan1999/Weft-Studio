@@ -554,3 +554,106 @@ TEST_CASE ("File › Import Audio puts files at the playhead, on the selected au
     CHECK (newTrack.tracks.size() == 1);
     CHECK (ui.region (newTrack.regions[0]).trackId == newTrack.tracks[0]);
 }
+
+TEST_CASE ("AT-TMP-3 Ctrl+click in the tempo lane adds a change; dragging it changes BPM in 0.01 steps; the first tempo stays", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    REQUIRE (ui.studio.layout.globalTracks);
+    const auto laneY = static_cast<float> (Ruler::tempoTop + Ruler::tempoLane / 2);
+    const auto bar5 = static_cast<float> (ui.studio.view.tickToX (4.0 * 3840.0));
+
+    ruler.pointerDown ({ bar5, laneY }, juce::ModifierKeys::commandModifier);
+    ruler.pointerUp();
+    ui.settle();
+    REQUIRE (ui.m().tempo.points().size() == 2);
+    const auto added = ui.m().tempo.points()[1];
+    CHECK (added.pos == 4 * 3840);
+    CHECK (added.bpm == ruler.bpmAtY (laneY));
+
+    // Dragging up 5 px raises the BPM by 5 px of the lane's range, rounded to 0.01; the position stays.
+    const auto [lo, hi] = ruler.tempoRange();
+    const auto y = ruler.tempoY (added.bpm);
+    ruler.pointerDown ({ bar5, y }, {});
+    ruler.pointerDrag ({ bar5 + 1.0f, y - 2.0f });
+    ruler.pointerDrag ({ bar5 + 1.0f, y - 5.0f });
+    ruler.pointerUp();
+    ui.settle();
+    const auto dragged = ui.m().tempo.points()[1];
+    CHECK (dragged.pos == 4 * 3840);
+    CHECK (std::abs (dragged.bpm - std::round ((added.bpm + 5.0 * (hi - lo) / (Ruler::tempoLane - 10)) * 100.0) / 100.0) < 1e-9);
+    CHECK (std::abs (dragged.bpm * 100.0 - std::round (dragged.bpm * 100.0)) < 1e-6);
+    CHECK (ui.studio.perform (Cmd::undo)); // the drag is one undo step
+    CHECK (ui.m().tempo.points()[1].bpm == added.bpm);
+
+    // The first tempo can't be deleted or moved.
+    const auto x0 = static_cast<float> (ui.studio.view.tickToX (0.0)) + 1.0f;
+    const auto y0 = ruler.tempoY (ui.m().tempo.points()[0].bpm);
+    ruler.pointerDown ({ x0, y0 }, juce::ModifierKeys::rightButtonModifier);
+    ruler.pointerUp();
+    CHECK (ui.m().tempo.points().size() == 2);
+    ruler.pointerDown ({ x0, y0 }, {});
+    ruler.pointerDrag ({ x0 + 300.0f, y0 });
+    ruler.pointerUp();
+    CHECK (ui.m().tempo.points()[0].pos == 0);
+
+    // Right-click deletes a later change.
+    ruler.pointerDown ({ bar5, ruler.tempoY (added.bpm) }, juce::ModifierKeys::rightButtonModifier);
+    ruler.pointerUp();
+    CHECK (ui.m().tempo.points().size() == 1);
+}
+
+TEST_CASE ("W-11 signature lane: a change at a bar start from text; right-click deletes it", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    CHECK (ruler.setSignatureFromText (2, "3/4"));
+    ui.settle();
+    REQUIRE (ui.m().signatures.points().size() == 2);
+    CHECK (ui.m().signatures.points()[1].bar == 2);
+    CHECK (ui.m().signatures.points()[1].numerator == 3);
+    CHECK (ui.m().signatures.barStart (3) == 2 * 3840 + 2880);
+    CHECK_FALSE (ruler.setSignatureFromText (2, "three"));
+    CHECK_FALSE (ruler.setSignatureFromText (2, "5/3"));
+    CHECK (ruler.setSignatureFromText (0, "6/8")); // the first one changes in place
+    CHECK (ui.m().signatures.points()[0].numerator == 6);
+
+    const auto x = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (ui.m().signatures.barStart (2)))) + 4.0f;
+    CHECK (ruler.nearestBar (x) == 2);
+    ruler.pointerDown ({ x, static_cast<float> (Ruler::signatureTop + 5) }, juce::ModifierKeys::rightButtonModifier);
+    ruler.pointerUp();
+    CHECK (ui.m().signatures.points().size() == 1);
+}
+
+TEST_CASE ("AT-TMP-6 G toggles the global tracks; the marker, tempo and signature lanes follow the timeline's zoom and scroll", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    const auto shown = ruler.preferredHeight();
+    CHECK (shown == Ruler::rulerHeight + Ruler::markerLane + Ruler::tempoLane + Ruler::signatureLane);
+    CHECK (ui.key ('G'));
+    CHECK_FALSE (ui.studio.layout.globalTracks);
+    CHECK (ruler.preferredHeight() == Ruler::rulerHeight);
+    CHECK (ruler.getHeight() == Ruler::rulerHeight);
+    CHECK (ui.key ('G'));
+    CHECK (ruler.getHeight() == shown);
+
+    REQUIRE (ui.studio.session().addTempoPoint (8 * 3840, 90.0));
+    REQUIRE (ui.studio.session().addSignaturePoint (8, 7, 8));
+    REQUIRE (ui.studio.session().addMarker (8 * 3840, "Bridge"));
+    ui.studio.edited();
+    ui.settle();
+    for (int step = 0; step < 2; ++step)
+    {
+        const auto x = ui.studio.view.tickToX (8.0 * 3840.0);
+        const auto* tempo = ruler.tempoPointAt (x);
+        REQUIRE (tempo != nullptr);
+        CHECK (tempo->pos == 8 * 3840);
+        REQUIRE (ruler.signatureAt (x + 2.0) != nullptr);
+        CHECK (ruler.signatureAt (x + 2.0)->bar == 8);
+        REQUIRE (ruler.markerAt (x + 2.0) != nullptr);
+        CHECK (ruler.markerAt (x + 2.0)->name == "Bridge");
+        CHECK (ui.studio.perform (Cmd::zoomIn)); // and again zoomed in
+        ui.studio.view.originTick = 2.0 * 3840.0;
+    }
+}

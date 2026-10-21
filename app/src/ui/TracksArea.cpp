@@ -49,7 +49,104 @@ void askForText (const juce::String& title, const juce::String& current, std::fu
 Ruler::Ruler (Studio& s) : studio (s)
 {
     setTitle ("Ruler");
-    setTooltip ("Ruler: click to move the playhead; drag the top strip to set the cycle. Marker lane: double-click to add a marker.");
+    setTooltip ("Ruler: click to move the playhead; drag the top strip to set the cycle. Marker lane: double-click to add a marker. "
+                "Tempo lane: Ctrl+click to add a tempo change, drag a point to change it. Signature lane: double-click to change the meter.");
+}
+
+namespace
+{
+/** "120", "92.5", "133.33". */
+juce::String bpmText (double bpm)
+{
+    auto s = juce::String (bpm, 2);
+    while (s.endsWithChar ('0'))
+        s = s.dropLastCharacters (1);
+    return s.trimCharactersAtEnd (".");
+}
+} // namespace
+
+std::pair<double, double> Ruler::tempoRange() const
+{
+    if (drag == Drag::tempo)
+        return dragRange;
+    double lo = TempoMap::maxBpm, hi = TempoMap::minBpm;
+    for (const auto& p : studio.model().tempo.points())
+    {
+        lo = std::min (lo, p.bpm);
+        hi = std::max (hi, p.bpm);
+    }
+    return { std::max (TempoMap::minBpm, lo - 20.0), std::min (TempoMap::maxBpm, hi + 20.0) };
+}
+
+float Ruler::tempoY (double bpm) const
+{
+    const auto [lo, hi] = tempoRange();
+    const auto inner = static_cast<double> (tempoLane - 10);
+    return static_cast<float> (tempoTop + 5 + (hi - bpm) / std::max (1.0, hi - lo) * inner);
+}
+
+double Ruler::bpmAtY (float y) const
+{
+    const auto [lo, hi] = tempoRange();
+    const auto inner = static_cast<double> (tempoLane - 10);
+    const auto bpm = hi - (static_cast<double> (y) - tempoTop - 5) / inner * (hi - lo);
+    return std::clamp (std::round (bpm * 100.0) / 100.0, TempoMap::minBpm, TempoMap::maxBpm);
+}
+
+const TempoPoint* Ruler::tempoPointAt (double x) const
+{
+    const TempoPoint* best = nullptr;
+    double bestDistance = 6.0;
+    for (const auto& p : studio.model().tempo.points())
+        if (const auto d = std::abs (studio.view.tickToX (static_cast<double> (p.pos)) - x); d <= bestDistance)
+        {
+            best = &p;
+            bestDistance = d;
+        }
+    return best;
+}
+
+const SignaturePoint* Ruler::signatureAt (double x) const
+{
+    const auto& sigs = studio.model().signatures;
+    const SignaturePoint* best = nullptr;
+    for (const auto& p : sigs.points())
+    {
+        const auto sx = studio.view.tickToX (static_cast<double> (sigs.barStart (p.bar)));
+        if (x >= sx - 3 && x <= sx + 40)
+            best = &p;
+    }
+    return best;
+}
+
+int Ruler::nearestBar (double x) const
+{
+    const auto& sigs = studio.model().signatures;
+    const auto at = sigs.barAt (std::max<Ticks> (0, static_cast<Ticks> (studio.view.xToTick (x))));
+    return at.offset * 2 > sigs.barLength (at.bar) ? at.bar + 1 : at.bar;
+}
+
+bool Ruler::setSignatureFromText (int bar, const juce::String& text)
+{
+    const auto numerator = text.upToFirstOccurrenceOf ("/", false, false).trim();
+    const auto denominator = text.fromFirstOccurrenceOf ("/", false, false).trim();
+    if (! text.contains ("/") || ! numerator.containsOnly ("0123456789") || ! denominator.containsOnly ("0123456789") || numerator.isEmpty()
+        || denominator.isEmpty())
+    {
+        studio.setStatus ("Type a time signature such as 3/4.");
+        return false;
+    }
+    const auto n = numerator.getIntValue(), d = denominator.getIntValue();
+    for (const auto& p : studio.model().signatures.points())
+        if (p.bar == bar)
+            return studio.check (studio.session().setSignaturePoint (p.id, bar, n, d));
+    if (studio.session().addSignaturePoint (bar, n, d))
+    {
+        studio.edited();
+        return true;
+    }
+    studio.setStatus (juce::String (studio.session().lastError()));
+    return false;
 }
 
 std::vector<std::pair<int, double>> Ruler::barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width)
@@ -165,6 +262,50 @@ void Ruler::paint (juce::Graphics& g)
         }
         for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
             drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
+        g.setColour (colour (Token::lineSubtle));
+        g.fillRect (0, tempoTop - 1, getWidth(), 1);
+
+        // Tempo lane: the map as a step graph, a handle and value at each change (W-11).
+        const auto& points = m.tempo.points();
+        juce::Path steps;
+        for (std::size_t i = 0; i < points.size(); ++i)
+        {
+            const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (points[i].pos)));
+            const auto x2 = i + 1 < points.size() ? static_cast<float> (v.tickToX (static_cast<double> (points[i + 1].pos))) : static_cast<float> (getWidth());
+            const auto y = tempoY (points[i].bpm);
+            if (i == 0)
+                steps.startNewSubPath (std::min (x1, 0.0f), y);
+            else
+                steps.lineTo (x1, y);
+            steps.lineTo (x2, y);
+        }
+        g.setColour (colour (Token::accent));
+        g.strokePath (steps, juce::PathStrokeType (1.5f));
+        g.setFont (font (Type::monoSmall));
+        for (const auto& p : points)
+        {
+            const auto x = static_cast<float> (v.tickToX (static_cast<double> (p.pos)));
+            const auto y = tempoY (p.bpm);
+            g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::accent));
+            g.fillRect (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ x, y }));
+            g.setColour (colour (Token::textDim));
+            const auto above = y - static_cast<float> (tempoTop) > 16.0f;
+            g.drawText (bpmText (p.bpm), juce::roundToInt (x) + 6, juce::roundToInt (above ? y - 15.0f : y + 2.0f), 56, 13, juce::Justification::left);
+        }
+        g.setColour (colour (Token::lineSubtle));
+        g.fillRect (0, signatureTop - 1, getWidth(), 1);
+
+        // Signature lane: the meter at each change, at its bar start.
+        g.setFont (font (Type::monoValue));
+        for (const auto& p : m.signatures.points())
+        {
+            const auto x = static_cast<float> (v.tickToX (static_cast<double> (m.signatures.barStart (p.bar))));
+            g.setColour (colour (Token::border));
+            g.fillRect (x, static_cast<float> (signatureTop), 1.0f, static_cast<float> (signatureLane));
+            g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::text));
+            g.drawText (juce::String (p.numerator) + "/" + juce::String (p.denominator), juce::roundToInt (x) + space::half, signatureTop, 40, signatureLane,
+                        juce::Justification::centredLeft);
+        }
         g.setColour (colour (Token::border));
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
     }
@@ -205,6 +346,39 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         dragFrom = t;
         return;
     }
+    if (p.y >= signatureTop && studio.layout.globalTracks)
+    {
+        if (const auto* sig = signatureAt (p.x); sig != nullptr && mods.isPopupMenu())
+            studio.check (studio.session().deleteSignaturePoint (sig->id));
+        return;
+    }
+    if (p.y >= tempoTop && studio.layout.globalTracks)
+    {
+        if (const auto* point = tempoPointAt (p.x))
+        {
+            if (mods.isPopupMenu())
+            {
+                studio.check (studio.session().deleteTempoPoint (point->id));
+                return;
+            }
+            dragRange = tempoRange();
+            drag = Drag::tempo;
+            draggedTempo = point->id;
+            dragFrom = point->pos;
+            dragBpm = point->bpm;
+            dragStart = p;
+            studio.session().beginGesture ("Tempo Change");
+            return;
+        }
+        if (mods.isCommandDown() || studio.tool == Tool::pencil)
+        {
+            if (studio.session().addTempoPoint (t, bpmAtY (p.y)))
+                studio.edited();
+            else
+                studio.setStatus (juce::String (studio.session().lastError()));
+        }
+        return;
+    }
     if (p.y >= rulerHeight && studio.layout.globalTracks)
     {
         if (const auto* c = commentAt (p))
@@ -242,13 +416,25 @@ void Ruler::pointerDrag (juce::Point<float> p)
             break;
         case Drag::playhead: studio.locate (t); break;
         case Drag::marker: studio.check (studio.session().moveMarker (draggedMarker, t)); break;
+        case Drag::tempo:
+        {
+            // Vertical: BPM in 0.01 steps over the lane's range at the drag start; horizontal (past a few
+            // pixels) moves the change, except the first, which stays at the start (W-11 steps 2-3).
+            const auto [lo, hi] = dragRange;
+            const auto perPixel = (hi - lo) / static_cast<double> (tempoLane - 10);
+            const auto bpm = std::clamp (std::round ((dragBpm - static_cast<double> (p.y - dragStart.y) * perPixel) * 100.0) / 100.0, TempoMap::minBpm,
+                                         TempoMap::maxBpm);
+            const auto pos = draggedTempo == "initial" || std::abs (p.x - dragStart.x) < 4.0f ? dragFrom : std::max<Ticks> (1, t);
+            studio.check (studio.session().setTempoPoint (draggedTempo, pos, bpm));
+            break;
+        }
         case Drag::none: break;
     }
 }
 
 void Ruler::pointerUp()
 {
-    if (drag == Drag::marker)
+    if (drag == Drag::marker || drag == Drag::tempo)
     {
         studio.session().endGesture();
         studio.edited();
@@ -270,6 +456,27 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (e.position.y < rulerHeight || ! studio.layout.globalTracks)
         return;
+    if (e.position.y >= signatureTop)
+    {
+        const auto* sig = signatureAt (e.position.x);
+        const auto bar = sig != nullptr ? sig->bar : nearestBar (e.position.x);
+        const auto& now = studio.model().signatures.signatureAtBar (bar);
+        askForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
+                    [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+        return;
+    }
+    if (e.position.y >= tempoTop)
+    {
+        if (const auto* point = tempoPointAt (e.position.x))
+        {
+            const auto id = point->id;
+            const auto pos = point->pos;
+            askForText ("Tempo (BPM)", bpmText (point->bpm), [this, id, pos] (juce::String text) {
+                studio.check (studio.session().setTempoPoint (id, pos, std::round (text.getDoubleValue() * 100.0) / 100.0));
+            });
+        }
+        return;
+    }
     if (const auto* marker = markerAt (e.position.x))
     {
         const auto id = marker->id;
@@ -1908,6 +2115,17 @@ void TracksArea::paint (juce::Graphics& g)
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::caption));
     g.drawText (captionText ("Tracks"), corner.withHeight (Ruler::rulerHeight).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
+    if (studio.layout.globalTracks)
+    {
+        // The global tracks' names, level with their lanes.
+        g.setFont (font (Type::small));
+        const auto label = [&] (const char* text, int top, int height) {
+            g.drawText (text, corner.withY (top).withHeight (height).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
+        };
+        label ("Markers", Ruler::rulerHeight, Ruler::markerLane);
+        label ("Tempo", Ruler::tempoTop, Ruler::tempoLane);
+        label ("Signature", Ruler::signatureTop, Ruler::signatureLane);
+    }
     g.setColour (colour (Token::border));
     g.fillRect (corner.withTop (corner.getBottom() - 1));
 }

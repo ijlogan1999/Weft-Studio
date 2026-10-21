@@ -10,7 +10,7 @@
 
 namespace weft::ui
 {
-/** Ruler, cycle strip and marker lane, sharing the timeline's horizontal mapping. */
+/** Ruler, cycle strip and the global tracks (marker, tempo and signature lanes), sharing the timeline's horizontal mapping. */
 class Ruler final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -21,8 +21,9 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24;
-    int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane : 0); }
+    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24, tempoLane = 40, signatureLane = 20;
+    static constexpr int tempoTop = rulerHeight + markerLane, signatureTop = tempoTop + tempoLane;
+    int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane + tempoLane + signatureLane : 0); }
 
     /** Bar numbers (1-based) and their x, thinned so labels don't collide (AT-ARR-1). */
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
@@ -32,17 +33,33 @@ public:
     juce::Rectangle<float> pinBounds (const model::Comment& thread) const;
     const model::Comment* commentAt (juce::Point<float> p) const;
 
+    /** Tempo lane (W-11): a step graph over a range that fits the map's tempos (frozen while a point is dragged). */
+    std::pair<double, double> tempoRange() const;
+    float tempoY (double bpm) const;
+    double bpmAtY (float y) const;
+    /** The tempo change drawn at x, if any. */
+    const TempoPoint* tempoPointAt (double x) const;
+    /** Signature lane: the change whose label is at x, and the bar whose start is nearest x (0-based). */
+    const SignaturePoint* signatureAt (double x) const;
+    int nearestBar (double x) const;
+    /** Sets the time signature at a 0-based bar from text such as "3/4" (W-11 step 4). */
+    bool setSignatureFromText (int bar, const juce::String& text);
+
     /** Pointer actions, also used by tests: click in the ruler moves the playhead; in the cycle strip drags the cycle;
-        on a marker jumps to it (AT-ARR-21). */
+        on a marker jumps to it (AT-ARR-21). In the tempo lane Ctrl+click (or the pencil) adds a change, dragging a point
+        changes its BPM (vertical) and position (horizontal), right-click deletes; right-click deletes a signature change. */
     void pointerDown (juce::Point<float> p, juce::ModifierKeys mods);
     void pointerDrag (juce::Point<float> p);
     void pointerUp();
 
 private:
     Studio& studio;
-    enum class Drag { none, cycle, playhead, marker } drag = Drag::none;
+    enum class Drag { none, cycle, playhead, marker, tempo } drag = Drag::none;
     Ticks dragFrom = 0;
-    Id draggedMarker;
+    Id draggedMarker, draggedTempo;
+    double dragBpm = 0;
+    juce::Point<float> dragStart;
+    std::pair<double, double> dragRange;
 };
 
 class TrackHeader final : public juce::Component, public juce::SettableTooltipClient
