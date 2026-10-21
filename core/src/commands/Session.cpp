@@ -261,6 +261,13 @@ bool Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
             r.afterOpId = doc.opId (r.path).value_or ("");
             if (! r.restoresOpId.empty() && ! r.afterOpId.empty())
                 opIdAliases[r.restoresOpId] = r.afterOpId;
+            for (const auto& [rel, oldOp] : r.restoresNestedOpIds)
+            {
+                auto full = r.path;
+                full.insert (full.end(), rel.begin(), rel.end());
+                if (const auto op = doc.opId (full); op && *op != oldOp)
+                    opIdAliases[oldOp] = *op;
+            }
         }
     if (onLocalChange || ! changeListeners.empty())
         if (auto change = doc.lastLocalChange())
@@ -422,7 +429,10 @@ UndoResult Session::invert (std::vector<Txn>& from, std::vector<Txn>& to, std::s
                     const auto count = out.records.size();
                     w.put (r.path, *r.before);
                     if (out.records.size() > count && r.before->isContainer())
+                    {
                         out.records.back().restoresOpId = r.beforeOpId;
+                        out.records.back().restoresNestedOpIds = r.beforeNestedOpIds;
+                    }
                 }
                 else
                     w.remove (r.path);
