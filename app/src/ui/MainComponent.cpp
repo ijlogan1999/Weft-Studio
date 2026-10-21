@@ -231,6 +231,11 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
             window->setName (title);
     }
+    const auto bannerText = studio.lostDeviceName().empty()
+                                ? juce::String ("No audio device: playback is silent and recording is off.")
+                                : "\"" + juce::String (studio.lostDeviceName()) + "\" stopped: playback is silent and recording is off until it's back.";
+    if (banner.message.getText() != bannerText)
+        banner.message.setText (bannerText, juce::dontSendNotification);
     if (banner.isVisible() == studio.audioRunning())
     {
         banner.setVisible (! studio.audioRunning());

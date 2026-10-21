@@ -111,6 +111,10 @@ public:
     const std::filesystem::path& projectRoot() const noexcept { return folder->root(); }
     std::filesystem::path mediaDir() const { return folder->mediaDir(); }
     bool audioRunning() const noexcept { return audioOk; }
+    /** The device that stopped by itself (unplugged), while Weft runs without sound and tries to
+        reopen it every reconnectIntervalMs; empty otherwise. */
+    const std::string& lostDeviceName() const noexcept { return lostDevice; }
+    double reconnectIntervalMs = 2000.0;
     media::DecoderSet decoders;
 
     // View state ---------------------------------------------------------------
@@ -529,6 +533,11 @@ private:
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
     std::int64_t locatedFrame = -1;
     bool audioOk = false;
+    engine::DeviceConfig deviceConfig; // what the current device was opened with
+    std::string lostDevice;
+    double lastReconnectMs = 0;
+    /** Notices a device that stopped by itself, and reopens it once it's back. */
+    void checkDevice();
     void startSilentClock();
     std::unique_ptr<engine::NullDevice> silentClock; // drives the engine in No-audio mode
     double silentClockMs = 0;

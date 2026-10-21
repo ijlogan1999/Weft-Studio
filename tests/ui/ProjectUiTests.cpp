@@ -61,6 +61,25 @@ public:
     engine::DeviceConfig config() const override { return {}; }
 };
 
+/** A device that can be unplugged: it fails while unplugged and opens again once plugged back in. */
+class PluggableDevice final : public engine::AudioDevice
+{
+public:
+    explicit PluggableDevice (std::shared_ptr<bool> pluggedIn) : plugged (std::move (pluggedIn)) {}
+    std::string name() const override { return "USB Interface"; }
+    bool open (const engine::DeviceConfig& c) override { return *plugged && inner.open (c); }
+    void close() override { inner.close(); }
+    bool start (engine::AudioCallback& cb) override { return inner.start (cb); }
+    void stop() override { inner.stop(); }
+    bool isRunning() const override { return inner.isRunning(); }
+    engine::DeviceConfig config() const override { return inner.config(); }
+    bool failed() const override { return ! *plugged; }
+
+private:
+    std::shared_ptr<bool> plugged;
+    engine::NullDevice inner;
+};
+
 /** The machine as the tests see it: one null driver with one device each way and a MIDI input. */
 class TestDevices final : public DeviceProvider
 {
@@ -523,6 +542,40 @@ TEST_CASE ("Starting with no audio device shows the No-audio banner", "[UI][audi
     CHECK_FALSE (studio.audioRunning());
     CHECK (main.noAudioBannerShown());
     CHECK (studio.status == "No audio device: Weft is running without sound.");
+}
+
+TEST_CASE ("Unplugging the audio device mid-session falls back to No-audio mode and reconnects", "[UI][audio]")
+{
+    TempFolder folder;
+    auto plugged = std::make_shared<bool> (true);
+    Studio studio (std::make_unique<PluggableDevice> (plugged), folder.path / "projects");
+    MainComponent main (studio, juce::File (pathText (folder.path)));
+    main.setSize (1200, 800);
+    studio.reconnectIntervalMs = 0;
+    REQUIRE (studio.audioRunning());
+    CHECK_FALSE (main.noAudioBannerShown());
+    CHECK (studio.perform (Cmd::playStop));
+
+    *plugged = false;
+    studio.tick();
+    studio.dispatchPendingMessages();
+    CHECK_FALSE (studio.audioRunning());
+    CHECK (studio.lostDeviceName() == "USB Interface");
+    CHECK (studio.status.contains ("\"USB Interface\" stopped"));
+    CHECK (main.noAudioBannerShown());
+    CHECK_FALSE (studio.perform (Cmd::record)); // recording is off until it's back
+
+    studio.tick(); // still unplugged: keeps trying
+    CHECK_FALSE (studio.audioRunning());
+    CHECK (studio.lostDeviceName() == "USB Interface");
+
+    *plugged = true;
+    studio.tick();
+    studio.dispatchPendingMessages();
+    CHECK (studio.audioRunning());
+    CHECK (studio.lostDeviceName().empty());
+    CHECK (studio.status.contains ("is back"));
+    CHECK_FALSE (main.noAudioBannerShown());
 }
 
 // Run with: weft_ui_tests "[.screenshot-m9]" (writes the PNGs into WEFT_SCREENSHOT_DIR or the working folder).

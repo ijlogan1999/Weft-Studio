@@ -68,7 +68,7 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
 // Studio -------------------------------------------------------------------------------
 
 Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& projectParent_, engine::DeviceConfig config)
-    : audioDevice (std::move (device))
+    : audioDevice (std::move (device)), deviceConfig (config)
 {
     eng = std::make_unique<engine::Engine> (pool, rack);
     live = std::make_unique<engine::LiveAutomation> (*eng);
@@ -315,6 +315,7 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 
 void Studio::tick()
 {
+    checkDevice();
     if (silentClock != nullptr)
     {
         // No-audio mode: the engine runs on the message thread, in step with the system clock.
@@ -1276,11 +1277,48 @@ bool Studio::setAudioDevice (std::unique_ptr<engine::AudioDevice> device, const 
         silentClock.reset();
     }
     audioDevice = std::move (device);
+    deviceConfig = config;
+    lostDevice.clear();
     audioOk = audioDevice != nullptr && audioDevice->open (config) && audioDevice->start (*eng);
     if (! audioOk)
         startSilentClock();
     setStatus (audioOk ? "Audio: " + juce::String (audioDevice->name()) : "No audio device: Weft is running without sound.");
     return audioOk;
+}
+
+void Studio::checkDevice()
+{
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    if (audioOk && audioDevice != nullptr && audioDevice->failed())
+    {
+        // Unplugged or failed mid-session: stop, keep any recording (the silent clock finishes it),
+        // carry on in No-audio mode, and reopen the same device when it's back.
+        lostDevice = audioDevice->name();
+        eng->stop();
+        audioDevice->stop();
+        audioDevice->close();
+        audioOk = false;
+        startSilentClock();
+        lastReconnectMs = now;
+        setStatus ("The audio device \"" + juce::String (lostDevice) + "\" stopped. Weft is running without sound until it's back.");
+        return;
+    }
+    if (lostDevice.empty() || audioDevice == nullptr || now - lastReconnectMs < reconnectIntervalMs)
+        return;
+    lastReconnectMs = now;
+    if (! audioDevice->open (deviceConfig))
+        return;
+    silentClock->stop();
+    silentClock.reset();
+    audioOk = audioDevice->start (*eng);
+    if (! audioOk)
+    {
+        audioDevice->close();
+        startSilentClock();
+        return;
+    }
+    lostDevice.clear();
+    setStatus ("Audio: " + juce::String (audioDevice->name()) + " is back.");
 }
 
 void Studio::startSilentClock()
