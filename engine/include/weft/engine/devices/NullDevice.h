@@ -39,6 +39,9 @@ public:
     bool start (AudioCallback& callback) override;
     void stop() override;
     bool isRunning() const override { return callback != nullptr; }
+    bool failed() const override { return hasFailed; }
+    /** Tests: behave like a device that was unplugged. */
+    void simulateFailure() noexcept { hasFailed = true; }
     DeviceConfig config() const override { return cfg; }
 
     void setInputGenerator (InputGenerator generator) { inputGenerator = std::move (generator); }
@@ -73,6 +76,7 @@ private:
     AudioCallback* callback = nullptr;
     InputGenerator inputGenerator;
     bool simulateDeadlines = false;
+    bool hasFailed = false;
 
     std::vector<std::vector<float>> inputBuffers, outputBuffers;
     std::vector<const float*> inputPointers;

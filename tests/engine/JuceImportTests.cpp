@@ -1,10 +1,14 @@
-// The MP3 part of AT-ARR-25: the platform decoders read compressed files for import.
+// The MP3 part of AT-ARR-25: compressed files decode for import, and MP3s land on time.
 
 #include "EngineFixtures.h"
 
 #include "weft/engine/arrange/Import.h"
 #include "weft/engine/media/JuceDecoders.h"
 #include "weft/media/Hash.h"
+
+#include <weft_codec.h>
+
+#include <array>
 
 using namespace weft;
 using namespace weft::test;
@@ -44,4 +48,36 @@ TEST_CASE ("AT-ARR-25: a 44.1 kHz stereo MP3 dropped at bar 3 becomes a 48 kHz W
     for (std::size_t i = 10000; i < 30000; ++i)
         peak = std::max (peak, std::abs (audio.channels[0][i]));
     CHECK (peak > 0.05f);
+}
+
+TEST_CASE ("An imported MP3 starts on time: the encoder delay and padding are trimmed", "[E][import]")
+{
+    // A click at 0.5 s in 2 s of 48 kHz stereo, encoded by our own MP3 writer.
+    Rig rig;
+    const auto mp3 = rig.folder.path / "click.mp3";
+    std::vector<float> left (96000, 0.0f);
+    for (int i = 0; i < 48; ++i)
+        left[static_cast<std::size_t> (24000 + i)] = 0.8f;
+    const auto path = mp3.u8string();
+    WeftMp3Settings s {};
+    s.sample_rate = 48000;
+    s.channels = 2;
+    s.bitrate_kbps = 320;
+    std::array<char, 256> err {};
+    auto* enc = weft_mp3_open (reinterpret_cast<const char*> (path.c_str()), &s, err.data(), err.size());
+    REQUIRE (enc != nullptr);
+    REQUIRE (weft_mp3_write (enc, left.data(), left.data(), left.size(), err.data(), err.size()) == 0);
+    REQUIRE (weft_mp3_finish (enc, err.data(), err.size()) == 0);
+
+    const auto track = rig.session.createTrack (TrackKind::audio, "Click", 2).value();
+    const auto result = engine::importFiles (rig.session, rig.media, rig.folder.path / "Media", engine::importDecoders(), { mp3 }, { 0, track });
+    INFO (result.message);
+    REQUIRE (result.regions.size() == 1);
+    const auto& r = *rig.session.model().region (result.regions[0]);
+    CHECK (r.length == 96000);
+    const auto audio = rig.regionFile (r.id);
+    std::size_t onset = 0;
+    while (onset < audio.channels[0].size() && std::abs (audio.channels[0][onset]) < 0.3f)
+        ++onset;
+    CHECK (std::abs (static_cast<std::int64_t> (onset) - 24000) < 10);
 }

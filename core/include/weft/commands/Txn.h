@@ -39,6 +39,10 @@ struct TxnRecord
     std::string afterOpId;       // set with container after: op id of the object written
     std::string beforeOpId;      // set with container before: op id of the object replaced or removed
     std::string restoresOpId;    // undo/redo: this write re-creates the object that had this op id
+    /** Set with container before: op ids of the objects nested in it, by path relative to it.
+        Re-creating the container gives them new op ids too, which undo/redo must alias. */
+    std::vector<std::pair<Path, std::string>> beforeNestedOpIds;
+    std::vector<std::pair<Path, std::string>> restoresNestedOpIds; // undo/redo: as restoresOpId, for nested objects
     std::string elementId;       // list
     std::size_t index = 0;       // list: index at the time of the write
 };
@@ -72,6 +76,8 @@ public:
 
 private:
     void recordSet (const Path& p, std::optional<Value> before, std::optional<Value> after, const std::string& beforeOpId);
+    /** Op ids of the containers nested in the container at p, by relative path. */
+    std::vector<std::pair<Path, std::string>> nestedOpIds (const Path& p, const Value& container) const;
 
     doc::Document& document;
     Txn& txn;

@@ -46,5 +46,8 @@ public:
     virtual void stop() = 0;
     virtual bool isRunning() const = 0;
     virtual DeviceConfig config() const = 0;
+    /** The device stopped by itself after start() (unplugged, or the driver failed). It stays
+        failed until the next open(). Polled on the message thread. */
+    virtual bool failed() const { return false; }
 };
 } // namespace weft::engine

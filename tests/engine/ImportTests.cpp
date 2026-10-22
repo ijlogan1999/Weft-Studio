@@ -114,6 +114,21 @@ TEST_CASE ("AT-ARR-25: dropped audio is converted, hashed and placed; unsupporte
         CHECK (some.regions.size() == 1);
         CHECK (some.message == "Couldn't import notes.txt: unsupported or damaged file.");
     }
+    SECTION ("a file that isn't there is reported as missing, not as damaged")
+    {
+        const auto result = engine::importFiles (rig.session, rig.media, mediaDir, decoders,
+                                                 { drops.path / "gone.wav", writeSine (drops.path, "ok.wav", 48000, 1, 0.2) }, { 0, {} });
+        CHECK (result.regions.size() == 1);
+        CHECK (result.rejected == std::vector<std::string> { "gone.wav" });
+        CHECK (result.message == "Couldn't find gone.wav.");
+    }
+    SECTION ("a multichannel file keeps two channels and says so (D-ARR-7)")
+    {
+        const auto result = engine::importFiles (rig.session, rig.media, mediaDir, decoders, { writeSine (drops.path, "surround.wav", 48000, 6, 0.2) }, { 0, {} });
+        REQUIRE (result.regions.size() == 1);
+        CHECK (rig.session.model().mediaRef (rig.session.model().region (result.regions[0])->audio.media)->channels == 2);
+        CHECK (result.message == "Kept the first two channels of surround.wav.");
+    }
 }
 
 TEST_CASE ("AT-ARR-26: a type 1 MIDI file makes instrument tracks; an empty project takes its tempo (D-AT-1)", "[E][import][AT-ARR-26]")

@@ -10,7 +10,7 @@
 
 namespace weft::ui
 {
-/** Ruler, cycle strip and marker lane, sharing the timeline's horizontal mapping. */
+/** Ruler, cycle strip and the global tracks (marker, tempo and signature lanes), sharing the timeline's horizontal mapping. */
 class Ruler final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -21,8 +21,9 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24;
-    int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane : 0); }
+    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24, tempoLane = 40, signatureLane = 20;
+    static constexpr int tempoTop = rulerHeight + markerLane, signatureTop = tempoTop + tempoLane;
+    int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane + tempoLane + signatureLane : 0); }
 
     /** Bar numbers (1-based) and their x, thinned so labels don't collide (AT-ARR-1). */
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
@@ -32,17 +33,34 @@ public:
     juce::Rectangle<float> pinBounds (const model::Comment& thread) const;
     const model::Comment* commentAt (juce::Point<float> p) const;
 
+    /** Tempo lane (W-11): a step graph over a range that fits the map's tempos (frozen while a point is dragged). */
+    std::pair<double, double> tempoRange() const;
+    float tempoY (double bpm) const;
+    double bpmAtY (float y) const;
+    /** The tempo change drawn at x, if any. */
+    const TempoPoint* tempoPointAt (double x) const;
+    /** Signature lane: the change whose label is at x, and the bar whose start is nearest x (0-based). */
+    const SignaturePoint* signatureAt (double x) const;
+    int nearestBar (double x) const;
+    /** Sets the time signature at a 0-based bar from text such as "3/4" (W-11 step 4). */
+    bool setSignatureFromText (int bar, const juce::String& text);
+
     /** Pointer actions, also used by tests: click in the ruler moves the playhead; in the cycle strip drags the cycle;
-        on a marker jumps to it (AT-ARR-21). */
+        on a marker jumps to it (AT-ARR-21). With Autopunch on, dragging an end of the punch range in the strip moves it and
+        Shift+drag sets a new one (W-1d). In the tempo lane Ctrl+click (or the pencil) adds a change, dragging a point
+        changes its BPM (vertical) and position (horizontal), right-click deletes; right-click deletes a signature change. */
     void pointerDown (juce::Point<float> p, juce::ModifierKeys mods);
     void pointerDrag (juce::Point<float> p);
     void pointerUp();
 
 private:
     Studio& studio;
-    enum class Drag { none, cycle, playhead, marker } drag = Drag::none;
+    enum class Drag { none, cycle, playhead, marker, tempo, punchStart, punchEnd, punch } drag = Drag::none;
     Ticks dragFrom = 0;
-    Id draggedMarker;
+    Id draggedMarker, draggedTempo;
+    double dragBpm = 0;
+    juce::Point<float> dragStart;
+    std::pair<double, double> dragRange;
 };
 
 class TrackHeader final : public juce::Component, public juce::SettableTooltipClient
@@ -53,6 +71,7 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void refresh();
 
@@ -61,15 +80,26 @@ public:
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
     juce::ShapeButton lock { "Lock", {}, {}, {} };
-    /** Right-click menu: Lock/Unlock, Break Lock (the Owner), Add Comment. */
+    /** Right-click menu: Rename, Duplicate, Color, Move, Delete, Lock/Unlock, Break Lock (the Owner), Add Comment. */
     juce::PopupMenu menu() const;
     void pickMenu (int item);
     enum MenuItem
     {
         itemLock = 1,
         itemBreakLock,
-        itemComment
+        itemComment,
+        itemRename,
+        itemDuplicate,
+        itemDuplicateWithRegions,
+        itemMoveUp,
+        itemMoveDown,
+        itemDelete,
+        itemColour = 100 // + 1 .. paletteSize
     };
+    /** The header the pointer is over while this one is dragged to reorder; nullptr when not dragging. */
+    const TrackHeader* dropTarget() const noexcept { return reorderOver; }
+    /** Where a dragged header would land on this one: -1 above it, 1 below it, 0 not a drop target. */
+    int dropMark = 0;
     // Automation view (W-8): the mode, and per lane the parameter selector and "+".
     juce::ComboBox mode;
     std::vector<std::unique_ptr<juce::ComboBox>> parameters;
@@ -86,6 +116,10 @@ private:
     std::vector<std::string> shownChoices; // what the parameter selectors were built from
     int number;
     int resizeFrom = -1;
+    bool reordering = false;
+    TrackHeader* reorderOver = nullptr;
+    TrackHeader* headerAt (juce::Point<int> inParent) const;
+    void showDropTarget (TrackHeader* over);
 };
 
 /** The lanes and regions. Pointer handling goes through pointerDown/Drag/Up so tests can drive it. */
@@ -106,9 +140,19 @@ public:
     /** A thread's pin on its track's lane, when it's pinned to a track that's shown (04 §9.3). */
     std::optional<juce::Rectangle<float>> pinBounds (const model::Comment& thread) const;
     const model::Comment* commentPinAt (juce::Point<float> p) const;
-    /** Right-click on the timeline or a region: Add Comment (04 §9.3). */
+    /** Right-click on a region: edit commands, Split Here, Color and Add Comment; on an empty lane: Paste,
+        Set/Clear Project End and Add Comment (04 §9.3). The region is selected first if it wasn't. */
     juce::PopupMenu contextMenu (juce::Point<float> p) const;
     void pickContext (int item, juce::Point<float> p);
+    enum ContextItem
+    {
+        contextComment = 1,
+        contextSplitHere,
+        contextSetEnd,
+        contextClearEnd,
+        contextTrackColour = 1000, // regions back to their track's colour; + 1 .. paletteSize: a swatch
+        contextCommand = 2000      // + Cmd + 1
+    };
     /** Where a collaborator's pointer is drawn (its lane's centre), when it's on a track (AT-COL-11). */
     std::optional<juce::Point<float>> collaboratorPointer (const std::string& clientId) const;
 
@@ -211,6 +255,8 @@ public:
     Ruler& ruler() noexcept { return rulerComponent; }
     Timeline& timeline() noexcept { return lanes; }
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
+    /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
+    void followPlayhead();
 
     static constexpr int headerWidth = 208;
 

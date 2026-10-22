@@ -257,6 +257,25 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
             }
             infoChanged = true;
         }
+        else if (c == keys::midiSequences && p.size() >= 4 && m.midiSequences.contains (p[1].key))
+        {
+            // One note or controller event (Session::refreshFor): re-read just that.
+            auto seq = std::make_shared<MidiSequence> (*m.midiSequences.at (p[1].key));
+            const auto& eventId = p[3].key;
+            const auto v = document.get ({ p[0], p[1], p[2], p[3] });
+            if (p[2].key == "notes")
+            {
+                if (v && v->isMap())
+                    seq->notes.insert_or_assign (eventId, Note::fromValue (eventId, *v));
+                else
+                    seq->notes.erase (eventId);
+            }
+            else if (v && v->isMap())
+                seq->controllers.insert_or_assign (eventId, CcEvent::fromValue (eventId, *v));
+            else
+                seq->controllers.erase (eventId);
+            m.midiSequences[p[1].key] = std::move (seq);
+        }
         else
         {
             const auto& id = p[1].key;

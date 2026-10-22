@@ -68,7 +68,7 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
 // Studio -------------------------------------------------------------------------------
 
 Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& projectParent_, engine::DeviceConfig config)
-    : audioDevice (std::move (device))
+    : audioDevice (std::move (device)), deviceConfig (config)
 {
     eng = std::make_unique<engine::Engine> (pool, rack);
     live = std::make_unique<engine::LiveAutomation> (*eng);
@@ -152,9 +152,51 @@ void Studio::selectTrack (const Id& trackId)
     sendChangeMessage();
 }
 
+bool Studio::moveTrackTo (const Id& trackId, std::size_t index)
+{
+    // `index` is the position among the tracks as shown; the stored order can also hold ids the
+    // projection hides (D-DM-18), so place the track before the shown track it lands on.
+    const auto& shown = model().trackOrder;
+    std::vector<Id> others;
+    for (const auto& id : shown)
+        if (id != trackId)
+            others.push_back (id);
+    if (others.size() == shown.size())
+        return false;
+    auto stored = model().storedTrackOrder;
+    stored.erase (std::remove (stored.begin(), stored.end(), trackId), stored.end());
+    auto at = stored.size();
+    if (index < others.size())
+        at = static_cast<std::size_t> (std::find (stored.begin(), stored.end(), others[index]) - stored.begin());
+    if (std::find (shown.begin(), shown.end(), trackId) - shown.begin() == static_cast<std::ptrdiff_t> (std::min (index, others.size())))
+        return false; // already there
+    const bool ok = check (sess->moveTrack (trackId, at));
+    edited();
+    return ok;
+}
+
 void Studio::toggleArm (const Id& trackId)
 {
     local.toggleArm (model(), trackId);
+    edited();
+}
+
+void Studio::toggleMute (const Id& trackId)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr)
+        return;
+    model::AutomationTarget mutes;
+    mutes.kind = "mute";
+    if (automationLive (trackId, mutes))
+    {
+        // A click is a touch and a release: Latch and Write hold it until stop.
+        const auto now = automationValue (trackId, mutes).value_or (t->mute ? 1.0 : 0.0);
+        touchControl (trackId, mutes, automation::toMute (now) ? 0.0 : 1.0);
+        releaseControl (trackId, mutes);
+        return;
+    }
+    check (session().setTrackMute (trackId, ! t->mute));
     edited();
 }
 
@@ -315,6 +357,7 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 
 void Studio::tick()
 {
+    checkDevice();
     if (silentClock != nullptr)
     {
         // No-audio mode: the engine runs on the message thread, in step with the system clock.
@@ -624,6 +667,8 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
+        case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
+        case Cmd::moveTrackDown: case Cmd::pause:
             break;
     }
     return std::nullopt;
@@ -653,6 +698,14 @@ bool Studio::perform (Cmd command)
                 eng->play (playhead());
             locatedAt.reset();
             break;
+        case Cmd::pause:
+            // Stops where it is (F-TRN-3, D-INV-6); pressed again, plays on from there.
+            if (playing())
+                eng->pause();
+            else
+                eng->play (playhead());
+            locatedAt.reset();
+            break;
         case Cmd::record:
         {
             if (recording())
@@ -672,12 +725,26 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::cycle: return check (s.setCycle (! m.info.cycle.enabled, m.info.cycle.start, m.info.cycle.end));
-        case Cmd::autopunch: return check (s.setPunch (! m.info.punch.enabled, m.info.punch.start, m.info.punch.end));
+        case Cmd::autopunch:
+        {
+            if (m.info.punch.enabled)
+                return check (s.setPunch (false, m.info.punch.start, m.info.punch.end));
+            // D-W1-9: turning it on places the range at the cycle when the cycle is on, else 4 bars from the bar at the playhead.
+            if (m.info.cycle.enabled)
+                return check (s.setPunch (true, m.info.cycle.start, m.info.cycle.end));
+            const auto bar = m.signatures.barAt (playhead()).bar;
+            return check (s.setPunch (true, m.signatures.barStart (bar), m.signatures.barStart (bar + 4)));
+        }
         case Cmd::metronome:
         {
             auto settings = eng->settings();
             settings.metronomeOn = ! settings.metronomeOn;
             eng->setSettings (settings);
+            // The default only clicks while recording (02 W-1a step 6): say so, or turning it on mid-playback seems to do nothing.
+            if (settings.metronomeOn && settings.metronomeDuring == engine::ClickDuring::record)
+                setStatus ("Click is on while recording. Navigate > Click During changes when it plays.");
+            else
+                setStatus (settings.metronomeOn ? "Click on." : "Click off.");
             break;
         }
         case Cmd::goToStart: locate (0); break;
@@ -772,8 +839,23 @@ bool Studio::perform (Cmd command)
             for (const auto& id : ids)
                 if (const auto* r = m.region (id))
                 {
+                    // D-ARR-8: up to the next region on the track, else to the cycle end, else 3 repeats.
                     const auto end = static_cast<Ticks> (std::ceil (m.regionEndTick (*r)));
-                    if (! check (s.setRegionLoop (id, r->loop ? std::nullopt : std::optional<Ticks> (end + (end - r->start) * 3))))
+                    auto until = end + (end - r->start) * 3;
+                    std::optional<Ticks> next;
+                    for (const auto* other : m.regionsOnTrack (r->trackId))
+                        if (other->id != id && other->start >= end && (! next || other->start < *next))
+                            next = other->start;
+                    if (next)
+                        until = *next;
+                    else if (m.info.cycle.enabled && m.info.cycle.end > end)
+                        until = m.info.cycle.end;
+                    if (! r->loop && until <= end)
+                    {
+                        setStatus ("There's no room to loop \"" + juce::String (r->name) + "\": the next region starts right after it.");
+                        continue;
+                    }
+                    if (! check (s.setRegionLoop (id, r->loop ? std::nullopt : std::optional<Ticks> (until))))
                         return false;
                 }
             break;
@@ -841,9 +923,45 @@ bool Studio::perform (Cmd command)
         case Cmd::signIn:
         case Cmd::addComment:
         case Cmd::saveVersion:
+        case Cmd::importAudio:
+        case Cmd::quit:
             if (uiCommand)
                 uiCommand (command);
             break;
+        case Cmd::duplicateTrack:
+        case Cmd::duplicateTrackWithRegions:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr || t->kind == model::TrackKind::master)
+            {
+                setStatus ("Select a track to duplicate.");
+                return false;
+            }
+            const auto copy = sess->duplicateTrack (local.selectedTrack, command == Cmd::duplicateTrackWithRegions);
+            if (! copy)
+            {
+                setStatus (juce::String (sess->lastError()));
+                return false;
+            }
+            selectTrack (*copy);
+            edited();
+            break;
+        }
+        case Cmd::moveTrackUp:
+        case Cmd::moveTrackDown:
+        {
+            const auto& order = m.trackOrder;
+            const auto it = std::find (order.begin(), order.end(), local.selectedTrack);
+            if (it == order.end())
+            {
+                setStatus ("Select a track to move.");
+                return false;
+            }
+            const auto at = static_cast<std::size_t> (it - order.begin());
+            if (command == Cmd::moveTrackUp ? at == 0 : at + 1 >= order.size())
+                return false;
+            return moveTrackTo (local.selectedTrack, command == Cmd::moveTrackUp ? at - 1 : at + 1);
+        }
         case Cmd::lockTrack:
             if (local.selectedTrack.empty())
             {
@@ -941,6 +1059,15 @@ engine::ImportOutcome Studio::importFiles (const std::vector<fs::path>& files, e
     status = juce::String (outcome.message);
     edited();
     return outcome;
+}
+
+engine::ImportOutcome Studio::importAtPlayhead (const std::vector<fs::path>& files)
+{
+    engine::DropTarget target;
+    target.at = playhead();
+    if (const auto* t = model().track (local.selectedTrack); t != nullptr && t->kind == model::TrackKind::audio)
+        target.trackId = t->id;
+    return importFiles (files, target);
 }
 
 bool Studio::previewFile (const fs::path& file)
@@ -1152,7 +1279,13 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     resetViewState();
     local.selectedTrack = model().trackOrder.empty() ? Id {} : model().trackOrder.front();
     eng->setProjectFolder (folder->root());
-    eng->setSettings (engine::TransportSettings::fromDefaults (model().info.metronomeDefaults));
+    // The project's metronome defaults; this user's other transport options carry over.
+    auto settings = engine::TransportSettings::fromDefaults (model().info.metronomeDefaults);
+    const auto before = eng->settings();
+    settings.returnToStartOnStop = before.returnToStartOnStop;
+    settings.midiMergeLinear = before.midiMergeLinear;
+    settings.midiMergeCycle = before.midiMergeCycle;
+    eng->setSettings (settings);
     loadProjectMedia();
     syncEngine();
     loadViewState();
@@ -1276,11 +1409,48 @@ bool Studio::setAudioDevice (std::unique_ptr<engine::AudioDevice> device, const 
         silentClock.reset();
     }
     audioDevice = std::move (device);
+    deviceConfig = config;
+    lostDevice.clear();
     audioOk = audioDevice != nullptr && audioDevice->open (config) && audioDevice->start (*eng);
     if (! audioOk)
         startSilentClock();
     setStatus (audioOk ? "Audio: " + juce::String (audioDevice->name()) : "No audio device: Weft is running without sound.");
     return audioOk;
+}
+
+void Studio::checkDevice()
+{
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    if (audioOk && audioDevice != nullptr && audioDevice->failed())
+    {
+        // Unplugged or failed mid-session: stop, keep any recording (the silent clock finishes it),
+        // carry on in No-audio mode, and reopen the same device when it's back.
+        lostDevice = audioDevice->name();
+        eng->stop();
+        audioDevice->stop();
+        audioDevice->close();
+        audioOk = false;
+        startSilentClock();
+        lastReconnectMs = now;
+        setStatus ("The audio device \"" + juce::String (lostDevice) + "\" stopped. Weft is running without sound until it's back.");
+        return;
+    }
+    if (lostDevice.empty() || audioDevice == nullptr || now - lastReconnectMs < reconnectIntervalMs)
+        return;
+    lastReconnectMs = now;
+    if (! audioDevice->open (deviceConfig))
+        return;
+    silentClock->stop();
+    silentClock.reset();
+    audioOk = audioDevice->start (*eng);
+    if (! audioOk)
+    {
+        audioDevice->close();
+        startSilentClock();
+        return;
+    }
+    lostDevice.clear();
+    setStatus ("Audio: " + juce::String (audioDevice->name()) + " is back.");
 }
 
 void Studio::startSilentClock()
@@ -1998,18 +2168,15 @@ void Studio::setOnline (bool online)
 
 bool Studio::changesDocument (Cmd command)
 {
-    switch (command)
-    {
-        case Cmd::record: case Cmd::newTrack: case Cmd::undo: case Cmd::redo: case Cmd::cut: case Cmd::paste:
-        case Cmd::deleteSelection: case Cmd::split: case Cmd::join: case Cmd::muteRegions: case Cmd::nudgeLeft:
-        case Cmd::nudgeRight: case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::addMarker:
-        case Cmd::muteNotes: case Cmd::quantize: case Cmd::transposeUp: case Cmd::transposeDown: case Cmd::octaveUp:
-        case Cmd::octaveDown: case Cmd::notesLeft: case Cmd::notesRight: case Cmd::applyQuantize: case Cmd::deleteTrack:
-        case Cmd::newBus: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
-            return true;
-        default:
-            return false;
-    }
+    static constexpr Cmd editing[] = {
+        Cmd::record, Cmd::newTrack, Cmd::undo, Cmd::redo, Cmd::cut, Cmd::paste, Cmd::deleteSelection, Cmd::split,
+        Cmd::join, Cmd::muteRegions, Cmd::nudgeLeft, Cmd::nudgeRight, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion,
+        Cmd::addMarker, Cmd::muteNotes, Cmd::quantize, Cmd::transposeUp, Cmd::transposeDown, Cmd::octaveUp,
+        Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
+        Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
+        Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown,
+    };
+    return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }
 
 juce::String Studio::readOnlyReason() const

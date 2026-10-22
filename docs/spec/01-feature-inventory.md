@@ -30,7 +30,7 @@ Tag counts at the end of the file.
 |---|---|---|---|
 | F-TRN-1 | Play / Stop | MVP | Space toggles play/stop from the playhead. Stop returns the playhead to where play started (setting: "return to start on stop", default on). |
 | F-TRN-2 | Record | MVP | R arms recording on record-enabled tracks and starts transport. |
-| F-TRN-3 | Pause | v2 | Pause holds the playhead in place. |
+| F-TRN-3 | Pause | MVP | Pause holds the playhead in place. Brought forward from v2 (D-INV-6). |
 | F-TRN-4 | Go to start / end | MVP | Home and End move the playhead to project start / project end marker. |
 | F-TRN-5 | Rewind / fast-forward | MVP | Comma / period move the playhead by one bar. |
 | F-TRN-6 | Cycle (loop) region | MVP | C toggles looped playback of a cycle range set in the ruler. |
@@ -375,7 +375,7 @@ Detailed in `05-collaboration-spec.md`.
 
 ## Tag counts
 
-278 features in total: 148 MVP, 87 v2, 43 Later (36 added on 2026-10-14 after the reference coverage check in `07-reference-coverage.md`). The MVP list is long because many entries are small (a button, a shortcut); the Phase 2 milestone plan groups them into the eight MVP build milestones Ian listed plus a collaboration track.
+278 features in total: 149 MVP, 86 v2, 43 Later (36 added on 2026-10-14 after the reference coverage check in `07-reference-coverage.md`). The MVP list is long because many entries are small (a button, a shortcut); the Phase 2 milestone plan groups them into the eight MVP build milestones Ian listed plus a collaboration track.
 
 ## Decisions in this file
 
@@ -384,3 +384,4 @@ Detailed in `05-collaboration-spec.md`.
 - **D-INV-3.** Tempo changes are step-only in MVP (F-TMP-1); ramps are v2. Ramps complicate tick-to-sample conversion and CRDT merge semantics of the tempo map.
 - **D-INV-4.** Plugin sandboxing (F-PLG-7) is Later, but scanning is out of process from MVP (F-PLG-2) since scan-time crashes are the most common failure.
 - **D-INV-5.** Track locking (F-TRK-16, F-COL-11) is MVP but off by default, per the requirement that merging is the default.
+- **D-INV-6.** Pause (F-TRN-3) moved from v2 to MVP after the 2026-10-21 functionality audit: Ctrl+Space stops without returning to the play start, and pressed while stopped plays on from the playhead.

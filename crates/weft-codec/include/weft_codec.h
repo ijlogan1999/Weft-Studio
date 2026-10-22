@@ -1,5 +1,5 @@
-/* C ABI of the weft-codec crate: MP3 encoding over LAME, and an MP3 decoder that
-   tests use as an independent reference. Strings are UTF-8. */
+/* C ABI of the weft-codec crate: MP3 encoding over LAME, and a gapless MP3 decoder
+   (used for import, and by tests as an independent reference). Strings are UTF-8. */
 #pragma once
 
 #include <stddef.h>

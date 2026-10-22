@@ -122,11 +122,11 @@ void AudioEditor::paint (juce::Graphics& g)
     draw (content, used1, used2);
     draw (colour (Token::textDim).withAlpha (0.5f), used2, area.getRight());
     // Trim handles: a 2 px line with a grab tab at the top.
-    for (const auto x : { used1, used2 })
+    for (const auto& [x, tabX] : { std::pair { used1, used1 - 1.0f }, std::pair { used2, used2 - 7.0f } })
     {
         g.setColour (colour (Token::accent));
         g.fillRect (x - 1.0f, area.getY(), 2.0f, area.getHeight());
-        const auto tab = juce::Rectangle<float> (x == used1 ? x - 1.0f : x - 7.0f, area.getY(), 8.0f, 12.0f);
+        const auto tab = juce::Rectangle<float> (tabX, area.getY(), 8.0f, 12.0f);
         g.fillRoundedRectangle (tab, radius::r1);
     }
     g.setFont (font (Type::body));

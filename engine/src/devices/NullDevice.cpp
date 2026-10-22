@@ -75,6 +75,7 @@ bool NullDevice::open (const DeviceConfig& config)
     capture.assign (outputBuffers.size(), {});
     captureCapacity = 0;
     counters = {};
+    hasFailed = false;
     isOpen = true;
     return true;
 }

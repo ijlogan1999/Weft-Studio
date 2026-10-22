@@ -895,6 +895,14 @@ const Tokens& lightTokens()
 
 juce::Colour paletteColour (int index) { return C (palette[((index % 24) + 24) % 24]); }
 
+juce::PopupMenu colourMenu (int base, int current)
+{
+    juce::PopupMenu m;
+    for (int i = 0; i < paletteSize; ++i)
+        m.addColouredItem (base + i + 1, "Colour " + juce::String (i + 1), paletteColour (i), true, i == current);
+    return m;
+}
+
 juce::Colour colourFor (int paletteIndex, const std::string& rgb)
 {
     if (rgb.size() == 7 && rgb[0] == '#')

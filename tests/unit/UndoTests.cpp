@@ -301,6 +301,35 @@ TEST_CASE ("Splitting a MIDI region moves the right-hand notes to a new sequence
     CHECK (s.session.model().region (s.midiRegion)->length == 7680);
 }
 
+TEST_CASE ("Undo and redo across chained MIDI splits leave each note in one place", "[U][undo][regions]")
+{
+    // Redo re-creates a sequence whole, which gives the notes inside it new op ids; a later redo
+    // that moves those notes on must still find them (functionality audit F1).
+    Scene s;
+    const auto right = s.session.splitRegion (s.midiRegion, 1996);
+    REQUIRE (right);
+    REQUIRE (s.session.splitRegion (*right, 5539));
+    const auto edited = s.session.document().root();
+
+    auto noteCount = [&] {
+        std::size_t n = 0;
+        for (const auto& [id, seq] : s.session.model().midiSequences)
+            n += seq->notes.size();
+        return n;
+    };
+    REQUIRE (noteCount() == 8);
+    for (int round = 0; round < 3; ++round)
+    {
+        REQUIRE (s.session.undo().done);
+        REQUIRE (s.session.undo().done);
+        CHECK (noteCount() == 8);
+        REQUIRE (s.session.redo().done);
+        REQUIRE (s.session.redo().done);
+        CHECK (noteCount() == 8);
+        CHECK (s.session.document().root() == edited);
+    }
+}
+
 TEST_CASE ("Splitting an audio region keeps the audio continuous", "[U][regions]")
 {
     Scene s;

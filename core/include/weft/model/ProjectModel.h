@@ -104,7 +104,8 @@ public:
     static ProjectModel project (const doc::Document& document);
 
     /** Re-reads the entities under the given paths (truncated to depth 2), then re-derives
-        the repaired views. Paths outside entity collections re-read the project fields. */
+        the repaired views. Paths outside entity collections re-read the project fields. A path
+        to one note or controller event (depth 4) of a known sequence re-reads just that event. */
     static void refresh (ProjectModel& model, const doc::Document& document, const std::vector<doc::Path>& changed);
 
     /** Recomputes the derived views from the stored entities. */
