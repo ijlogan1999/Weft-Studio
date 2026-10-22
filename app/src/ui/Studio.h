@@ -368,6 +368,19 @@ public:
     juce::String readOnlyReason() const;
     /** The commands that edit the project, refused while previewing a version. */
     static bool changesDocument (Cmd command);
+    // Shared folder (D-COL-45) -----------------------------------------------------------------
+    /** This computer's id, kept in the settings folder: it names this computer's files in a shared folder. */
+    const std::string& deviceId() const noexcept { return deviceIdText; }
+    /** The project is in a shared folder: one a sync app (Google Drive, Dropbox, OneDrive) copies between computers. */
+    bool inSharedFolder() const;
+    /** Share in a Synced Folder: the project moves into `parent` (Save As, copying its audio)
+        unless it's already there, and becomes a shared folder that saves itself. */
+    bool shareInFolder (const std::filesystem::path& parent, std::string* error = nullptr);
+    /** How often a shared folder is checked for other computers' changes, and at most how
+        often this computer writes its own changes there. */
+    double sharedFolderPollMs = 2000.0;
+    double sharedFolderSaveMs = 2000.0;
+
     /** Calls the relay as this account; refreshed tokens are saved afterwards. */
     template <typename Fn>
     auto withRelay (Fn&& fn)
@@ -486,6 +499,11 @@ private:
     std::unique_ptr<collab::MediaSync> mediaSyncer;
     bool mediaDirty = false;
     double lastMediaRefresh = 0;
+    std::string deviceIdText;
+    double lastPeerPoll = 0;
+    double lastSharedSave = 0;
+    void pollSharedFolder (double now);
+    bool writeProject (bool announce);
     collab::Presence localPresence;
     std::optional<collab::Presence::Pointer> pointerAt;
     std::set<std::string> missingSeen; // plug-in ids already announced as missing
@@ -510,6 +528,7 @@ private:
     void resetViewState();
     void loadProjectMedia();
     void saveViewState() const;
+    std::filesystem::path viewStateFile() const;
     void loadViewState();
     std::optional<bool> performNotes (Cmd command);
     void zoomToFit();

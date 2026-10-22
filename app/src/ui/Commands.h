@@ -30,7 +30,7 @@ enum class Cmd
     // Projects and preferences (M9).
     newProject, openProject, saveAs, projectSettings, audioSettings,
     // Collaboration (M10).
-    shareProject, joinProject, signIn, signOut, goOffline,
+    shareProject, shareFolder, joinProject, signIn, signOut, goOffline,
     // M12
     addComment, saveVersion, lockTrack,
     // File and Track menus (04 §2), track header menu and reordering (F-TRK-6, F-TRK-7)

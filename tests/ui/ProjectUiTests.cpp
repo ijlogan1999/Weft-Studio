@@ -605,3 +605,65 @@ TEST_CASE ("Screenshots of the M9 dialogs", "[.screenshot-m9]")
     shoot (welcome, "welcome.png");
     forgetAudioSettings();
 }
+
+TEST_CASE ("Share in a Synced Folder moves the project there; it saves itself and merges other computers' changes", "[UI][project][shared-folder]")
+{
+    Ui ui;
+    ui.studio.sharedFolderPollMs = 0;
+    ui.studio.sharedFolderSaveMs = 0;
+    auto menuItem = [&] {
+        const auto menu = ui.main->getMenuForIndex (6, "Share");
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (it.getItem().text == "Share in a Synced Folder...")
+                return std::optional<bool> (it.getItem().isEnabled);
+        return std::optional<bool>();
+    };
+    REQUIRE (menuItem() == std::optional<bool> (true));
+    CHECK (ui.studio.syncStatus() == "Local only");
+
+    const auto drive = ui.folder.path / "My Drive";
+    fs::create_directories (drive);
+    REQUIRE (ui.studio.session().renameProject ("Band"));
+    ui.studio.edited();
+    std::string error;
+    REQUIRE (ui.studio.shareInFolder (drive, &error));
+    ui.settle();
+    const auto root = drive / "Band.weft";
+    CHECK (ui.studio.projectRoot() == root);
+    CHECK (ui.studio.inSharedFolder());
+    CHECK (ui.studio.syncStatus() == "Shared folder");
+    CHECK_FALSE (ui.studio.dirty());
+    CHECK (menuItem() == std::optional<bool> (false));
+    CHECK_FALSE (ui.studio.shareInFolder (drive, &error));
+    const auto own = root / "Peers" / (ui.studio.deviceId() + ".automerge");
+    REQUIRE (fs::exists (own));
+
+    // An edit reaches this computer's file on the next check, with no Ctrl+S.
+    const auto track = ui.m().trackOrder.front();
+    REQUIRE (ui.studio.session().renameTrack (track, "Vox"));
+    ui.studio.edited();
+    CHECK (ui.studio.dirty());
+    ui.studio.tick();
+    CHECK_FALSE (ui.studio.dirty());
+    {
+        auto saved = doc::Document::load (project::readFile (own).value());
+        REQUIRE (saved);
+        commands::Session reader (std::move (*saved), "reader");
+        CHECK (reader.model().track (track)->name == "Vox");
+    }
+
+    // Another computer adds a track; this one picks it up on its next check.
+    project::ProjectFolder other (root, "ffffffffffffffff");
+    auto opened = other.open();
+    REQUIRE (opened.document);
+    commands::Session theirs (std::move (*opened.document), "bandmate");
+    REQUIRE (theirs.createTrack (model::TrackKind::audio, "Drums"));
+    REQUIRE (other.save (theirs.document()));
+    ui.studio.tick();
+    ui.settle();
+    bool drums = false;
+    for (const auto& id : ui.m().trackOrder)
+        drums = drums || ui.m().track (id)->name == "Drums";
+    CHECK (drums);
+    CHECK (ui.m().track (track)->name == "Vox");
+}

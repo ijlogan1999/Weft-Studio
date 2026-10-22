@@ -2,6 +2,7 @@
 
 #include "weft/model/Model.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <fstream>
@@ -214,7 +215,20 @@ bool RecoveryLog::archive (std::int64_t timeMs)
 
 // ProjectFolder -------------------------------------------------------------------
 
-ProjectFolder::ProjectFolder (fs::path folder) : dir (std::move (folder)), recovery (dir / "Recovery" / "changes.log") {}
+namespace
+{
+fs::path recoveryLogFor (const fs::path& dir, const std::string& device)
+{
+    std::error_code ec;
+    const bool sharedFolder = ! device.empty() && fs::is_directory (dir / "Peers", ec);
+    return dir / "Recovery" / (sharedFolder ? "changes-" + device + ".log" : std::string ("changes.log"));
+}
+} // namespace
+
+ProjectFolder::ProjectFolder (fs::path folder, std::string deviceId)
+    : dir (std::move (folder)), device (std::move (deviceId)), recovery (recoveryLogFor (dir, device))
+{
+}
 
 fs::path ProjectFolder::folderFor (const fs::path& parent, const std::string& projectName)
 {
@@ -240,10 +254,81 @@ bool ProjectFolder::create (std::string* error)
 bool ProjectFolder::save (doc::Document& document, const WriteFaultHook& fault, std::string* error)
 {
     const auto bytes = document.save();
-    if (! writeFileAtomic (documentFile(), bytes, fault, error))
+    const auto target = usesPeerFile() ? ownPeerFile() : documentFile();
+    if (! writeFileAtomic (target, bytes, fault, error))
         return false;
     recovery.clear();
+    if (usesPeerFile())
+    {
+        std::error_code ec;
+        seenPeers[target] = { fs::last_write_time (target, ec), fs::file_size (target, ec) };
+    }
     return true;
+}
+
+bool ProjectFolder::shared() const
+{
+    std::error_code ec;
+    return fs::is_directory (peersDir(), ec);
+}
+
+bool ProjectFolder::makeShared (doc::Document& document, std::string* error)
+{
+    if (device.empty())
+    {
+        setError (error, "This computer has no device id.");
+        return false;
+    }
+    std::error_code ec;
+    fs::create_directories (peersDir(), ec);
+    if (ec)
+    {
+        setError (error, "Couldn't create " + peersDir().string() + ": " + ec.message());
+        return false;
+    }
+    // The log moves to this computer's own name, so a collaborator never sees it as theirs.
+    const bool hadLog = recovery.hasEntries();
+    RecoveryLog own (recoveryLogFor (dir, device));
+    if (hadLog && recovery.file() != own.file())
+        fs::rename (recovery.file(), own.file(), ec);
+    recovery = std::move (own);
+    return writeFileAtomic (documentFile(), document.save(), {}, error) && save (document, {}, error);
+}
+
+std::vector<fs::path> ProjectFolder::peerFiles() const
+{
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator (peersDir(), ec))
+        if (entry.is_regular_file (ec) && entry.path().extension() == ".automerge")
+            files.push_back (entry.path());
+    std::sort (files.begin(), files.end());
+    return files;
+}
+
+std::vector<std::vector<std::uint8_t>> ProjectFolder::pollPeers()
+{
+    std::vector<std::vector<std::uint8_t>> changed;
+    if (! shared())
+        return changed;
+    for (const auto& file : peerFiles())
+    {
+        if (file == ownPeerFile())
+            continue;
+        std::error_code ec;
+        const Stamp stamp { fs::last_write_time (file, ec), fs::file_size (file, ec) };
+        if (ec)
+            continue;
+        if (const auto it = seenPeers.find (file); it != seenPeers.end() && it->second == stamp)
+            continue;
+        auto bytes = readFile (file);
+        // Half-synced files don't load: leave them unseen and try again next time.
+        if (! bytes || ! doc::Document::load (*bytes))
+            continue;
+        seenPeers[file] = stamp;
+        changed.push_back (std::move (*bytes));
+    }
+    return changed;
 }
 
 std::optional<std::string> checkSchemaVersion (const doc::Document& document)
@@ -275,6 +360,11 @@ ProjectFolder::Opened ProjectFolder::open() const
             return result;
         }
     }
+    // A shared folder: everyone's files on top of the state it was shared with (D-COL-45).
+    if (saved && shared())
+        for (const auto& file : peerFiles())
+            if (const auto bytes = readFile (file); bytes && doc::Document::load (*bytes))
+                saved->apply (*bytes);
     const auto entries = recovery.read();
     if (! saved && entries.empty())
     {
@@ -291,7 +381,7 @@ ProjectFolder::Opened ProjectFolder::open() const
     if (! entries.empty())
     {
         // Saved state (or an empty document) plus every logged change.
-        std::optional<doc::Document> replay = saved ? doc::Document::load (readFile (documentFile()).value()) : std::optional<doc::Document> (doc::Document());
+        std::optional<doc::Document> replay = saved ? doc::Document::load (saved->save()) : std::optional<doc::Document> (doc::Document());
         for (const auto& e : entries)
             replay->apply (e.change);
         const auto savedHeads = saved ? saved->heads() : doc::Bytes {};

@@ -267,3 +267,122 @@ TEST_CASE ("A picked project.automerge or its folder both name the project", "[U
     CHECK (project::isProjectFolder (root));
     CHECK_FALSE (project::isProjectFolder (dir.path));
 }
+
+// Shared folder (D-COL-45): two computers simulated by two device ids on one folder.
+
+namespace
+{
+Session sessionFrom (project::ProjectFolder& folder, std::uint64_t seed, const std::string& user)
+{
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    return Session (std::move (*opened.document), user, fixedClock, seed);
+}
+
+void applyAll (Session& s, const std::vector<std::vector<std::uint8_t>>& files)
+{
+    for (const auto& bytes : files)
+        REQUIRE (s.applyChanges (bytes) == doc::Status::ok);
+}
+} // namespace
+
+TEST_CASE ("Shared folder: each computer writes only its own file and merges the others'", "[U][project][shared-folder]")
+{
+    TempDir tmp;
+    const auto root = project::ProjectFolder::folderFor (tmp.path, "Band");
+    project::ProjectFolder laptop (root, "aaaaaaaaaaaaaaaa");
+    REQUIRE (laptop.create());
+    auto a = newSession (1, "userA");
+    REQUIRE (laptop.save (a.document()));
+    CHECK_FALSE (laptop.shared());
+    REQUIRE (laptop.makeShared (a.document()));
+    CHECK (laptop.shared());
+    CHECK (fs::exists (laptop.ownPeerFile()));
+    const auto sharedState = project::readFile (laptop.documentFile()).value();
+
+    project::ProjectFolder desktop (root, "bbbbbbbbbbbbbbbb");
+    CHECK (desktop.shared());
+    auto b = sessionFrom (desktop, 2, "userB");
+
+    // Both edit at once, then save: neither touches project.automerge or the other's file.
+    REQUIRE (a.renameProject ("Band Demo"));
+    REQUIRE (laptop.save (a.document()));
+    const auto track = b.model().trackOrder.front();
+    REQUIRE (b.renameTrack (track, "Bass"));
+    REQUIRE (desktop.save (b.document()));
+    CHECK (project::readFile (laptop.documentFile()).value() == sharedState);
+    CHECK (fs::exists (desktop.ownPeerFile()));
+
+    applyAll (a, laptop.pollPeers());
+    applyAll (b, desktop.pollPeers());
+    for (const auto* s : { &a, &b })
+    {
+        CHECK (s->model().info.name == "Band Demo");
+        CHECK (s->model().track (track)->name == "Bass");
+    }
+    CHECK (a.document().heads() == b.document().heads());
+
+    // Nothing new: nothing to merge.
+    CHECK (laptop.pollPeers().empty());
+    CHECK (desktop.pollPeers().empty());
+
+    // A third computer opening the folder gets everyone's changes.
+    project::ProjectFolder third (root, "cccccccccccccccc");
+    auto c = sessionFrom (third, 3, "userC");
+    CHECK (c.model().info.name == "Band Demo");
+    CHECK (c.model().track (track)->name == "Bass");
+}
+
+TEST_CASE ("Shared folder: conflicted copies are merged and half-synced files wait", "[U][project][shared-folder]")
+{
+    TempDir tmp;
+    const auto root = project::ProjectFolder::folderFor (tmp.path, "Band");
+    project::ProjectFolder laptop (root, "aaaaaaaaaaaaaaaa");
+    REQUIRE (laptop.create());
+    auto a = newSession (1, "userA");
+    REQUIRE (laptop.makeShared (a.document()));
+    auto b = joinSession (a, 2, "userB");
+    const auto peers = root / "Peers";
+
+    // A sync app that saw two writers keeps both: "<name> (1).automerge".
+    REQUIRE (b.renameProject ("From the copy"));
+    REQUIRE (project::writeFileAtomic (peers / "bbbbbbbbbbbbbbbb (1).automerge", b.document().save()));
+    // A file still arriving is cut short.
+    auto c = joinSession (a, 3, "userC");
+    REQUIRE (c.renameTrack (c.model().trackOrder.front(), "Keys"));
+    auto full = c.document().save();
+    const std::vector<std::uint8_t> half (full.begin(), full.begin() + static_cast<std::ptrdiff_t> (full.size() / 2));
+    REQUIRE (project::writeFileAtomic (peers / "cccccccccccccccc.automerge", half));
+
+    applyAll (a, laptop.pollPeers());
+    CHECK (a.model().info.name == "From the copy");
+    CHECK (a.model().track (a.model().trackOrder.front())->name != "Keys");
+
+    REQUIRE (project::writeFileAtomic (peers / "cccccccccccccccc.automerge", full));
+    applyAll (a, laptop.pollPeers());
+    CHECK (a.model().track (a.model().trackOrder.front())->name == "Keys");
+}
+
+TEST_CASE ("Shared folder: each computer keeps its own recovery log", "[U][project][shared-folder]")
+{
+    TempDir tmp;
+    const auto root = project::ProjectFolder::folderFor (tmp.path, "Band");
+    project::ProjectFolder local (root);
+    REQUIRE (local.create());
+    CHECK (local.log().file().filename() == "changes.log");
+
+    project::ProjectFolder laptop (root, "aaaaaaaaaaaaaaaa");
+    CHECK (laptop.log().file().filename() == "changes.log"); // not shared yet
+    auto a = newSession();
+    REQUIRE (laptop.makeShared (a.document()));
+    CHECK (laptop.log().file().filename() == "changes-aaaaaaaaaaaaaaaa.log");
+
+    // The desktop's unsaved changes are never offered to the laptop as its own to recover.
+    project::ProjectFolder desktop (root, "bbbbbbbbbbbbbbbb");
+    CHECK (desktop.log().file().filename() == "changes-bbbbbbbbbbbbbbbb.log");
+    auto b = sessionFrom (desktop, 2, "userB");
+    b.onLocalChange = [&] (const doc::Bytes& change, std::int64_t time) { REQUIRE (desktop.log().append (change, time)); };
+    REQUIRE (b.renameProject ("Unsaved"));
+    CHECK (desktop.open().recoveryAvailable());
+    CHECK_FALSE (project::ProjectFolder (root, "aaaaaaaaaaaaaaaa").open().recoveryAvailable());
+}

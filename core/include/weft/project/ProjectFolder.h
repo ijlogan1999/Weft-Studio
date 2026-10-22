@@ -8,12 +8,14 @@
 //     Media/ Bounces/ Cache/
 //     Recovery/changes.log  every local change since the last save
 //     Recovery/archive/     discarded logs
+//     Peers/                only in a shared folder (D-COL-45): <device>.automerge per computer
 
 #include "weft/doc/Document.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -63,10 +65,18 @@ private:
 
 std::uint32_t crc32 (std::span<const std::uint8_t> bytes) noexcept;
 
+/**
+    A project folder on local disk. It can also be a shared folder (D-COL-45): one that a sync
+    app such as Google Drive, Dropbox or OneDrive copies between computers. A sync app makes a
+    "conflicted copy" when two computers write one file, so in a shared folder each computer
+    writes only its own Peers/<device>.automerge (and its own recovery log), and every computer
+    merges all of them. project.automerge stays as the state the folder was shared with.
+*/
 class ProjectFolder
 {
 public:
-    explicit ProjectFolder (fs::path folder);
+    /** `deviceId` names this computer's files in a shared folder; it is unused otherwise. */
+    explicit ProjectFolder (fs::path folder, std::string deviceId = {});
 
     /** <parent>/<name>.weft */
     static fs::path folderFor (const fs::path& parent, const std::string& projectName);
@@ -98,9 +108,35 @@ public:
     /** Discard: keeps the saved state and archives the log (AT-PRJ-12). */
     bool discard (Opened& opened, std::int64_t timeMs);
 
+    // Shared folder (D-COL-45) ---------------------------------------------------------
+    bool shared() const;
+    /** Turns this into a shared folder and saves the document as this computer's file. */
+    bool makeShared (doc::Document& document, std::string* error = nullptr);
+    /** This computer's file in Peers/. */
+    fs::path ownPeerFile() const { return peersDir() / (device + ".automerge"); }
+    /**
+        The other computers' files in Peers/ that are new or changed since the last call, as
+        saved-document bytes for Document::apply. Any *.automerge counts, so a sync app's
+        conflicted copy is merged too. A file still being written fails to load and is
+        retried on the next call.
+    */
+    std::vector<std::vector<std::uint8_t>> pollPeers();
+
 private:
     fs::path dir;
+    std::string device;
     RecoveryLog recovery;
+    struct Stamp
+    {
+        fs::file_time_type time {};
+        std::uintmax_t size = 0;
+        bool operator== (const Stamp&) const = default;
+    };
+    std::map<fs::path, Stamp> seenPeers;
+
+    fs::path peersDir() const { return dir / "Peers"; }
+    bool usesPeerFile() const { return ! device.empty() && shared(); }
+    std::vector<fs::path> peerFiles() const;
 };
 
 /** Returns an error message if the document's schemaVersion is newer than this build supports. */

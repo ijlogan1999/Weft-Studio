@@ -185,6 +185,7 @@ private:
     std::function<void (int)> projectAnswer;
     juce::String projectAsked, alertText;
     std::unique_ptr<juce::FileChooser> openChooser, importChooser;
+    void chooseSharedFolder();
     Id questionTrack;
     juce::String asked;
     juce::TooltipWindow tooltips { this, 600 };

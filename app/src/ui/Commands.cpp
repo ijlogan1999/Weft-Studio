@@ -80,6 +80,7 @@ std::vector<CommandInfo> build()
         { Cmd::projectSettings, "Project Settings", "", {} },
         { Cmd::audioSettings, "Audio & MIDI Settings", "", {} },
         { Cmd::shareProject, "Share Project...", "", {} },
+        { Cmd::shareFolder, "Share in a Synced Folder...", "", {} },
         { Cmd::joinProject, "Join from Invite Link...", "", {} },
         { Cmd::signIn, "Sign In...", "", {} },
         { Cmd::signOut, "Sign Out", "", {} },

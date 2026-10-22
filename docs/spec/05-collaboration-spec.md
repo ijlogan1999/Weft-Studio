@@ -110,6 +110,12 @@ Messages are binary frames: 1-byte type + payload (CBOR for envelopes, raw bytes
 - **Decision D-COL-20:** Share dialog calls to the relay block the window for at most their timeout. (Audio transfers run on background threads since M11; the dialog's own calls are still on the window's thread.)
 - **Decision D-COL-21:** clients send their own changes through the `SYNC` exchange (batched at most every 50 ms) rather than as bare `CHANGE` frames; the relay still fans changes out to other clients as `CHANGE`. A bare change can reach the relay before one it depends on (made before a reconnect, say), and then waits there unapplied; the sync exchange always sends dependencies first. A client that receives a `CHANGE` it can't apply yet resumes the sync exchange to fetch what it's missing.
 
+### 3.7 Without a relay: a shared folder
+- **Decision D-COL-45:** a project can be shared through a folder that a sync app (Google Drive for desktop, Dropbox, OneDrive) copies between computers, for groups without a relay. Ian chose this over Google Drive's own API (2026-10-21): it needs no Google sign-in or app review and works with any sync app. Share › Share in a Synced Folder… moves the project into the chosen folder (Save As, copying its audio) unless it is already there, and marks it shared by creating `Peers/`. Collaborators open it from their copy with File › Open.
+  - A sync app keeps a "conflicted copy" when two computers write one file, so each computer writes only its own `Peers/<device>.automerge` (a full save of the document; the device id is random and kept in the per-user settings folder) and its own `Recovery/changes-<device>.log` and `Cache/view-<device>.txt`. `project.automerge` stays as the state the folder was shared with. Opening merges it with every `Peers/*.automerge`, conflicted copies included; the CRDT makes the merge order irrelevant.
+  - A shared folder saves itself: while there are changes, Weft writes this computer's file at most every 2 s (not mid-gesture), and every 2 s it merges the other computers' files that changed, as relay changes are merged (D-ARCH-11 recovered tracks, conflict notices aside). A file that doesn't load (still syncing) is retried on the next check. Audio is content-addressed in `Media/`, so collaborators' files never clash; audio that arrives after the change using it is loaded when it lands.
+  - This is not live collaboration: changes take as long as the sync app does (seconds or more), and there is no presence, chat delivery or locking beyond what the document carries. Live sessions still use a relay that someone in the group runs (§3); a project can use both.
+
 ---
 
 ## 4. Document and merge semantics
@@ -417,3 +423,4 @@ Conclusion: with optimistic local overhead (~5 ms, uncompressed PCM, tiny jitter
 | D-COL-42 | Comment filters Open/Resolved/Mine/Mentions; clicking the active one shows all. |
 | D-COL-43 | Shift+C and Save Version use side-panel boxes; an unnamed version is "Untitled version". |
 | D-COL-44 | Mentions stored as @<user id>; announced once on connect; Comments tab dot until seen. |
+| D-COL-45 | Shared folder: each computer writes its own Peers/<device>.automerge; all merge every 2 s; it saves itself. |
