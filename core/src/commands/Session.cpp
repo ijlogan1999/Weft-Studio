@@ -51,6 +51,16 @@ std::string describe (const Path& p)
 }
 
 Path depth2 (const Path& p) { return p.size() > 2 ? Path (p.begin(), p.begin() + 2) : p; }
+
+/** What a write makes the projection re-read: its entity, or for a note or controller just that
+    event, so editing a big MIDI region doesn't re-read every note in it. */
+Path refreshPath (const Path& p)
+{
+    if (p.size() >= 4 && p[0].key == model::keys::midiSequences && p[2].kind == PathSegment::Kind::key
+        && (p[2].key == "notes" || p[2].key == "controllers") && p[3].kind == PathSegment::Kind::key)
+        return Path (p.begin(), p.begin() + 4);
+    return depth2 (p);
+}
 } // namespace
 
 Session::Session (doc::Document document, UserId user, Clock c, std::uint64_t idSeed)
@@ -230,7 +240,7 @@ void Session::refreshFor (const Txn& txn)
     std::set<std::string> seen;
     for (const auto& r : txn.records)
     {
-        auto p = depth2 (r.path);
+        auto p = refreshPath (r.path);
         if (seen.insert (doc::toString (p)).second)
             paths.push_back (std::move (p));
     }
@@ -261,6 +271,13 @@ bool Session::finish (Txn txn, bool isUndoRedo, std::vector<Txn>* pushTo)
             r.afterOpId = doc.opId (r.path).value_or ("");
             if (! r.restoresOpId.empty() && ! r.afterOpId.empty())
                 opIdAliases[r.restoresOpId] = r.afterOpId;
+            for (const auto& [rel, oldOp] : r.restoresNestedOpIds)
+            {
+                auto full = r.path;
+                full.insert (full.end(), rel.begin(), rel.end());
+                if (const auto op = doc.opId (full); op && *op != oldOp)
+                    opIdAliases[oldOp] = *op;
+            }
         }
     if (onLocalChange || ! changeListeners.empty())
         if (auto change = doc.lastLocalChange())
@@ -422,7 +439,10 @@ UndoResult Session::invert (std::vector<Txn>& from, std::vector<Txn>& to, std::s
                     const auto count = out.records.size();
                     w.put (r.path, *r.before);
                     if (out.records.size() > count && r.before->isContainer())
+                    {
                         out.records.back().restoresOpId = r.beforeOpId;
+                        out.records.back().restoresNestedOpIds = r.beforeNestedOpIds;
+                    }
                 }
                 else
                     w.remove (r.path);

@@ -59,21 +59,6 @@ private:
     bool needsFit = true;
 };
 
-class Placeholder final : public juce::Component
-{
-public:
-    Placeholder (const juce::String& title, const juce::String& note) : text (note) { setTitle (title); }
-    void paint (juce::Graphics& g) override
-    {
-        g.fillAll (colour (Token::surface));
-        g.setColour (colour (Token::textDim));
-        g.setFont (font (Type::title));
-        g.drawText (getTitle() + ": " + text, getLocalBounds(), juce::Justification::centred);
-    }
-
-private:
-    juce::String text;
-};
 
 class BottomArea final : public juce::Component, private juce::ChangeListener
 {

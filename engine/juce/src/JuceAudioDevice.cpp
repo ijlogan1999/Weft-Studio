@@ -30,6 +30,7 @@ struct JuceAudioDevice::Impl final : juce::AudioIODeviceCallback
     DeviceConfig cfg;
     std::string error;
     std::atomic<AudioCallback*> callback { nullptr };
+    std::atomic<bool> stopping { false }, failed { false };
     std::vector<std::vector<float>> silentInputs, chunkOutputs;
     std::vector<const float*> inputPtrs;
     std::vector<float*> outputPtrs;
@@ -52,9 +53,13 @@ struct JuceAudioDevice::Impl final : juce::AudioIODeviceCallback
 
     void audioDeviceStopped() override
     {
+        if (! stopping.load())
+            failed.store (true); // stopped by the driver, not by us
         if (auto* cb = callback.load())
             cb->release();
     }
+
+    void audioDeviceError (const juce::String&) override { failed.store (true); }
 
     void audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs, int numSamples,
                                            const juce::AudioIODeviceCallbackContext&) override
@@ -161,6 +166,7 @@ bool JuceAudioDevice::open (const DeviceConfig& config)
 {
     close();
     impl->error.clear();
+    impl->failed.store (false);
     impl->types = createTypes();
     juce::AudioIODeviceType* type = nullptr;
     for (auto* t : impl->types)
@@ -225,8 +231,19 @@ bool JuceAudioDevice::start (AudioCallback& cb)
 void JuceAudioDevice::stop()
 {
     if (impl->device != nullptr && impl->callback.load() != nullptr)
+    {
+        impl->stopping.store (true);
         impl->device->stop(); // calls audioDeviceStopped, which releases the callback
+        impl->stopping.store (false);
+    }
     impl->callback.store (nullptr, std::memory_order_release);
+}
+
+bool JuceAudioDevice::failed() const
+{
+    // A driver whose device went away ends its thread, so the device stops playing (WASAPI);
+    // others report an error or stop the callback.
+    return impl->failed.load() || (impl->device != nullptr && impl->callback.load() != nullptr && ! impl->device->isPlaying());
 }
 
 bool JuceAudioDevice::isRunning() const { return impl->device != nullptr && impl->device->isPlaying(); }

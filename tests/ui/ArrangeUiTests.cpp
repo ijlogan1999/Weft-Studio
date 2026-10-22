@@ -292,6 +292,109 @@ TEST_CASE ("AT-TRK-6 renaming in the track header: Enter, Esc, empty", "[UI]")
     CHECK (label.getText() == "Vox");
 }
 
+TEST_CASE ("AT-TRK-5 dragging track 3 above track 1 makes the order 3, 1, 2; Move Track Up/Down", "[UI]")
+{
+    Ui ui;
+    const auto added = ui.instrumentTracks (2);
+    const auto order = [&] { return ui.m().trackOrder; };
+    const std::vector<Id> start = order();
+    REQUIRE (start.size() == 3);
+    auto headerOf = [&] (const Id& id) -> TrackHeader& {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return *h;
+        FAIL ("no header");
+        throw;
+    };
+
+    // Drag the third header up onto the first: it shows where it lands, then drops there.
+    auto& third = headerOf (start[2]);
+    const auto& first = headerOf (start[0]);
+    const juce::Point<float> from { 60.0f, 10.0f };
+    const auto onto = from.translated (0.0f, static_cast<float> (first.getY() - third.getY()));
+    third.mouseDown (mouse (third, from));
+    third.mouseDrag (mouse (third, onto, {}, 1, from));
+    CHECK (third.dropTarget() == &first);
+    CHECK (first.dropMark == -1);
+    third.mouseUp (mouse (third, onto, {}, 1, from));
+    ui.settle();
+    CHECK (order() == std::vector<Id> { start[2], start[0], start[1] });
+    CHECK (first.dropMark == 0);
+
+    // One undo step puts it back.
+    CHECK (ui.studio.perform (Cmd::undo));
+    CHECK (order() == start);
+
+    // A short wiggle isn't a drag.
+    auto& second = headerOf (start[1]);
+    second.mouseDown (mouse (second, from));
+    second.mouseDrag (mouse (second, from.translated (0.0f, 3.0f), {}, 1, from));
+    second.mouseUp (mouse (second, from.translated (0.0f, 3.0f), {}, 1, from));
+    CHECK (order() == start);
+
+    // Move Track Up/Down act on the selected track and stop at the ends.
+    ui.studio.selectTrack (start[0]);
+    CHECK_FALSE (ui.studio.perform (Cmd::moveTrackUp));
+    CHECK (ui.studio.perform (Cmd::moveTrackDown));
+    CHECK (order() == std::vector<Id> { start[1], start[0], start[2] });
+    CHECK (ui.studio.perform (Cmd::moveTrackUp));
+    CHECK (order() == start);
+    juce::ignoreUnused (added);
+}
+
+TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu and the header menu", "[UI]")
+{
+    Ui ui;
+    const auto audio = ui.m().trackOrder.front();
+    ui.studio.selectTrack (audio);
+
+    // Ctrl+D copies the settings below the original and selects the copy; Ctrl+Shift+D brings regions.
+    CHECK (ui.key ('D', juce::ModifierKeys::commandModifier));
+    REQUIRE (ui.m().trackOrder.size() == 2);
+    const auto copy = ui.m().trackOrder[1];
+    CHECK (ui.m().track (copy)->name == ui.m().track (audio)->name + " copy");
+    CHECK (ui.studio.selectedTrack() == copy);
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (2, "Track");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+            items.add (it.getItem().text);
+    CHECK (items == juce::StringArray { "New Track", "Duplicate Track", "Duplicate Track with Regions", "Delete Track", "Color", "Move Track Up",
+                                        "Move Track Down", "Lock/Unlock Track" });
+
+    // Color › swatch 7 from the menu bar.
+    ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);
+    CHECK (ui.m().track (copy)->color.palette == 6);
+
+    // The header's right-click menu offers the same, and acts on its own track.
+    TrackHeader* header = nullptr;
+    for (const auto& h : ui.main->tracks().headers())
+        if (h->trackId == audio)
+            header = h.get();
+    REQUIRE (header != nullptr);
+    juce::StringArray headerItems;
+    const auto hm = header->menu();
+    for (juce::PopupMenu::MenuItemIterator it (hm); it.next();)
+        if (! it.getItem().isSeparator)
+            headerItems.add (it.getItem().text);
+    CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
+                                              "Delete Track", "Lock Track", "Add Comment" });
+    header->pickMenu (TrackHeader::itemColour + 3);
+    CHECK (ui.m().track (audio)->color.palette == 2);
+    header->pickMenu (TrackHeader::itemMoveDown);
+    ui.settle();
+    CHECK (ui.m().trackOrder.back() == audio);
+    header = nullptr;
+    for (const auto& h : ui.main->tracks().headers())
+        if (h->trackId == audio)
+            header = h.get();
+    REQUIRE (header != nullptr);
+    header->pickMenu (TrackHeader::itemDelete); // nothing on it: no question
+    ui.settle();
+    CHECK (ui.m().track (audio) == nullptr);
+}
+
 TEST_CASE ("AT-TRK-11 dragging a header's lower edge resizes; Ctrl+Shift+wheel resizes all", "[UI]")
 {
     Ui ui;
@@ -423,4 +526,401 @@ TEST_CASE ("AT-ARR-20 a 200-event drag in the tracks area is one undo step", "[U
     ui.main->run (Cmd::undo);
     ui.settle();
     CHECK (ui.region (id).start == bar);
+}
+
+TEST_CASE ("File › Import Audio puts files at the playhead, on the selected audio track or new tracks", "[UI][import]")
+{
+    Ui ui;
+    media::AudioData a;
+    a.sampleRate = 48000;
+    a.channels.assign (1, std::vector<float> (4800, 0.25f));
+    const auto file = ui.folder.path / "browse" / "hit.wav";
+    REQUIRE (media::writeWav (file, a, media::SampleFormat::int24));
+    CHECK (commandInfo (Cmd::importAudio).shortcut == "Ctrl+I");
+
+    const auto audio = ui.m().trackOrder.front();
+    ui.studio.selectTrack (audio);
+    ui.studio.locate (2 * 3840);
+    const auto onTrack = ui.studio.importAtPlayhead ({ file });
+    REQUIRE (onTrack.regions.size() == 1);
+    CHECK (ui.region (onTrack.regions[0]).trackId == audio);
+    CHECK (ui.region (onTrack.regions[0]).start == 2 * 3840);
+
+    // With an instrument track selected the file gets a track of its own.
+    const auto inst = ui.instrumentTracks (1).front();
+    ui.studio.selectTrack (inst);
+    const auto newTrack = ui.studio.importAtPlayhead ({ file });
+    REQUIRE (newTrack.regions.size() == 1);
+    CHECK (newTrack.tracks.size() == 1);
+    CHECK (ui.region (newTrack.regions[0]).trackId == newTrack.tracks[0]);
+}
+
+TEST_CASE ("AT-TMP-3 Ctrl+click in the tempo lane adds a change; dragging it changes BPM in 0.01 steps; the first tempo stays", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    REQUIRE (ui.studio.layout.globalTracks);
+    const auto laneY = static_cast<float> (Ruler::tempoTop + Ruler::tempoLane / 2);
+    const auto bar5 = static_cast<float> (ui.studio.view.tickToX (4.0 * 3840.0));
+
+    ruler.pointerDown ({ bar5, laneY }, juce::ModifierKeys::commandModifier);
+    ruler.pointerUp();
+    ui.settle();
+    REQUIRE (ui.m().tempo.points().size() == 2);
+    const auto added = ui.m().tempo.points()[1];
+    CHECK (added.pos == 4 * 3840);
+    CHECK (added.bpm == ruler.bpmAtY (laneY));
+
+    // Dragging up 5 px raises the BPM by 5 px of the lane's range, rounded to 0.01; the position stays.
+    const auto [lo, hi] = ruler.tempoRange();
+    const auto y = ruler.tempoY (added.bpm);
+    ruler.pointerDown ({ bar5, y }, {});
+    ruler.pointerDrag ({ bar5 + 1.0f, y - 2.0f });
+    ruler.pointerDrag ({ bar5 + 1.0f, y - 5.0f });
+    ruler.pointerUp();
+    ui.settle();
+    const auto dragged = ui.m().tempo.points()[1];
+    CHECK (dragged.pos == 4 * 3840);
+    CHECK (std::abs (dragged.bpm - std::round ((added.bpm + 5.0 * (hi - lo) / (Ruler::tempoLane - 10)) * 100.0) / 100.0) < 1e-9);
+    CHECK (std::abs (dragged.bpm * 100.0 - std::round (dragged.bpm * 100.0)) < 1e-6);
+    CHECK (ui.studio.perform (Cmd::undo)); // the drag is one undo step
+    CHECK (ui.m().tempo.points()[1].bpm == added.bpm);
+
+    // The first tempo can't be deleted or moved.
+    const auto x0 = static_cast<float> (ui.studio.view.tickToX (0.0)) + 1.0f;
+    const auto y0 = ruler.tempoY (ui.m().tempo.points()[0].bpm);
+    ruler.pointerDown ({ x0, y0 }, juce::ModifierKeys::rightButtonModifier);
+    ruler.pointerUp();
+    CHECK (ui.m().tempo.points().size() == 2);
+    ruler.pointerDown ({ x0, y0 }, {});
+    ruler.pointerDrag ({ x0 + 300.0f, y0 });
+    ruler.pointerUp();
+    CHECK (ui.m().tempo.points()[0].pos == 0);
+
+    // Right-click deletes a later change.
+    ruler.pointerDown ({ bar5, ruler.tempoY (added.bpm) }, juce::ModifierKeys::rightButtonModifier);
+    ruler.pointerUp();
+    CHECK (ui.m().tempo.points().size() == 1);
+}
+
+TEST_CASE ("W-11 signature lane: a change at a bar start from text; right-click deletes it", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    CHECK (ruler.setSignatureFromText (2, "3/4"));
+    ui.settle();
+    REQUIRE (ui.m().signatures.points().size() == 2);
+    CHECK (ui.m().signatures.points()[1].bar == 2);
+    CHECK (ui.m().signatures.points()[1].numerator == 3);
+    CHECK (ui.m().signatures.barStart (3) == 2 * 3840 + 2880);
+    CHECK_FALSE (ruler.setSignatureFromText (2, "three"));
+    CHECK_FALSE (ruler.setSignatureFromText (2, "5/3"));
+    CHECK (ruler.setSignatureFromText (0, "6/8")); // the first one changes in place
+    CHECK (ui.m().signatures.points()[0].numerator == 6);
+
+    const auto x = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (ui.m().signatures.barStart (2)))) + 4.0f;
+    CHECK (ruler.nearestBar (x) == 2);
+    ruler.pointerDown ({ x, static_cast<float> (Ruler::signatureTop + 5) }, juce::ModifierKeys::rightButtonModifier);
+    ruler.pointerUp();
+    CHECK (ui.m().signatures.points().size() == 1);
+}
+
+TEST_CASE ("AT-TMP-6 G toggles the global tracks; the marker, tempo and signature lanes follow the timeline's zoom and scroll", "[UI]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    const auto shown = ruler.preferredHeight();
+    CHECK (shown == Ruler::rulerHeight + Ruler::markerLane + Ruler::tempoLane + Ruler::signatureLane);
+    CHECK (ui.key ('G'));
+    CHECK_FALSE (ui.studio.layout.globalTracks);
+    CHECK (ruler.preferredHeight() == Ruler::rulerHeight);
+    CHECK (ruler.getHeight() == Ruler::rulerHeight);
+    CHECK (ui.key ('G'));
+    CHECK (ruler.getHeight() == shown);
+
+    REQUIRE (ui.studio.session().addTempoPoint (8 * 3840, 90.0));
+    REQUIRE (ui.studio.session().addSignaturePoint (8, 7, 8));
+    REQUIRE (ui.studio.session().addMarker (8 * 3840, "Bridge"));
+    ui.studio.edited();
+    ui.settle();
+    for (int step = 0; step < 2; ++step)
+    {
+        const auto x = ui.studio.view.tickToX (8.0 * 3840.0);
+        const auto* tempo = ruler.tempoPointAt (x);
+        REQUIRE (tempo != nullptr);
+        CHECK (tempo->pos == 8 * 3840);
+        REQUIRE (ruler.signatureAt (x + 2.0) != nullptr);
+        CHECK (ruler.signatureAt (x + 2.0)->bar == 8);
+        REQUIRE (ruler.markerAt (x + 2.0) != nullptr);
+        CHECK (ruler.markerAt (x + 2.0)->name == "Bridge");
+        CHECK (ui.studio.perform (Cmd::zoomIn)); // and again zoomed in
+        ui.studio.view.originTick = 2.0 * 3840.0;
+    }
+}
+
+TEST_CASE ("W-1d Autopunch defaults to the cycle or 4 bars from the playhead; its ends drag in the ruler", "[UI][punch]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    const auto bar = Ticks (3840);
+    const auto& punch = [&]() -> const model::TimeRange& { return ui.m().info.punch; };
+
+    // Cycle off: 4 bars from the bar the playhead is in.
+    ui.studio.locate (2 * bar + 500);
+    CHECK (ui.studio.perform (Cmd::autopunch));
+    CHECK (punch().enabled);
+    CHECK (punch().start == 2 * bar);
+    CHECK (punch().end == 6 * bar);
+
+    // Dragging the end moves it, as one undo step.
+    const auto y = static_cast<float> (Ruler::cycleStrip / 2);
+    const auto endX = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (6 * bar)));
+    const auto newEnd = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (8 * bar)));
+    ruler.pointerDown ({ endX - 1.0f, y }, {});
+    ruler.pointerDrag ({ (endX + newEnd) / 2.0f, y });
+    ruler.pointerDrag ({ newEnd, y });
+    ruler.pointerUp();
+    CHECK (punch().start == 2 * bar);
+    CHECK (punch().end == 8 * bar);
+    CHECK_FALSE (ui.m().info.cycle.enabled); // the cycle wasn't touched
+    CHECK (ui.studio.perform (Cmd::undo));
+    CHECK (punch().end == 6 * bar);
+
+    // Shift+drag sets a new range.
+    const auto x10 = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (10 * bar)));
+    const auto x12 = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (12 * bar)));
+    ruler.pointerDown ({ x10, y }, juce::ModifierKeys::shiftModifier);
+    ruler.pointerDrag ({ x12, y });
+    ruler.pointerUp();
+    CHECK (punch().start == 10 * bar);
+    CHECK (punch().end == 12 * bar);
+
+    // Off, then on with the cycle on: the cycle's range.
+    CHECK (ui.studio.perform (Cmd::autopunch));
+    CHECK_FALSE (punch().enabled);
+    REQUIRE (ui.studio.session().setCycle (true, 4 * bar, 5 * bar));
+    CHECK (ui.studio.perform (Cmd::autopunch));
+    CHECK (punch().start == 4 * bar);
+    CHECK (punch().end == 5 * bar);
+}
+
+TEST_CASE ("Region and lane right-click menus: edit commands, Split Here, Color, project end", "[UI][context]")
+{
+    Ui ui;
+    const auto bar = Ticks (3840);
+    const auto inst = ui.instrumentTracks (1).front();
+    const auto a = ui.studio.session().createMidiRegion (inst, 0, 4 * bar).value();
+    const auto b = ui.studio.session().createMidiRegion (inst, 4 * bar, 4 * bar).value();
+    ui.studio.edited();
+    ui.settle();
+    auto& tl = ui.timeline();
+
+    auto labels = [] (const juce::PopupMenu& menu) {
+        juce::StringArray out;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (! it.getItem().isSeparator)
+                out.add (it.getItem().text);
+        return out;
+    };
+    const auto onA = ui.centreOf (a);
+    CHECK (labels (tl.contextMenu (onA))
+           == juce::StringArray { "Cut", "Copy", "Paste", "Delete", "Split Here", "Join", "Mute Regions", "Repeat Regions", "Loop Region", "Crossfade",
+                                  "Apply Quantize", "Color", "Add Comment on \"" + juce::String (ui.region (a).name) + "\"" });
+
+    // Color applies to the whole selection as one undo step; Track Color clears the override.
+    ui.studio.selection.set ({ a, b });
+    tl.pickContext (Timeline::contextTrackColour + 5, onA);
+    REQUIRE (ui.region (a).color.has_value());
+    CHECK (ui.region (a).color->palette == 4);
+    CHECK (ui.region (b).color->palette == 4);
+    CHECK (ui.studio.perform (Cmd::undo));
+    CHECK_FALSE (ui.region (a).color.has_value());
+    CHECK_FALSE (ui.region (b).color.has_value());
+    CHECK (ui.studio.perform (Cmd::redo));
+    tl.pickContext (Timeline::contextTrackColour, onA);
+    CHECK_FALSE (ui.region (a).color.has_value());
+
+    // Split Here cuts the selection where the menu was opened.
+    ui.studio.selection.set ({ a });
+    const auto at = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (2.0 * bar)), onA.y);
+    tl.pickContext (Timeline::contextSplitHere, at);
+    CHECK (ui.region (a).length == 2 * bar);
+
+    // A command item runs the command.
+    ui.studio.selection.set ({ b });
+    tl.pickContext (Timeline::contextCommand + static_cast<int> (Cmd::muteRegions) + 1, ui.centreOf (b));
+    CHECK (ui.region (b).muted);
+
+    // On an empty lane: Paste, Set Project End Here, then Clear Project End.
+    const auto empty = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (12.0 * bar)), onA.y);
+    CHECK (labels (tl.contextMenu (empty)) == juce::StringArray { "Paste", "Set Project End Here", "Add Comment" });
+    tl.pickContext (Timeline::contextSetEnd, empty);
+    REQUIRE (ui.m().info.endMarker.has_value());
+    CHECK (*ui.m().info.endMarker == 12 * bar);
+    CHECK (ui.studio.perform (Cmd::goToEnd));
+    CHECK (ui.studio.playhead() == 12 * bar);
+    CHECK (labels (tl.contextMenu (empty)).contains ("Clear Project End"));
+    tl.pickContext (Timeline::contextClearEnd, empty);
+    CHECK_FALSE (ui.m().info.endMarker.has_value());
+}
+
+TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Recording options; K says when the click plays", "[UI][transport]")
+{
+    Ui ui;
+    auto settings = [&] { return ui.studio.engine().settings(); };
+    REQUIRE (settings().metronomeDuring == engine::ClickDuring::record);
+    if (settings().metronomeOn)
+        CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (settings().metronomeOn);
+    CHECK (ui.studio.status.contains ("while recording"));
+
+    ui.main->menuItemSelected (MainComponent::clickDuringBoth, 4);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::both);
+    const auto returned = settings().returnToStartOnStop;
+    ui.main->menuItemSelected (MainComponent::returnToStart, 4);
+    CHECK (settings().returnToStartOnStop != returned);
+    const auto merge = settings().midiMergeLinear;
+    ui.main->menuItemSelected (MainComponent::mergeLinear, 4);
+    CHECK (settings().midiMergeLinear != merge);
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+            items.add (it.getItem().text);
+    CHECK (items.contains ("Click During"));
+    CHECK (items.contains ("Return to Start on Stop"));
+    CHECK (items.contains ("MIDI Recording"));
+
+    // Opening another project keeps these options but takes the project's metronome defaults.
+    const auto keep = settings();
+    std::string error;
+    commands::NewProjectOptions second;
+    second.name = "Second";
+    REQUIRE (ui.studio.newProject (ui.folder.path / "projects", second, &error));
+    CHECK (settings().returnToStartOnStop == keep.returnToStartOnStop);
+    CHECK (settings().midiMergeLinear == keep.midiMergeLinear);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::record);
+}
+
+TEST_CASE ("F-TRN-3 Ctrl+Space pauses where the playhead is; Space returns to the play start", "[UI][transport]")
+{
+    Ui ui;
+    REQUIRE (ui.studio.engine().settings().returnToStartOnStop);
+    ui.studio.locate (3840);
+    ui.renderAudio();
+    CHECK (ui.key (juce::KeyPress::spaceKey, juce::ModifierKeys::commandModifier)); // plays
+    ui.renderAudio (48000);
+    CHECK (ui.studio.playing());
+    CHECK (ui.key (juce::KeyPress::spaceKey, juce::ModifierKeys::commandModifier)); // pauses
+    ui.renderAudio();
+    CHECK_FALSE (ui.studio.playing());
+    const auto paused = ui.studio.playhead();
+    CHECK (paused > 3840 + 1500);
+
+    CHECK (ui.key (juce::KeyPress::spaceKey)); // plays on from there...
+    ui.renderAudio (48000);
+    CHECK (ui.key (juce::KeyPress::spaceKey)); // ...and Stop goes back to where that started
+    ui.renderAudio();
+    CHECK (ui.studio.playhead() == paused);
+}
+
+TEST_CASE ("Loop Region loops up to the next region, else to the cycle end, else 3 repeats (D-ARR-8)", "[UI]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (2);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 6 * bar, bar);
+    const auto c = *s.createMidiRegion (tracks[0], 7 * bar, bar);
+    const auto d = *s.createMidiRegion (tracks[1], 0, 2 * bar);
+    ui.studio.edited();
+    ui.settle();
+    auto loopEnd = [&] (const Id& id) { const auto& l = ui.m().region (id)->loop; return l ? l->endTicks : Ticks (-1); };
+
+    ui.studio.selection.set ({ a });
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (a) == 6 * bar);
+
+    ui.studio.selection.set ({ b }); // c starts right after it
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (b) == -1);
+    CHECK (ui.studio.status.contains ("no room"));
+
+    ui.studio.selection.set ({ c }); // nothing after it, no cycle: 3 repeats
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (c) == 11 * bar);
+
+    REQUIRE (s.setCycle (true, 0, 9 * bar));
+    ui.studio.selection.set ({ d });
+    ui.main->run (Cmd::loopRegion);
+    CHECK (loopEnd (d) == 9 * bar);
+    ui.main->run (Cmd::loopRegion); // toggles back off
+    CHECK (loopEnd (d) == -1);
+}
+
+TEST_CASE ("AT-TRN-3 Space plays and stops in the tracks area, and types a space in a text field", "[UI][transport][AT-TRN-3]")
+{
+    Ui ui;
+    CHECK (ui.key (juce::KeyPress::spaceKey));
+    ui.renderAudio();
+    CHECK (ui.studio.playing());
+    CHECK (ui.key (juce::KeyPress::spaceKey));
+    ui.renderAudio();
+    CHECK_FALSE (ui.studio.playing());
+
+    // Renaming a track: the key goes to the text field, which types it, and the transport stays put.
+    auto& header = *ui.main->tracks().headers().front();
+    header.name.showEditor();
+    auto* editor = header.name.getCurrentTextEditor();
+    REQUIRE (editor != nullptr);
+    editor->setText ("Lead", false);
+    editor->moveCaretToEnd();
+    CHECK (editor->keyPressed (juce::KeyPress (juce::KeyPress::spaceKey, {}, ' ')));
+    ui.renderAudio();
+    CHECK (editor->getText() == "Lead ");
+    CHECK_FALSE (ui.studio.playing());
+}
+
+TEST_CASE ("AT-TRN-18 With follow on, playing past the right edge scrolls the view; with follow off it doesn't", "[UI][transport][AT-TRN-18]")
+{
+    Ui ui;
+    const auto width = static_cast<double> (ui.timeline().getWidth());
+    REQUIRE (width > 300);
+    auto showFourBars = [&] {
+        ui.studio.view.originTick = 0;
+        ui.studio.view.pixelsPerTick = width / (4.0 * bar);
+    };
+    auto visible = [&] {
+        const auto x = ui.studio.view.tickToX (static_cast<double> (ui.studio.playhead()));
+        return x >= 0.0 && x <= width;
+    };
+
+    showFourBars();
+    REQUIRE (ui.studio.follow);
+    ui.main->run (Cmd::playStop);
+    for (int i = 0; i < 100; ++i) // 12.5 s at 120 BPM: past bar 6
+    {
+        ui.renderAudio (6000);
+        ui.main->tracks().followPlayhead();
+        CHECK (visible());
+    }
+    CHECK (ui.studio.view.originTick > 0.0);
+    ui.main->run (Cmd::playStop);
+    ui.renderAudio();
+
+    ui.studio.follow = false;
+    ui.studio.locate (0);
+    showFourBars();
+    ui.main->run (Cmd::playStop);
+    for (int i = 0; i < 100; ++i)
+    {
+        ui.renderAudio (6000);
+        ui.main->tracks().followPlayhead();
+    }
+    CHECK (ui.studio.view.originTick == 0.0);
+    CHECK_FALSE (visible());
+    ui.main->run (Cmd::playStop);
+    ui.renderAudio();
 }

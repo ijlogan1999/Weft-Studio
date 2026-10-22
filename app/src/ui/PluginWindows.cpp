@@ -82,7 +82,7 @@ PluginWindow::PluginWindow (Studio& s, PluginWindows& owner, const Id& id)
     const auto* plugin = studio.pluginInstance (pluginId, &trackId);
     const auto* track = studio.model().track (trackId);
     const auto name = plugin != nullptr ? juce::String (plugin->name) : juce::String ("Plug-in");
-    setName (name + (track != nullptr ? " · " + juce::String (track->name) : juce::String()));
+    setName (name + (track != nullptr ? juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 ")) + juce::String (track->name) : juce::String()));
     setUsingNativeTitleBar (true);
     if (desktopWindows())
         setAlwaysOnTop (true);

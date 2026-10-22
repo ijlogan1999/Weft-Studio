@@ -111,6 +111,10 @@ public:
     const std::filesystem::path& projectRoot() const noexcept { return folder->root(); }
     std::filesystem::path mediaDir() const { return folder->mediaDir(); }
     bool audioRunning() const noexcept { return audioOk; }
+    /** The device that stopped by itself (unplugged), while Weft runs without sound and tries to
+        reopen it every reconnectIntervalMs; empty otherwise. */
+    const std::string& lostDeviceName() const noexcept { return lostDevice; }
+    double reconnectIntervalMs = 2000.0;
     media::DecoderSet decoders;
 
     // View state ---------------------------------------------------------------
@@ -138,9 +142,13 @@ public:
 
     const Id& selectedTrack() const noexcept { return local.selectedTrack; }
     void selectTrack (const Id& trackId);
+    /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
+    bool moveTrackTo (const Id& trackId, std::size_t index);
     const commands::LocalView& localView() const noexcept { return local; }
     void toggleArm (const Id& trackId);
     void toggleSolo (const Id& trackId, bool exclusive = false);
+    /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */
+    void toggleMute (const Id& trackId);
 
     int trackHeight (const Id& trackId) const;
     void setTrackHeight (const Id& trackId, int height);
@@ -161,6 +169,8 @@ public:
 
     /** Drop of files on the arrange view (W-3, F-ARR-26/27). */
     engine::ImportOutcome importFiles (const std::vector<std::filesystem::path>& files, engine::DropTarget target);
+    /** File › Import Audio: at the playhead, on the selected track when it's an audio track, else on new tracks. */
+    engine::ImportOutcome importAtPlayhead (const std::vector<std::filesystem::path>& files);
     /** Plays a file in the browser (F-LIB-1). False when it can't be read. */
     bool previewFile (const std::filesystem::path& file);
 
@@ -548,6 +558,11 @@ private:
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
     std::int64_t locatedFrame = -1;
     bool audioOk = false;
+    engine::DeviceConfig deviceConfig; // what the current device was opened with
+    std::string lostDevice;
+    double lastReconnectMs = 0;
+    /** Notices a device that stopped by itself, and reopens it once it's back. */
+    void checkDevice();
     void startSilentClock();
     std::unique_ptr<engine::NullDevice> silentClock; // drives the engine in No-audio mode
     double silentClockMs = 0;

@@ -14,6 +14,7 @@ std::vector<CommandInfo> build()
 {
     std::vector<CommandInfo> t {
         { Cmd::playStop, "Play/Stop", "Space", { key (K::spaceKey) } },
+        { Cmd::pause, "Pause", "Ctrl+Space", { key (K::spaceKey, ctrl) } },
         { Cmd::record, "Record", "R", { key ('R') } },
         { Cmd::cycle, "Cycle", "C", { key ('C') } },
         { Cmd::metronome, "Metronome", "K", { key ('K') } },
@@ -87,6 +88,12 @@ std::vector<CommandInfo> build()
         { Cmd::addComment, "Add Comment", "Shift+C", { key ('C', shift) } },
         { Cmd::saveVersion, "Save Version...", "Ctrl+Alt+S", { key ('S', ctrl | alt) } },
         { Cmd::lockTrack, "Lock/Unlock Track", "", {} },
+        { Cmd::importAudio, "Import Audio...", "Ctrl+I", { key ('I', ctrl) } },
+        { Cmd::quit, "Exit", "Ctrl+Q", { key ('Q', ctrl) } },
+        { Cmd::duplicateTrack, "Duplicate Track", "Ctrl+D", { key ('D', ctrl) } },
+        { Cmd::duplicateTrackWithRegions, "Duplicate Track with Regions", "Ctrl+Shift+D", { key ('D', ctrl | shift) } },
+        { Cmd::moveTrackUp, "Move Track Up", "", {} },
+        { Cmd::moveTrackDown, "Move Track Down", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

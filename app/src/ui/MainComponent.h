@@ -139,7 +139,17 @@ public:
     bool readOnlyBannerShown() const { return readOnly.isVisible(); }
     PreviewBanner& previewBanner() noexcept { return preview; }
     const ReadOnlyBanner& readOnlyBanner() const noexcept { return readOnly; }
-    static constexpr int recentMenuBase = 10000;
+    static constexpr int recentMenuBase = 10000, colourMenuBase = 20000;
+    /** Navigate menu options kept in the local transport settings (F-TRN-7, F-REC-7). */
+    enum TransportItem
+    {
+        clickDuringRecord = 30001,
+        clickDuringPlay,
+        clickDuringBoth,
+        returnToStart = 30010,
+        mergeLinear = 30020,
+        mergeCycle
+    };
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -150,6 +160,8 @@ private:
     void alert (const juce::String& title, const juce::String& text);
     void opened (const Studio::OpenResult& result);
     void chooseProjectToOpen();
+    /** File › Import Audio: files land at the playhead, on the selected audio track or on new tracks. */
+    void chooseAudioToImport();
     /** Runs `next` once signed in, asking first when signed out. */
     void whenSignedIn (std::function<void()> next);
 
@@ -172,7 +184,7 @@ private:
     std::unique_ptr<juce::AlertWindow> question, projectAlert;
     std::function<void (int)> projectAnswer;
     juce::String projectAsked, alertText;
-    std::unique_ptr<juce::FileChooser> openChooser;
+    std::unique_ptr<juce::FileChooser> openChooser, importChooser;
     void chooseSharedFolder();
     Id questionTrack;
     juce::String asked;

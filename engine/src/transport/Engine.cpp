@@ -410,6 +410,7 @@ void Engine::play (Ticks from)
     send ({ CommandType::play, toSamples (from) });
 }
 void Engine::stop() { send ({ CommandType::stop }); }
+void Engine::pause() { send ({ CommandType::stop, 1 }); }
 void Engine::locate (Ticks to)
 {
     streamer.hint (toSamples (to));
@@ -817,7 +818,7 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
                 break;
             finishCapture();
             transport = TransportState::stopped;
-            if (returnToStart)
+            if (returnToStart && c.a == 0)
                 position = playStart;
             flushAllNotes (snap);
             break;

@@ -12,6 +12,7 @@ add_library(weft_engine STATIC
     src/media/MediaPool.cpp
     src/media/MediaSource.cpp
     src/media/MediaStreamer.cpp
+    src/media/Mp3Decoder.cpp
     src/midi/KeyboardMidi.cpp
     src/midi/MidiInputs.cpp
     src/record/RecordLayout.cpp

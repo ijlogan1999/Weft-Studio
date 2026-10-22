@@ -109,6 +109,8 @@ juce::String captionText (const juce::String&);
 /** The 24-swatch track palette (F-TRK-9), Weft's own: 12 muted hues in two tones. */
 inline constexpr int paletteSize = 24;
 juce::Colour paletteColour (int index);
+/** The palette as a menu of swatches, item ids base + 1 .. base + paletteSize; `current` (-1: none) is ticked. */
+juce::PopupMenu colourMenu (int base, int current);
 /** A model colour (palette index or "#RRGGBB"). */
 juce::Colour colourFor (int palette, const std::string& rgb);
 /** A region's body: its colour laid over the canvas, so content reads on it without glare. */

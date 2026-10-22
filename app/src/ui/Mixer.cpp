@@ -142,7 +142,7 @@ void MeterView::paint (juce::Graphics& g)
     // Tick lines every 6 dB down to -48, the 0 dB line brighter.
     for (const auto db : { 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f })
     {
-        g.setColour (db == 0.0f ? colour (Token::text).withAlpha (0.35f) : colour (Token::well).withAlpha (0.6f));
+        g.setColour (db >= 0.0f ? colour (Token::text).withAlpha (0.35f) : colour (Token::well).withAlpha (0.6f));
         g.fillRect (inner.getX(), std::round (yOf (db)), inner.getWidth(), 1.0f);
     }
     if (ballistics.holdDb() > static_cast<float> (fader::minDb))
@@ -451,22 +451,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
-    mute.onClick = [this] {
-        const auto* t = track();
-        if (t == nullptr)
-            return;
-        const auto mutes = targetOf ("mute");
-        if (studio.automationLive (id, mutes))
-        {
-            // A click is a touch and a release: Latch and Write hold it until stop.
-            const auto now = studio.automationValue (id, mutes).value_or (t->mute ? 1.0 : 0.0);
-            studio.touchControl (id, mutes, automation::toMute (now) ? 0.0 : 1.0);
-            studio.releaseControl (id, mutes);
-            return;
-        }
-        studio.check (studio.session().setTrackMute (id, ! t->mute));
-        studio.edited();
-    };
+    mute.onClick = [this] { studio.toggleMute (id); };
     solo.onClick = [this] { studio.toggleSolo (id, juce::ModifierKeys::currentModifiers.isCommandDown()); };
     arm.onClick = [this] { studio.toggleArm (id); };
     monitor.onClick = [this] {
@@ -749,7 +734,7 @@ void ChannelStrip::paint (juce::Graphics& g)
         {
             const auto y = std::round (travel.getBottom() - travel.getHeight() * MeterView::proportion (db));
             // Numbers only: the meter carries the tick lines, so the scale stays quiet.
-            g.setColour (db == 0.0f ? colour (Token::text) : colour (Token::textDim));
+            g.setColour (std::abs (db) < 0.5f ? colour (Token::text) : colour (Token::textDim));
             const auto label = db <= -90.0f ? juce::String ("inf") : db > 0.0f ? "+" + juce::String (juce::roundToInt (db)) : juce::String (juce::roundToInt (db));
             g.drawText (label, juce::Rectangle<float> (travel.getX(), y - 6.0f, travel.getWidth() - 2.0f, 12.0f), juce::Justification::centredRight, false);
         }

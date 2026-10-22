@@ -27,13 +27,43 @@ void TxnWriter::recordSet (const Path& p, std::optional<Value> before, std::opti
     txn.records.push_back (std::move (r));
 }
 
+std::vector<std::pair<Path, std::string>> TxnWriter::nestedOpIds (const Path& p, const Value& container) const
+{
+    std::vector<std::pair<Path, std::string>> out;
+    auto walk = [&] (auto& self, const Path& rel, const Value& v) -> void {
+        auto visit = [&] (const Path& childRel, const Value& child) {
+            if (! child.isContainer())
+                return;
+            Path full = p;
+            full.insert (full.end(), childRel.begin(), childRel.end());
+            if (auto op = document.opId (full))
+                out.emplace_back (childRel, std::move (*op));
+            self (self, childRel, child);
+        };
+        if (v.isMap())
+            for (const auto& [key, child] : v.asMap())
+                visit (rel / key, child);
+        else
+            for (std::size_t i = 0; i < v.asList().size(); ++i)
+                visit (rel / PathSegment::at (i), v.asList()[i]);
+    };
+    walk (walk, {}, container);
+    return out;
+}
+
 bool TxnWriter::put (const Path& p, const Value& v)
 {
     auto before = document.get (p);
-    const auto beforeOp = before && before->isContainer() ? document.opId (p).value_or ("") : std::string();
+    const bool container = before && before->isContainer();
+    const auto beforeOp = container ? document.opId (p).value_or ("") : std::string();
+    std::vector<std::pair<Path, std::string>> nested;
+    if (container && ! setIndex.contains (doc::toString (p)))
+        nested = nestedOpIds (p, *before);
     if (document.put (p, v) != Status::ok)
         return false;
     recordSet (p, std::move (before), v, beforeOp);
+    if (! nested.empty())
+        txn.records[setIndex[doc::toString (p)]].beforeNestedOpIds = std::move (nested);
     return true;
 }
 
@@ -43,9 +73,14 @@ bool TxnWriter::remove (const Path& p)
     if (! before)
         return true; // already gone
     const auto beforeOp = before->isContainer() ? document.opId (p).value_or ("") : std::string();
+    std::vector<std::pair<Path, std::string>> nested;
+    if (before->isContainer() && ! setIndex.contains (doc::toString (p)))
+        nested = nestedOpIds (p, *before);
     if (document.remove (p) != Status::ok)
         return false;
     recordSet (p, std::move (before), std::nullopt, beforeOp);
+    if (! nested.empty())
+        txn.records[setIndex[doc::toString (p)]].beforeNestedOpIds = std::move (nested);
     return true;
 }
 

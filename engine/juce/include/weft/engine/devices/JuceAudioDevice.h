@@ -50,6 +50,7 @@ public:
     void stop() override;
     bool isRunning() const override;
     DeviceConfig config() const override;
+    bool failed() const override;
 
     /** Why the last open() failed. */
     const std::string& lastError() const noexcept;
