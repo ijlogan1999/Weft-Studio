@@ -148,7 +148,8 @@ public:
         clickDuringBoth,
         returnToStart = 30010,
         mergeLinear = 30020,
-        mergeCycle
+        mergeCycle,
+        replaceMidi
     };
 
 private:

@@ -431,6 +431,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W1-10 | New projects click during playback and recording ("Click During: Both"), so turning the metronome on is always audible; Recording only stays a choice in Project Settings. (Changed 2026-11.) |
 | D-W2-1 | Selected instrument track receives live MIDI unarmed. |
 | D-W2-2 | Recorded MIDI regions round outward to whole bars. |
+| D-W2-4 | MIDI Recording › Replace (off by default): a pass deletes the notes and controllers already on its track between where it started recording and where it stopped (the whole cycle for a cycle pass), deletes regions that end up empty inside that range, and makes a new region instead of merging. It all undoes with the recording. |
 | D-W3-1 | Move snaps region start. |
 | D-W3-2 | Overlap stacking by per-region z-order. |
 | D-W3-3 | Split keeps crossing notes whole in the left region. |

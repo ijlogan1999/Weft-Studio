@@ -840,6 +840,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             juce::PopupMenu midi;
             midi.addItem (mergeLinear, "Merge into Existing Region", true, settings.midiMergeLinear);
             midi.addItem (mergeCycle, "Merge Cycle Passes", true, settings.midiMergeCycle);
+            midi.addSeparator();
+            midi.addItem (replaceMidi, "Replace", true, settings.midiReplace);
             menu.addSubMenu ("MIDI Recording", midi);
             break;
         }
@@ -889,7 +891,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > clickDuringRecord - 1 && itemId <= mergeCycle)
+    if (itemId > clickDuringRecord - 1 && itemId <= replaceMidi)
     {
         auto settings = studio.engine().settings();
         switch (itemId)
@@ -900,6 +902,7 @@ void MainComponent::menuItemSelected (int itemId, int)
             case returnToStart: settings.returnToStartOnStop = ! settings.returnToStartOnStop; break;
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
+            case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;
             default: return;
         }
         studio.engine().setSettings (settings);

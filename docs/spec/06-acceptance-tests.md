@@ -140,6 +140,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-21** [UI] · F-REC-18, L-REC-7 · Ctrl+. while recording stops, removes the take (its Record step is undone, so Redo brings it back) and returns the playhead to where recording started; when not recording it does nothing and says so.
 
+**AT-REC-22** [E] · L-MREC-6, D-W2-4 · With MIDI Recording › Replace on, a one-bar pass from bar 1 deletes the existing notes on its track inside that bar, deletes a region left empty inside it, keeps notes after it, and adds the new region (even with Merge on); one undo restores it all.
+
 ## 4. Tracks (TRK)
 
 **AT-TRK-1** [E] · F-TRK-1 · A mono audio track's region is output equally to L and R at center pan (−3 dB each per pan law); a stereo track preserves channel separation.

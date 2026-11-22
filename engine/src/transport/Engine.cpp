@@ -654,7 +654,8 @@ std::optional<RecordingOutcome> Engine::finishRecording (commands::Session& sess
     }
     for (const auto& lane : p.midi)
     {
-        auto m = layoutMidi (p, *lane, tempo, signatures, currentSettings.midiMergeLinear, currentSettings.midiMergeCycle);
+        auto m = layoutMidi (p, *lane, tempo, signatures, currentSettings.midiMergeLinear, currentSettings.midiMergeCycle,
+                             currentSettings.midiReplace);
         if (! m.notes.empty() || ! m.controllers.empty())
             midi.push_back (std::move (m));
     }

@@ -25,5 +25,5 @@ AudioLayout layoutAudio (const RecordPass& pass, std::int64_t frames, const Temp
 /** Notes and controllers for one MIDI lane. Linear passes span whole bars around the events; cycle passes
     span the cycle (and any bars before it). No events: an empty result. */
 commands::RecordedMidi layoutMidi (const RecordPass& pass, const RecordPass::MidiLane& lane, const TempoMap& tempo, const SignatureMap& signatures,
-                                   bool mergeLinear, bool mergeCycle);
+                                   bool mergeLinear, bool mergeCycle, bool replace = false);
 } // namespace weft::engine

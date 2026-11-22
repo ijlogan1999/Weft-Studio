@@ -1445,6 +1445,7 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     settings.returnToStartOnStop = before.returnToStartOnStop;
     settings.midiMergeLinear = before.midiMergeLinear;
     settings.midiMergeCycle = before.midiMergeCycle;
+    settings.midiReplace = before.midiReplace;
     eng->setSettings (settings);
     loadProjectMedia();
     syncEngine();

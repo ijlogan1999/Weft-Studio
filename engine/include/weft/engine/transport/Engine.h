@@ -55,6 +55,8 @@ struct TransportSettings
     /** MIDI recording over an existing region: merge into it, or a new region on top (F-REC-7). */
     bool midiMergeLinear = false;
     bool midiMergeCycle = true;
+    /** MIDI Recording › Replace (L-MREC-6): a pass deletes what was on the track where it recorded. */
+    bool midiReplace = false;
 
     static TransportSettings fromDefaults (const model::MetronomeSettings& m);
 };

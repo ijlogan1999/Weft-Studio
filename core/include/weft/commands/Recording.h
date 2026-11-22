@@ -43,6 +43,12 @@ struct RecordedMidi
     Ticks regionStart = 0, regionEnd = 0;      // the new region's span (bars)
     /** Merge into the topmost MIDI region overlapping the span, extending it, instead of a new region (F-REC-7). */
     bool merge = false;
+    /**
+        Replace (L-MREC-6, D-W2-4): notes and controllers already on the track between
+        replaceFrom and replaceTo are deleted, and regions left empty inside that range go too.
+    */
+    bool replace = false;
+    Ticks replaceFrom = 0, replaceTo = 0;
 };
 
 /** Minutes of recording the free space holds for the armed tracks (F-REC-16). */

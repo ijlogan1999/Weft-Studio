@@ -680,6 +680,53 @@ TEST_CASE ("AT-REC-15: linear MIDI recording replaces by default and merges on r
     }
 }
 
+TEST_CASE ("AT-REC-22: MIDI Replace deletes what was on the track where the pass recorded", "[E][record][midi][AT-REC-22]")
+{
+    Rig rig;
+    recordSettings (rig);
+    auto s = rig.engine.settings();
+    s.midiReplace = true;
+    s.midiMergeLinear = true; // Replace wins over merging
+    rig.engine.setSettings (s);
+    auto [keys, probe] = probeTrack (rig);
+    const auto longer = rig.session.createMidiRegion (keys, 0, 2 * barTicks).value();
+    const auto inside = rig.session.createMidiRegion (keys, 960, 960).value();
+    model::Note n;
+    n.pos = 0;
+    n.pitch = 50;
+    REQUIRE (rig.session.addNote (longer, n)); // in the pass: goes
+    n.pos = barTicks + 480;
+    n.pitch = 52;
+    REQUIRE (rig.session.addNote (longer, n)); // after it: stays
+    n.pos = 0;
+    n.pitch = 55;
+    REQUIRE (rig.session.addNote (inside, n)); // its region empties and goes
+    rig.sync();
+    rig.engine.setArmedTracks ({ keys });
+    const auto base = rig.engine.deviceFrames();
+    REQUIRE (rig.engine.record (0).recording);
+    rig.engine.sendMidi (0x90, 60, 100, base + 12000);
+    rig.engine.sendMidi (0x80, 60, 0, base + 24000);
+    rig.run (barSamples);
+    REQUIRE (rig.finishRecording());
+
+    CHECK (rig.session.model().region (inside) == nullptr);
+    REQUIRE (rig.session.model().region (longer) != nullptr);
+    const auto kept = notesOf (rig, *rig.session.model().region (longer));
+    REQUIRE (kept.size() == 1);
+    CHECK (kept[0]->pitch == 52);
+    const auto regions = rig.regionsOn (keys);
+    REQUIRE (regions.size() == 2); // the old one and the new recording
+    const auto* recorded = regions[0]->id == longer ? regions[1] : regions[0];
+    REQUIRE (notesOf (rig, *recorded).size() == 1);
+    CHECK (notesOf (rig, *recorded)[0]->pitch == 60);
+
+    // One undo brings everything back.
+    rig.session.undo();
+    CHECK (rig.session.model().region (inside) != nullptr);
+    CHECK (notesOf (rig, *rig.session.model().region (longer)).size() == 2);
+}
+
 TEST_CASE ("AT-REC-20: the computer keyboard plays and records notes", "[E][record][midi][AT-REC-20]")
 {
     KeyboardMidi kb;
