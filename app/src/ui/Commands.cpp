@@ -99,6 +99,7 @@ std::vector<CommandInfo> build()
         { Cmd::reverseRegions, "Reverse Regions", "", {} },
         { Cmd::snapZeroCrossings, "Snap Edits to Zero Crossings", "", {} },
         { Cmd::tapTempo, "Tap Tempo", "Shift+T", { key ('T', shift) } },
+        { Cmd::showHiddenTracks, "Show Hidden Tracks", "Ctrl+Shift+H", { key ('H', ctrl | shift) } },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

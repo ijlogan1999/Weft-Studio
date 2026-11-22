@@ -61,6 +61,7 @@ Project {
 
   metronomeDefaults: MetronomeSettings   // per-user settings start from this (D-DM-12)
   key: { tonic: 0..11, mode: "major" | "minor" }   // F-TMP-10, D-DM-20
+  showHiddenTracks: bool          // hidden tracks get rows again (D-W3-7)
   automationLanes: Map<Id, AutomationLane>
 
   collab: CollabMeta              // §9
@@ -90,6 +91,7 @@ Track {
   mute: bool
   solo: bool                    // LOCAL ONLY (D-COL-7)
   recordEnabled: bool           // LOCAL ONLY, see below
+  hidden: bool                  // L-TRH-10: no row in the tracks area unless showHiddenTracks (D-W3-7)
   monitor: 'auto' | 'on' | 'off'
   heightPx: int                 // LOCAL ONLY
   locked: LockInfo?             // §9.3

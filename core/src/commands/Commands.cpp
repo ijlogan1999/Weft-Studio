@@ -268,6 +268,24 @@ EditResult Session::setTrackOff (const Id& trackId, bool off)
     return run (off ? "Turn Track Off" : "Turn Track On", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "off", Value (off))); });
 }
 
+EditResult Session::setTrackHidden (const Id& trackId, bool hidden)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (t->kind == TrackKind::master)
+        return reject ("The master can't be hidden.");
+    if (t->hidden == hidden)
+        return reject (hidden ? "That track is already hidden." : "That track isn't hidden.");
+    return run (hidden ? "Hide Track" : "Unhide Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "hidden", Value (hidden))); });
+}
+
+EditResult Session::setShowHiddenTracks (bool show)
+{
+    return run (show ? "Show Hidden Tracks" : "Hide Hidden Tracks",
+                [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "showHiddenTracks" }), Value (show))); });
+}
+
 EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
 {
     const auto* t = projection.track (trackId);

@@ -710,7 +710,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
-        case Cmd::reverseRegions: case Cmd::snapZeroCrossings: case Cmd::tapTempo:
+        case Cmd::reverseRegions: case Cmd::snapZeroCrossings: case Cmd::tapTempo: case Cmd::showHiddenTracks:
             break;
     }
     return std::nullopt;
@@ -949,6 +949,10 @@ bool Studio::perform (Cmd command)
         }
         case Cmd::snapToggle: snapEnabled = ! snapEnabled; break;
         case Cmd::tapTempo: return tapTempo (juce::Time::getMillisecondCounterHiRes());
+        case Cmd::showHiddenTracks:
+            if (! check (session().setShowHiddenTracks (! model().info.showHiddenTracks)))
+                return false;
+            break;
         case Cmd::snapZeroCrossings:
             snapZeroCrossings = ! snapZeroCrossings;
             setStatus (snapZeroCrossings ? "Audio editor trims snap to zero crossings." : "Zero-crossing snap off.");
@@ -2386,7 +2390,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
-        Cmd::reverseRegions, Cmd::tapTempo,
+        Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

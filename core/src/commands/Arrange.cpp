@@ -84,8 +84,8 @@ RegionClipboard RegionClipboard::of (const model::ProjectModel& m, const std::ve
 
 int trackRow (const model::ProjectModel& m, const Id& trackId)
 {
-    const auto it = std::find (m.trackOrder.begin(), m.trackOrder.end(), trackId);
-    return it == m.trackOrder.end() ? -1 : static_cast<int> (it - m.trackOrder.begin());
+    const auto it = std::find (m.rows.begin(), m.rows.end(), trackId);
+    return it == m.rows.end() ? -1 : static_cast<int> (it - m.rows.begin());
 }
 
 MovePlan planMove (const model::ProjectModel& m, const RegionClipboard& clip, Ticks deltaTicks, int deltaTracks, int fallbackRow)
@@ -94,7 +94,7 @@ MovePlan planMove (const model::ProjectModel& m, const RegionClipboard& clip, Ti
     if (clip.empty())
         return plan;
     plan.deltaTicks = std::max (deltaTicks, -clip.earliestStart());
-    const auto rows = static_cast<int> (m.trackOrder.size());
+    const auto rows = static_cast<int> (m.rows.size());
     std::map<std::pair<int, TrackKind>, int> newTrackIndex;
 
     // Take folders move as one: every take follows the row of the folder's first take.
@@ -118,7 +118,7 @@ MovePlan planMove (const model::ProjectModel& m, const RegionClipboard& clip, Ti
         }
         else if (target < rows)
         {
-            const auto* t = m.track (m.trackOrder[static_cast<std::size_t> (target)]);
+            const auto* t = m.track (m.rows[static_cast<std::size_t> (target)]);
             if (t != nullptr && canHold (*t, r.isMidi))
                 p.trackId = t->id;
         }

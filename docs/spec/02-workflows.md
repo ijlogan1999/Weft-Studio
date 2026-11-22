@@ -449,6 +449,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-ARR-8 | The Loop Region command (no drag) loops up to the next region on the track; with none after it, to the cycle end when the cycle is on and ends later; otherwise for 3 repeats. A region directly followed by another isn't looped. |
 | D-W3-4 | Undo history is per session, not persisted. |
 | D-W3-5 | Region Delay (inspector, audio and MIDI regions) shifts playback by −500…+500 ms without moving the region; it applies to loop repeats too, and the drawn region stays where it is. |
+| D-W3-7 | Hide Track (track header menu) takes a track's row out of the tracks area; it still plays and shows in the mixer. View › Show Hidden Tracks (Ctrl+Shift+H) brings hidden rows back, marked HIDDEN, so they can be unhidden. Both the flags and the switch are saved with the project and shared with collaborators. Row-based edits (dragging regions across rows, the marquee) skip hidden rows. |
 | D-W3-6 | Snap Edits to Zero Crossings (View menu, off by default, per user) applies to audio editor trims: the edge goes to the nearest zero crossing of the channels summed within 10 ms, in place of grid snap; Alt still bypasses it. |
 | D-W4-1 | MIDI 60 is labeled C3. |
 | D-W4-2 | The pencil places a note on the grid line at or before the click; dragging on lengthens it in the same undo step. |

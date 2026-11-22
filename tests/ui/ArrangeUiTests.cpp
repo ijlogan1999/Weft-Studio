@@ -423,7 +423,7 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
         if (! it.getItem().isSeparator)
             headerItems.add (it.getItem().text);
     CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
-                                              "Delete Track", "Turn Track Off", "Lock Track", "Add Comment" });
+                                              "Delete Track", "Turn Track Off", "Hide Track", "Lock Track", "Add Comment" });
     header->pickMenu (TrackHeader::itemTrackOff); // L-TRH-7
     CHECK (ui.m().track (audio)->off);
     header->pickMenu (TrackHeader::itemTrackOff);
@@ -649,6 +649,53 @@ TEST_CASE ("AT-TMP-3 Ctrl+click in the tempo lane adds a change; dragging it cha
     ruler.pointerDown ({ bar5, ruler.tempoY (added.bpm) }, juce::ModifierKeys::rightButtonModifier);
     ruler.pointerUp();
     CHECK (ui.m().tempo.points().size() == 1);
+}
+
+TEST_CASE ("AT-TRK-16 Hide Track removes the row; Show Hidden Tracks brings it back to unhide", "[UI][AT-TRK-16]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    REQUIRE (ui.studio.session().createTrack (model::TrackKind::audio, "Second"));
+    ui.studio.edited();
+    ui.settle();
+    const auto second = ui.m().trackOrder[1];
+    const auto headerFor = [&] (const Id& id) -> TrackHeader* {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return h.get();
+        return nullptr;
+    };
+    REQUIRE (headerFor (first) != nullptr);
+    headerFor (first)->pickMenu (TrackHeader::itemHide);
+    ui.settle();
+    CHECK (ui.m().track (first)->hidden);
+    CHECK (headerFor (first) == nullptr);
+    REQUIRE (ui.main->tracks().headers().size() == 1);
+    CHECK (ui.timeline().rows() == 1);
+    CHECK (ui.main->tracks().headers().front()->getY() == juce::roundToInt (ui.timeline().rowBounds (0).getY()));
+    CHECK (ui.main->tracks().headers().front()->trackId == second);
+
+    REQUIRE (ui.studio.perform (Cmd::showHiddenTracks));
+    ui.settle();
+    REQUIRE (headerFor (first) != nullptr);
+    CHECK (ui.timeline().rows() == 2);
+    juce::StringArray items;
+    const auto hm = headerFor (first)->menu();
+    for (juce::PopupMenu::MenuItemIterator it (hm); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Unhide Track"));
+    headerFor (first)->pickMenu (TrackHeader::itemHide);
+    ui.settle();
+    CHECK_FALSE (ui.m().track (first)->hidden);
+    REQUIRE (ui.studio.perform (Cmd::showHiddenTracks));
+    ui.settle();
+    CHECK (ui.timeline().rows() == 2);
+
+    juce::StringArray view;
+    const auto menu = ui.main->getMenuForIndex (5, "View");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        view.add (it.getItem().text);
+    CHECK (view.contains ("Show Hidden Tracks"));
 }
 
 TEST_CASE ("AT-TMP-8 Alt-drag copies a tempo change", "[UI][AT-TMP-8]")

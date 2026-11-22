@@ -154,6 +154,10 @@ public:
     EditResult setSampleRate (int rate);
     /** Project Settings: the metronome the project opens with. */
     EditResult setMetronomeDefaults (const model::MetronomeSettings& settings);
+    /** Hide or unhide a track (L-TRH-10); steps "Hide Track" / "Unhide Track". Not the master. */
+    EditResult setTrackHidden (const Id& trackId, bool hidden);
+    /** Whether hidden tracks get rows (L-TRH-10). */
+    EditResult setShowHiddenTracks (bool show);
     /** The project's key (F-TMP-10); step "Set Key". */
     EditResult setKey (const model::KeySignature& key);
     EditResult setCycle (bool enabled, Ticks start, Ticks end);

@@ -130,6 +130,8 @@ struct Track
     bool mute = false;
     /** Track off (L-TRH-7): the channel isn't processed at all (no playback, plug-ins idle). Audio and instrument tracks. */
     bool off = false;
+    /** Hidden (L-TRH-10): no row in the tracks area unless Show Hidden Tracks is on; still plays. */
+    bool hidden = false;
     std::string monitor = "auto"; // auto | on | off
     std::optional<LockInfo> locked;
     ChannelStrip strip;
@@ -424,6 +426,7 @@ struct ProjectInfo
     std::optional<Ticks> endMarker;
     MetronomeSettings metronomeDefaults;
     KeySignature key;
+    bool showHiddenTracks = false; // L-TRH-10: hidden tracks get rows again (to unhide them)
 };
 
 bool isValidSampleRate (int rate) noexcept;

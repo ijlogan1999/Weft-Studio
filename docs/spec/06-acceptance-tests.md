@@ -174,6 +174,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-14** [UI] · L-TRH-3 · A track at the default height shows a volume slider and a pan knob on the header's second line; moving them sets the channel's volume and pan (one undo step per drag), the slider's bottom is −inf, and changes made in the mixer move them.
 
+**AT-TRK-16** [U][UI] · L-TRH-10, D-W3-7 · Hide Track removes the track's header and lane while it stays in the track order; a region dragged down one row from the track above lands on the track below the hidden one, and a marquee skips it; the master can't be hidden; View › Show Hidden Tracks brings the row back with Unhide Track in its menu; hiding is one undo step and saved with the track.
+
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
 ## 5. Arrange (ARR)

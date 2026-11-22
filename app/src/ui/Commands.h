@@ -46,7 +46,9 @@ enum class Cmd
     // Audio editor (L-ATE-3)
     snapZeroCrossings,
     // Tap Tempo (L-TMP-9)
-    tapTempo
+    tapTempo,
+    // Hide tracks (L-TRH-10)
+    showHiddenTracks
 };
 
 struct CommandInfo
