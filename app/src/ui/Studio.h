@@ -230,6 +230,8 @@ public:
         restored from there) and takes it off Open Recent. The open project can't be deleted.
     */
     bool deleteProject (const std::filesystem::path& root, std::string* error = nullptr);
+    /** Export Regions as Files (L-EXP-2, L-EXP-3): the selected regions into `destination`; returns the files written. */
+    std::vector<std::filesystem::path> exportSelectedRegions (const std::filesystem::path& destination);
     /** How deleteProject removes a folder; the system Trash unless a test replaces it. */
     std::function<bool (const std::filesystem::path&)> moveToTrash = [] (const std::filesystem::path& dir) {
         return juce::File (juce::String::fromUTF8 (reinterpret_cast<const char*> (dir.u8string().c_str()))).moveToTrash();

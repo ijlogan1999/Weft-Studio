@@ -396,6 +396,10 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-EXP-11** [UI] · F-EXP-1 · Bouncing to an existing filename asks Replace / Keep both; Keep both writes "name (2).wav".
 
+**AT-EXP-12** [E][UI] · L-EXP-2 · Export Regions as Files (File menu and the region menu) writes a selected audio region to `<region name>.wav` in the chosen folder, at the project rate and record bit depth, as it plays with its gain and fades but without the track strip; characters not allowed in file names become `_`; an existing name gets " (2)"; nothing selected says "Select regions to export."
+
+**AT-EXP-13** [E][U] · L-EXP-3 · A MIDI region exports to `<region name>.mid`, type 1 at 960 PPQN, starting at the region start: notes as they play (transpose and velocity offset applied, muted notes left out, cut at the region end), controllers, and the tempo and meter at the region start plus tempo changes inside it. Files Weft writes read back identically.
+
 ## 14. Library (LIB)
 
 **AT-LIB-1** [UI] · F-LIB-1 · The file browser lists folders and supported audio/MIDI files; clicking an audio file previews it; dragging it into the arrange view behaves as AT-ARR-25.

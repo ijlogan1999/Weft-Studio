@@ -401,6 +401,21 @@ void MainComponent::handleUiCommand (Cmd command)
         deleteSelectedTrack();
     else if (command == Cmd::bounce)
         BounceDialog::show (studio, this);
+    else if (command == Cmd::exportRegions)
+    {
+        if (! desktopWindows())
+            return;
+        // A folder, starting at the project's Bounces folder; the files are named after the regions.
+        const auto start = studio.projectRoot() / "Bounces";
+        std::error_code ec;
+        std::filesystem::create_directories (start, ec);
+        importChooser = std::make_unique<juce::FileChooser> ("Export Regions to Folder", juce::File (pathText (start)));
+        importChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                    [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                        if (safe != nullptr && fc.getResult() != juce::File())
+                                            safe->studio.exportSelectedRegions (textPath (fc.getResult().getFullPathName()));
+                                    });
+    }
     else if (command == Cmd::newProject)
         whenSaved ([this] {
             if (desktopWindows())
@@ -764,6 +779,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::bounce);
             add (Cmd::importAudio);
+            add (Cmd::exportRegions);
             menu.addSeparator();
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);

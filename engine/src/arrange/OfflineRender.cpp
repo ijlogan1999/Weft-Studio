@@ -3,6 +3,10 @@
 #include "weft/engine/devices/NullDevice.h"
 #include "weft/engine/transport/Engine.h"
 #include "weft/media/MediaStore.h"
+#include "weft/engine/render/Bounce.h"
+#include "weft/media/WavFile.h"
+
+#include <string_view>
 
 #include <algorithm>
 #include <cmath>
@@ -81,6 +85,49 @@ media::AudioData renderOffline (const model::ProjectModel& model, MediaPool& med
     return out;
 }
 
+namespace
+{
+/** The regions (all on trackId) as they play, without any strip, from `from` for `frames`. */
+media::AudioData renderPlain (const model::ProjectModel& original, std::vector<model::Region> rs, const Id& trackId, Ticks from,
+                              std::int64_t frames, MediaPool& media)
+{
+    // A model with just these regions on a plain stereo track into a plain master.
+    model::ProjectModel m = original;
+    auto plain = [] (model::Track t) {
+        t.strip = {};
+        t.mute = false;
+        t.output = {};
+        t.automationMode = "off";
+        return t;
+    };
+    auto track = plain (*original.track (trackId));
+    track.kind = model::TrackKind::audio;
+    track.channels = 2;
+    m.tracks.clear();
+    m.syntheticTracks.clear();
+    m.tracks.emplace (trackId, std::make_shared<model::Track> (track));
+    if (const auto* master = original.track (original.info.masterTrackId))
+        m.tracks.emplace (master->id, std::make_shared<model::Track> (plain (*master)));
+    m.trackOrder = { trackId };
+    m.recoveredTrackFor.clear();
+    m.regions.clear();
+    for (auto& r : rs)
+    {
+        r.trackId = trackId;
+        r.takeFolderId.clear();
+        m.regions.emplace (r.id, std::make_shared<model::Region> (r));
+    }
+    m.automationLanes.clear();
+    m.storedLanes.clear();
+    m.disabledEdges.clear();
+
+    OfflineRenderOptions options;
+    options.from = from;
+    options.frames = frames;
+    return renderOffline (m, media, options);
+}
+} // namespace
+
 std::optional<RenderedJoin> renderJoin (const model::ProjectModel& original, const std::vector<Id>& regionIds, MediaPool& media, std::string* error)
 {
     auto fail = [&] (std::string why) -> std::optional<RenderedJoin> {
@@ -120,41 +167,8 @@ std::optional<RenderedJoin> renderJoin (const model::ProjectModel& original, con
     rs[first].audio.fadeIn.length = 0;
     rs[last].audio.fadeOut.length = 0;
 
-    // A model with just these regions on a plain stereo track into a plain master.
-    model::ProjectModel m = original;
-    auto plain = [] (model::Track t) {
-        t.strip = {};
-        t.mute = false;
-        t.output = {};
-        t.automationMode = "off";
-        return t;
-    };
-    auto track = plain (*original.track (trackId));
-    track.kind = model::TrackKind::audio;
-    track.channels = 2;
-    m.tracks.clear();
-    m.syntheticTracks.clear();
-    m.tracks.emplace (trackId, std::make_shared<model::Track> (track));
-    if (const auto* master = original.track (original.info.masterTrackId))
-        m.tracks.emplace (master->id, std::make_shared<model::Track> (plain (*master)));
-    m.trackOrder = { trackId };
-    m.recoveredTrackFor.clear();
-    m.regions.clear();
-    for (auto& r : rs)
-    {
-        r.trackId = trackId;
-        r.takeFolderId.clear();
-        m.regions.emplace (r.id, std::make_shared<model::Region> (r));
-    }
-    m.automationLanes.clear();
-    m.storedLanes.clear();
-    m.disabledEdges.clear();
-
-    OfflineRenderOptions options;
-    options.from = rs[first].start;
-    options.frames = endSample - startSample;
-    result.audio = renderOffline (m, media, options);
-    if (result.audio.channels.size() != 2 || static_cast<std::int64_t> (result.audio.channels[0].size()) != options.frames)
+    result.audio = renderPlain (original, rs, trackId, rs[first].start, endSample - startSample, media);
+    if (result.audio.channels.size() != 2 || static_cast<std::int64_t> (result.audio.channels[0].size()) != endSample - startSample)
         return fail ("Couldn't render the regions.");
     if (! stereo)
         result.audio.channels.resize (1);
@@ -192,5 +206,116 @@ commands::EditResult joinRegions (commands::Session& session, const std::vector<
     std::error_code ec;
     ref.sizeBytes = static_cast<std::int64_t> (std::filesystem::file_size (mediaDir / media::mediaFileName (*hash), ec));
     return session.joinRegionsAs (regionIds, ref, rendered->fadeIn, rendered->fadeOut);
+}
+
+std::optional<media::AudioData> renderRegion (const model::ProjectModel& model, const Id& regionId, MediaPool& media, std::string* error)
+{
+    const auto* r = model.region (regionId);
+    if (r == nullptr || r->isMidi)
+    {
+        if (error != nullptr)
+            *error = "That isn't an audio region.";
+        return std::nullopt;
+    }
+    auto audio = renderPlain (model, { *r }, model.effectiveTrackId (*r), r->start, r->length, media);
+    if (audio.channels.size() != 2 || static_cast<std::int64_t> (audio.channels[0].size()) != r->length)
+    {
+        if (error != nullptr)
+            *error = "Couldn't render the region.";
+        return std::nullopt;
+    }
+    if (const auto* m = model.mediaRef (r->audio.media); m == nullptr || m->channels < 2)
+        audio.channels.resize (1);
+    return audio;
+}
+
+media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& regionId)
+{
+    media::MidiFileData file;
+    file.format = 1;
+    file.ticksPerQuarter = static_cast<int> (ticksPerQuarter);
+    const auto* r = model.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return file;
+    const auto offset = r->midi.sequenceOffset;
+    const auto end = offset + r->length;
+    media::MidiFileTrack track;
+    track.name = r->name;
+    if (const auto* seq = model.sequence (r->midi.sequenceId))
+    {
+        for (const auto* n : seq->sortedNotes())
+        {
+            if (n->muted || n->pos < offset || n->pos >= end)
+                continue;
+            media::MidiFileNote out;
+            out.tick = n->pos - offset;
+            out.length = std::max<std::int64_t> (1, std::min (n->length, end - n->pos));
+            out.channel = n->channel;
+            out.pitch = std::clamp (n->pitch + r->midi.transpose, 0, 127);
+            out.velocity = std::clamp (n->velocity + r->midi.velocityOffset, 1, 127);
+            out.releaseVelocity = n->releaseVelocity;
+            track.notes.push_back (out);
+        }
+        for (const auto& [id, c] : seq->controllers)
+            if (c.pos >= offset && c.pos < end)
+                track.controllers.push_back ({ c.pos - offset, c.kind, c.number, c.value, c.channel });
+        std::stable_sort (track.controllers.begin(), track.controllers.end(), [] (const auto& a, const auto& b) { return a.tick < b.tick; });
+    }
+    file.tracks.push_back (std::move (track));
+
+    // The tempo and meter in force at the region start, then every change inside it.
+    const auto regionEnd = r->start + r->length;
+    file.tempos.push_back ({ 0, model.tempo.bpmAt (r->start) });
+    for (const auto& p : model.storedTempoPoints)
+        if (p.pos > r->start && p.pos < regionEnd)
+            file.tempos.push_back ({ p.pos - r->start, p.bpm });
+    const auto at = model.signatures.barAt (r->start);
+    const auto& sig = model.signatures.signatureAtBar (at.bar);
+    file.signatures.push_back ({ 0, sig.numerator, sig.denominator });
+    return file;
+}
+
+RegionExport exportRegions (const model::ProjectModel& model, const std::vector<Id>& regionIds, MediaPool& media,
+                            const std::filesystem::path& folder, int bitDepth)
+{
+    RegionExport out;
+    std::vector<std::string> failed;
+    std::error_code ec;
+    std::filesystem::create_directories (folder, ec);
+    for (const auto& id : regionIds)
+    {
+        const auto* r = model.region (id);
+        if (r == nullptr)
+            continue;
+        auto base = r->name.empty() ? std::string ("Region") : r->name;
+        for (auto& ch : base)
+            if (std::string_view ("\\/:*?\"<>|").find (ch) != std::string_view::npos)
+                ch = '_';
+        std::string error;
+        bool ok = false;
+        std::filesystem::path file;
+        if (r->isMidi)
+        {
+            file = keepBothPath (folder / (base + ".mid"));
+            ok = media::writeMidiFile (file, midiRegionFile (model, id), &error);
+        }
+        else if (auto audio = renderRegion (model, id, media, &error))
+        {
+            audio->sampleRate = model.info.sampleRate;
+            file = keepBothPath (folder / (base + ".wav"));
+            ok = media::writeWav (file, *audio, media::formatForBitDepth (bitDepth), &error);
+        }
+        if (ok)
+            out.files.push_back (file);
+        else
+            failed.push_back (r->name);
+    }
+    if (! out.files.empty())
+        out.message = "Exported " + std::to_string (out.files.size()) + (out.files.size() == 1 ? " region" : " regions") + " to "
+                    + folder.filename().string() + ".";
+    if (! failed.empty())
+        out.message += std::string (out.message.empty() ? "" : " ") + "Couldn't export " + std::to_string (failed.size())
+                     + (failed.size() == 1 ? " region." : " regions.");
+    return out;
 }
 } // namespace weft::engine

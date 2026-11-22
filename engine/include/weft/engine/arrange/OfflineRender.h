@@ -3,6 +3,7 @@
 // Rendering faster than real time through a private engine and null device: the
 // rendered join (D-ARR-3) and bounce (W-9) use it. Message thread only.
 
+#include "weft/media/MidiFile.h"
 #include "weft/commands/Session.h"
 #include "weft/engine/devices/NullDevice.h"
 #include "weft/engine/media/MediaPool.h"
@@ -77,4 +78,27 @@ std::optional<RenderedJoin> renderJoin (const model::ProjectModel& model, const 
 */
 commands::EditResult joinRegions (commands::Session& session, const std::vector<Id>& regionIds, MediaPool& media,
                                   const std::filesystem::path& mediaDir);
+
+/** One audio region as it plays (gain and fades, no track strip), mono or stereo like its file. */
+std::optional<media::AudioData> renderRegion (const model::ProjectModel& model, const Id& regionId, MediaPool& media, std::string* error = nullptr);
+
+/**
+    A MIDI region as a type 1 MIDI file (L-EXP-3): its notes and controllers as they play
+    (transpose and velocity offset applied, muted notes left out, cut at the region's end),
+    from the region start at 960 PPQN, with the project's tempo and meter from there on.
+*/
+media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& regionId);
+
+struct RegionExport
+{
+    std::vector<std::filesystem::path> files;
+    std::string message; // the status line
+};
+/**
+    Export Region as File (L-EXP-2, L-EXP-3): audio regions become WAVs at the project rate
+    and `bitDepth`, MIDI regions become .mid files, named after the region in `folder`
+    ("name (2)" when taken).
+*/
+RegionExport exportRegions (const model::ProjectModel& model, const std::vector<Id>& regionIds, MediaPool& media,
+                            const std::filesystem::path& folder, int bitDepth);
 } // namespace weft::engine

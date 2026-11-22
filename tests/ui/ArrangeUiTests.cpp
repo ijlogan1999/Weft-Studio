@@ -290,6 +290,23 @@ TEST_CASE ("AT-TRK-14 volume and pan in the track header follow and set the chan
     CHECK (ui.m().track (id)->strip.volumeDb == minusInfinityDb);
 }
 
+TEST_CASE ("AT-EXP-12 Export Regions as Files needs a selection and writes into the chosen folder", "[UI][AT-EXP-12]")
+{
+    Ui ui;
+    ui.studio.selection.clear();
+    CHECK_FALSE (ui.studio.perform (Cmd::exportRegions));
+    CHECK (ui.studio.status == "Select regions to export.");
+    const auto keys = ui.studio.session().createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto region = ui.studio.session().createMidiRegion (keys, 0, 3840).value();
+    ui.studio.selection.set (std::vector<Id> { region });
+    CHECK (ui.studio.perform (Cmd::exportRegions)); // the folder chooser (desktop only)
+    const auto files = ui.studio.exportSelectedRegions (ui.folder.path / "exports");
+    REQUIRE (files.size() == 1);
+    CHECK (std::filesystem::exists (files[0]));
+    CHECK (files[0].extension() == ".mid");
+    CHECK (ui.studio.status.startsWith ("Exported 1 region"));
+}
+
 TEST_CASE ("AT-TRK-6 renaming in the track header: Enter, Esc, empty", "[UI]")
 {
     Ui ui;

@@ -700,7 +700,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
-        case Cmd::moveTrackDown: case Cmd::pause:
+        case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions:
             break;
     }
     return std::nullopt;
@@ -958,6 +958,15 @@ bool Studio::perform (Cmd command)
         case Cmd::saveVersion:
         case Cmd::importAudio:
         case Cmd::quit:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::exportRegions:
+            if (selection.ids().empty())
+            {
+                setStatus ("Select regions to export.");
+                return false;
+            }
             if (uiCommand)
                 uiCommand (command);
             break;
@@ -1244,6 +1253,14 @@ bool Studio::newProject (const fs::path& parent, const commands::NewProjectOptio
         return false;
     adopt (std::move (projectFolder), std::make_unique<commands::Session> (std::move (*created)), scratchProject);
     return true;
+}
+
+std::vector<fs::path> Studio::exportSelectedRegions (const fs::path& destination)
+{
+    const auto ids = selection.ids();
+    const auto result = engine::exportRegions (model(), { ids.begin(), ids.end() }, pool, destination, model().info.recordBitDepth);
+    setStatus (juce::String::fromUTF8 (result.message.c_str()));
+    return result.files;
 }
 
 bool Studio::deleteProject (const fs::path& root, std::string* error)

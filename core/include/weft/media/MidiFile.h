@@ -1,6 +1,6 @@
 #pragma once
 
-// Standard MIDI File reading (type 0 and 1) for import (F-ARR-27). Positions stay in
+// Standard MIDI File reading (type 0 and 1) for import (F-ARR-27) and writing for export (L-EXP-3). Positions stay in
 // the file's own ticks; the importer converts them to 960 PPQN.
 
 #include <cstdint>
@@ -57,4 +57,12 @@ struct MidiFileData
 /** Parses SMF bytes. Notes still held at the end of a track end there. SMPTE time division is rejected. */
 std::optional<MidiFileData> parseMidiFile (std::span<const std::uint8_t> bytes, std::string* error = nullptr);
 std::optional<MidiFileData> readMidiFile (const std::filesystem::path& file, std::string* error = nullptr);
+
+/**
+    SMF bytes for `data` (L-EXP-3): type 1 with a conductor track (tempos and signatures)
+    followed by data.tracks, or type 0 with everything in one track when format is 0.
+    Note-offs at a tick go before note-ons there.
+*/
+std::vector<std::uint8_t> encodeMidiFile (const MidiFileData& data);
+bool writeMidiFile (const std::filesystem::path& file, const MidiFileData& data, std::string* error = nullptr);
 } // namespace weft::media

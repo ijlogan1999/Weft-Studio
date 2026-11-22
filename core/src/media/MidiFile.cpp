@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <deque>
 #include <fstream>
+#include <cmath>
 #include <map>
+#include <tuple>
 
 namespace weft::media
 {
@@ -190,5 +192,150 @@ std::optional<MidiFileData> readMidiFile (const std::filesystem::path& file, std
         return failWith (error, "Couldn't open the file.");
     std::vector<std::uint8_t> bytes ((std::istreambuf_iterator<char> (in)), std::istreambuf_iterator<char>());
     return parseMidiFile (bytes, error);
+}
+
+// Writing ------------------------------------------------------------------------------
+
+namespace
+{
+struct TimedEvent
+{
+    std::int64_t tick = 0;
+    int order = 0; // at one tick: meta, then note-offs, controllers, note-ons
+    std::vector<std::uint8_t> bytes;
+};
+
+void putVarLen (std::vector<std::uint8_t>& out, std::uint64_t v)
+{
+    std::uint8_t buf[10];
+    int n = 0;
+    buf[n++] = static_cast<std::uint8_t> (v & 0x7f);
+    while ((v >>= 7) != 0)
+        buf[n++] = static_cast<std::uint8_t> (0x80 | (v & 0x7f));
+    while (n > 0)
+        out.push_back (buf[--n]);
+}
+
+void put32 (std::vector<std::uint8_t>& out, std::uint32_t v)
+{
+    for (int shift = 24; shift >= 0; shift -= 8)
+        out.push_back (static_cast<std::uint8_t> ((v >> shift) & 0xff));
+}
+
+std::uint8_t data7 (int v) { return static_cast<std::uint8_t> (std::clamp (v, 0, 127)); }
+std::uint8_t status (int high, int channel) { return static_cast<std::uint8_t> (high | ((std::clamp (channel, 1, 16) - 1) & 0x0f)); }
+
+TimedEvent meta (std::int64_t tick, std::uint8_t type, std::vector<std::uint8_t> body)
+{
+    TimedEvent e { tick, 0, { 0xff, type } };
+    putVarLen (e.bytes, body.size());
+    e.bytes.insert (e.bytes.end(), body.begin(), body.end());
+    return e;
+}
+
+void addConductor (std::vector<TimedEvent>& events, const MidiFileData& data)
+{
+    for (const auto& t : data.tempos)
+    {
+        const auto us = static_cast<std::uint32_t> (std::llround (60'000'000.0 / std::max (t.bpm, 1.0)));
+        events.push_back (meta (t.tick, 0x51, { static_cast<std::uint8_t> (us >> 16), static_cast<std::uint8_t> (us >> 8), static_cast<std::uint8_t> (us) }));
+    }
+    for (const auto& s : data.signatures)
+    {
+        std::uint8_t power = 0;
+        while ((1 << (power + 1)) <= s.denominator)
+            ++power;
+        events.push_back (meta (s.tick, 0x58, { static_cast<std::uint8_t> (s.numerator), power, 24, 8 }));
+    }
+}
+
+void addTrack (std::vector<TimedEvent>& events, const MidiFileTrack& track)
+{
+    if (! track.name.empty())
+        events.push_back (meta (0, 0x03, std::vector<std::uint8_t> (track.name.begin(), track.name.end())));
+    for (const auto& n : track.notes)
+    {
+        events.push_back ({ n.tick, 3, { status (0x90, n.channel), data7 (n.pitch), static_cast<std::uint8_t> (std::clamp (n.velocity, 1, 127)) } });
+        events.push_back ({ n.tick + std::max<std::int64_t> (1, n.length), 1, { status (0x80, n.channel), data7 (n.pitch), data7 (n.releaseVelocity) } });
+    }
+    for (const auto& c : track.controllers)
+    {
+        TimedEvent e { c.tick, 2, {} };
+        if (c.kind == "pitchBend")
+        {
+            const auto v = std::clamp (c.value + 8192, 0, 16383);
+            e.bytes = { status (0xe0, c.channel), static_cast<std::uint8_t> (v & 0x7f), static_cast<std::uint8_t> (v >> 7) };
+        }
+        else if (c.kind == "programChange")
+            e.bytes = { status (0xc0, c.channel), data7 (c.value) };
+        else if (c.kind == "channelPressure")
+            e.bytes = { status (0xd0, c.channel), data7 (c.value) };
+        else if (c.kind == "polyPressure")
+            e.bytes = { status (0xa0, c.channel), data7 (c.number), data7 (c.value) };
+        else
+            e.bytes = { status (0xb0, c.channel), data7 (c.number), data7 (c.value) };
+        events.push_back (std::move (e));
+    }
+}
+
+void putTrackChunk (std::vector<std::uint8_t>& out, std::vector<TimedEvent> events)
+{
+    std::stable_sort (events.begin(), events.end(), [] (const TimedEvent& a, const TimedEvent& b) { return std::tie (a.tick, a.order) < std::tie (b.tick, b.order); });
+    std::vector<std::uint8_t> body;
+    std::int64_t at = 0;
+    for (const auto& e : events)
+    {
+        const auto tick = std::max<std::int64_t> (e.tick, 0);
+        putVarLen (body, static_cast<std::uint64_t> (tick - at));
+        at = tick;
+        body.insert (body.end(), e.bytes.begin(), e.bytes.end());
+    }
+    body.insert (body.end(), { 0x00, 0xff, 0x2f, 0x00 }); // end of track
+    out.insert (out.end(), { 'M', 'T', 'r', 'k' });
+    put32 (out, static_cast<std::uint32_t> (body.size()));
+    out.insert (out.end(), body.begin(), body.end());
+}
+} // namespace
+
+std::vector<std::uint8_t> encodeMidiFile (const MidiFileData& data)
+{
+    const bool single = data.format == 0;
+    std::vector<std::uint8_t> out { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, static_cast<std::uint8_t> (single ? 0 : 1) };
+    const auto chunks = single ? 1 : 1 + data.tracks.size();
+    out.push_back (static_cast<std::uint8_t> (chunks >> 8));
+    out.push_back (static_cast<std::uint8_t> (chunks & 0xff));
+    const auto ppq = std::clamp (data.ticksPerQuarter, 1, 0x7fff);
+    out.push_back (static_cast<std::uint8_t> (ppq >> 8));
+    out.push_back (static_cast<std::uint8_t> (ppq & 0xff));
+    std::vector<TimedEvent> conductor;
+    addConductor (conductor, data);
+    if (single)
+    {
+        for (const auto& t : data.tracks)
+            addTrack (conductor, t);
+        putTrackChunk (out, std::move (conductor));
+        return out;
+    }
+    putTrackChunk (out, std::move (conductor));
+    for (const auto& t : data.tracks)
+    {
+        std::vector<TimedEvent> events;
+        addTrack (events, t);
+        putTrackChunk (out, std::move (events));
+    }
+    return out;
+}
+
+bool writeMidiFile (const std::filesystem::path& file, const MidiFileData& data, std::string* error)
+{
+    const auto bytes = encodeMidiFile (data);
+    std::ofstream out (file, std::ios::binary | std::ios::trunc);
+    if (! out || ! out.write (reinterpret_cast<const char*> (bytes.data()), static_cast<std::streamsize> (bytes.size())))
+    {
+        if (error != nullptr)
+            *error = "Couldn't write " + file.filename().string() + ".";
+        return false;
+    }
+    return true;
 }
 } // namespace weft::media

@@ -36,7 +36,9 @@ enum class Cmd
     // File and Track menus (04 §2), track header menu and reordering (F-TRK-6, F-TRK-7)
     importAudio, quit, duplicateTrack, duplicateTrackWithRegions, moveTrackUp, moveTrackDown,
     // Pause (F-TRN-3)
-    pause
+    pause,
+    // Export Regions as Files (L-EXP-2, L-EXP-3)
+    exportRegions
 };
 
 struct CommandInfo
