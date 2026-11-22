@@ -52,6 +52,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-13** [U][UI] · F-PRJ-9 · Project Settings changes name and record bit depth; the next recording uses the new bit depth. Sample rate is editable while the project has no media and disabled afterwards.
 
+**AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
+
 ## 2. Transport (TRN)
 
 **AT-TRN-1** [E] · F-TRN-1 · *Given* P0 with a region at bar 2, playhead at bar 1, *when* Play, *then* the first non-silent output sample is at sample 96,000 (bar 2) relative to play start, ± output latency accounted for in the capture.
@@ -163,6 +165,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-TRK-12** [U][S] · F-TRK-16, F-COL-11 · See AT-COL-20 to AT-COL-23.
 
 **AT-TRK-13** [E] · F-TRK-17, F-MIX-12 · Setting an audio track's input to channel 2 records input 2; setting output to Bus 1 routes it to Bus 1 instead of Master; an instrument track with MIDI filter channel 2 ignores channel-1 notes.
+
+**AT-TRK-14** [UI] · L-TRH-3 · A track at the default height shows a volume slider and a pan knob on the header's second line; moving them sets the channel's volume and pan (one undo step per drag), the slider's bottom is −inf, and changes made in the mixer move them.
 
 ## 5. Arrange (ARR)
 

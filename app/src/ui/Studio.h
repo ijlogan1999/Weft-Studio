@@ -225,6 +225,15 @@ public:
     std::vector<std::string> missingPlugins() const;
     /** File › Open Recent (F-PRJ-6). */
     project::RecentProjects& recentProjects() noexcept { return recent; }
+    /**
+        File › Delete Project (L-PRJ-8): moves a project folder to the system Trash (it can be
+        restored from there) and takes it off Open Recent. The open project can't be deleted.
+    */
+    bool deleteProject (const std::filesystem::path& root, std::string* error = nullptr);
+    /** How deleteProject removes a folder; the system Trash unless a test replaces it. */
+    std::function<bool (const std::filesystem::path&)> moveToTrash = [] (const std::filesystem::path& dir) {
+        return juce::File (juce::String::fromUTF8 (reinterpret_cast<const char*> (dir.u8string().c_str()))).moveToTrash();
+    };
     /** Don't Save: archives the recovery log, so the next open doesn't offer to recover these changes. */
     void discardUnsavedChanges();
     /** A new project nobody has edited or saved: it's deleted when replaced or on quit. */

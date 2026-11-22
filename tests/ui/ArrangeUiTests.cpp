@@ -263,6 +263,33 @@ TEST_CASE ("AT-TRK-4 New Track dialog creates numbered tracks below the selectio
     CHECK (ui.m().trackOrder.size() == 1);
 }
 
+TEST_CASE ("AT-TRK-14 volume and pan in the track header follow and set the channel strip", "[UI][AT-TRK-14]")
+{
+    Ui ui;
+    auto& header = *ui.main->tracks().headers().front();
+    const auto id = header.trackId;
+    REQUIRE (header.volume.isVisible());
+    REQUIRE (header.pan.isVisible());
+    CHECK (header.volume.getValue() == 0.0);
+
+    header.volume.setValue (-12.0, juce::sendNotificationSync);
+    header.pan.setValue (-50.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (id)->strip.volumeDb == -12.0);
+    CHECK (ui.m().track (id)->strip.pan == -0.5);
+
+    // An edit made elsewhere (the mixer, a collaborator) moves the header's controls.
+    REQUIRE (ui.studio.session().setTrackVolume (id, -3.0));
+    ui.studio.edited();
+    ui.settle();
+    CHECK (header.volume.getValue() == -3.0);
+
+    // The bottom of the fader is -inf.
+    header.volume.setValue (header.volume.getMinimum(), juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (id)->strip.volumeDb == minusInfinityDb);
+}
+
 TEST_CASE ("AT-TRK-6 renaming in the track header: Enter, Esc, empty", "[UI]")
 {
     Ui ui;

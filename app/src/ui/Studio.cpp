@@ -1246,6 +1246,25 @@ bool Studio::newProject (const fs::path& parent, const commands::NewProjectOptio
     return true;
 }
 
+bool Studio::deleteProject (const fs::path& root, std::string* error)
+{
+    auto fail = [error] (std::string why) {
+        if (error != nullptr)
+            *error = std::move (why);
+        return false;
+    };
+    std::error_code ec;
+    if (fs::equivalent (root, projectRoot(), ec))
+        return fail ("That project is open. Open another project first.");
+    if (! project::isProjectFolder (root))
+        return fail ("That isn't a Weft project folder.");
+    if (! moveToTrash (root))
+        return fail ("Couldn't move the project to the Trash.");
+    recent.remove (root);
+    setStatus ("Moved " + juce::String::fromUTF8 (project::utf8 (root.filename()).c_str()) + " to the Trash.");
+    return true;
+}
+
 Studio::OpenResult Studio::openProject (const fs::path& picked, Recovery recovery)
 {
     OpenResult result;

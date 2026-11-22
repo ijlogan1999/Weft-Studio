@@ -552,6 +552,81 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
         b->setHasFocusOutline (true);
         addAndMakeVisible (*b);
     }
+    // Volume and pan (L-TRH-3): the mixer's fader law and gestures, so one drag is one undo
+    // step, and a drag while automation plays touches it like the mixer does (W-8).
+    const auto target = [] (const char* kind) {
+        model::AutomationTarget t;
+        t.kind = kind;
+        return t;
+    };
+    volume.setSliderStyle (juce::Slider::LinearBar);
+    volume.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    volume.setNormalisableRange (fader::range());
+    volume.setDoubleClickReturnValue (true, 0.0, juce::ModifierKeys::altModifier);
+    volume.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
+    volume.setPopupDisplayEnabled (true, true, nullptr);
+    volume.textFromValueFunction = [] (double v) { return fader::dbText (v <= fader::minDb + 1e-6 ? fader::silentDb : v) + " dB"; };
+    describe (volume, "Volume", "Volume (double-click: 0 dB, Shift-drag: fine)");
+    volume.onDragStart = [this, target] {
+        liveVolume = studio.automationLive (trackId, target ("volume"));
+        if (! liveVolume)
+            studio.session().beginGesture ("Volume");
+    };
+    volume.onDragEnd = [this, target] {
+        if (liveVolume)
+            studio.releaseControl (trackId, target ("volume"));
+        else
+        {
+            studio.session().endGesture();
+            studio.edited();
+        }
+        liveVolume = false;
+    };
+    volume.onValueChange = [this, target] {
+        const auto v = volume.getValue();
+        const auto db = v <= fader::minDb + 1e-6 ? fader::silentDb : v;
+        if (liveVolume)
+            return studio.touchControl (trackId, target ("volume"), automation::fromDb (db));
+        studio.check (studio.session().setTrackVolume (trackId, db));
+    };
+    pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    pan.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    pan.setRange (-100.0, 100.0, 0.0);
+    pan.setDoubleClickReturnValue (true, 0.0, juce::ModifierKeys::altModifier);
+    pan.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
+    pan.setLookAndFeel (&knobs.get());
+    pan.setPopupDisplayEnabled (true, true, nullptr);
+    pan.textFromValueFunction = [] (double v) {
+        const auto amount = juce::roundToInt (v);
+        return amount == 0 ? juce::String ("C") : juce::String (std::abs (amount)) + (amount < 0 ? "L" : "R");
+    };
+    describe (pan, "Pan", "Pan (double-click: centre)");
+    pan.onDragStart = [this, target] {
+        livePan = studio.automationLive (trackId, target ("pan"));
+        if (! livePan)
+            studio.session().beginGesture ("Pan");
+    };
+    pan.onDragEnd = [this, target] {
+        if (livePan)
+            studio.releaseControl (trackId, target ("pan"));
+        else
+        {
+            studio.session().endGesture();
+            studio.edited();
+        }
+        livePan = false;
+    };
+    pan.onValueChange = [this, target] {
+        if (livePan)
+            return studio.touchControl (trackId, target ("pan"), automation::fromPan (pan.getValue() / 100.0));
+        studio.check (studio.session().setTrackPan (trackId, pan.getValue() / 100.0));
+    };
+    for (auto* sl : { &volume, &pan })
+    {
+        makeFocusable (*sl);
+        addChildComponent (sl);
+    }
+
     mode.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
     describe (mode, "Automation mode");
     makeFocusable (mode);
@@ -698,6 +773,10 @@ void TrackHeader::refresh()
     solo.setToggleState (studio.localView().soloed.contains (trackId), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (trackId), juce::dontSendNotification);
     arm.setVisible (commands::LocalView::canArm (*t));
+    if (! volume.isMouseButtonDown())
+        volume.setValue (std::clamp (t->strip.volumeDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
+    if (! pan.isMouseButtonDown())
+        pan.setValue (t->strip.pan * 100.0, juce::dontSendNotification);
     rebuildAutomation();
 
     // A lock (04 §6.1, §9.6): the icon shows; someone else's lock disables the shared controls.
@@ -708,7 +787,7 @@ void TrackHeader::refresh()
     lock.setColours (lockColour, lockColour.brighter (0.3f), lockColour.darker (0.2f));
     lock.setTooltip (lockTip.isEmpty() ? juce::String() : lockTip + (locked ? juce::String() : juce::String (" (click to unlock)")));
     name.setEditable (false, ! locked, true);
-    std::vector<juce::Component*> shared { &name, &mute, &mode };
+    std::vector<juce::Component*> shared { &name, &mute, &mode, &volume, &pan };
     for (auto& p : parameters)
         shared.push_back (p.get());
     for (auto& b : addLane)
@@ -764,7 +843,7 @@ void TrackHeader::paint (juce::Graphics& g)
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::monoSmall));
     g.drawText (juce::String (number), space::s1, space::s1, space::s3 - space::half, size::control, juce::Justification::centredRight);
-    if (t != nullptr && trackPart.getHeight() >= 48.0f)
+    if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible())
     {
         g.setFont (font (Type::body));
         const auto kind = t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
@@ -819,6 +898,18 @@ void TrackHeader::resized()
         row.removeFromRight (space::half);
     }
     name.setBounds (row.withTrimmedRight (space::half));
+    // Second line: volume, then pan; collaborator badges keep the right end (painted).
+    const auto second = juce::Rectangle<int> (r.getX(), space::s1 + size::control + 2, r.getWidth(), 16);
+    const bool roomy = trackPart.getHeight() >= 48;
+    volume.setVisible (roomy);
+    pan.setVisible (roomy);
+    if (roomy)
+    {
+        auto line = second.withTrimmedRight (static_cast<int> (badges().size()) * 20);
+        pan.setBounds (line.removeFromRight (18).withSizeKeepingCentre (18, 18));
+        line.removeFromRight (space::half);
+        volume.setBounds (line.withSizeKeepingCentre (line.getWidth(), 12));
+    }
     // Automation lanes: the parameter and "+" on each; the track's mode on the first (W-8 step 1).
     for (std::size_t i = 0; i < parameters.size(); ++i)
     {

@@ -224,6 +224,45 @@ TEST_CASE ("AT-PRJ-10 Open Recent lists the 10 most recent, newest first; a dele
     CHECK (welcome.recent[0]->getButtonText() == "Project 10");
 }
 
+TEST_CASE ("AT-PRJ-14 File > Delete Project moves a recent project to the Trash after asking; the open one can't be deleted", "[UI][project][AT-PRJ-14]")
+{
+    Ui ui;
+    std::vector<fs::path> trashed;
+    ui.studio.moveToTrash = [&] (const fs::path& dir) {
+        trashed.push_back (dir);
+        fs::remove_all (dir);
+        return true;
+    };
+    const auto first = makeProject (ui.folder.path / "library", "Old Song");
+    const auto second = makeProject (ui.folder.path / "library", "New Song");
+    ui.main->openProject (first);
+    ui.settle();
+    ui.main->openProject (second);
+    ui.settle();
+    REQUIRE (ui.studio.recentProjects().items()[1] == first);
+
+    // Cancel leaves it.
+    ui.main->menuItemSelected (MainComponent::deleteProjectMenuBase + 2, 0);
+    REQUIRE (ui.main->projectQuestionPending());
+    CHECK (ui.main->projectQuestion().contains ("Old Song"));
+    ui.main->answerProject (0);
+    CHECK (fs::exists (first));
+
+    ui.main->menuItemSelected (MainComponent::deleteProjectMenuBase + 2, 0);
+    ui.main->answerProject (1);
+    ui.settle();
+    CHECK (trashed == std::vector<fs::path> { first });
+    CHECK_FALSE (fs::exists (first));
+    CHECK (std::find (ui.studio.recentProjects().items().begin(), ui.studio.recentProjects().items().end(), first)
+           == ui.studio.recentProjects().items().end());
+    CHECK (ui.studio.status.contains ("Moved Old Song.weft to the Trash"));
+
+    std::string error;
+    CHECK_FALSE (ui.studio.deleteProject (second, &error));
+    CHECK (error == "That project is open. Open another project first.");
+    CHECK (fs::exists (second));
+}
+
 TEST_CASE ("AT-PRJ-13 Project Settings changes name and record bit depth; sample rate locks once there's media", "[UI][project][AT-PRJ-13]")
 {
     Ui ui;

@@ -643,6 +643,24 @@ void MainComponent::openRecent (int index)
     openProject (root);
 }
 
+void MainComponent::deleteRecentProject (int index)
+{
+    const auto& items = studio.recentProjects().items();
+    if (index < 0 || index >= static_cast<int> (items.size()))
+        return;
+    const auto root = items[static_cast<std::size_t> (index)];
+    const auto name = pathText (root.filename()).upToLastOccurrenceOf (".weft", false, false);
+    ask ("Delete Project", "Move \"" + name + "\" and its media to the Trash? You can restore it from there.", "Move to Trash", {},
+         [this, root] (int answer) {
+             if (answer != 1)
+                 return;
+             std::string error;
+             if (! studio.deleteProject (root, &error))
+                 studio.setStatus (juce::String::fromUTF8 (error.c_str()));
+             studio.sendChangeMessage();
+         });
+}
+
 void MainComponent::showWelcome()
 {
     if (! desktopWindows())
@@ -729,6 +747,16 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 recentMenu.addItem (recentMenuBase + static_cast<int> (i) + 1, label);
             }
             menu.addSubMenu ("Open Recent", recentMenu, ! items.empty());
+            // Delete Project: any recent project but the open one, moved to the Trash after asking.
+            juce::PopupMenu deleteMenu;
+            for (std::size_t i = 0; i < items.size(); ++i)
+            {
+                std::error_code ec;
+                if (project::RecentProjects::available (items[i]) && ! std::filesystem::equivalent (items[i], studio.projectRoot(), ec))
+                    deleteMenu.addItem (deleteProjectMenuBase + static_cast<int> (i) + 1,
+                                        pathText (items[i].filename()).upToLastOccurrenceOf (".weft", false, false));
+            }
+            menu.addSubMenu ("Delete Project", deleteMenu, deleteMenu.getNumItems() > 0);
             menu.addSeparator();
             add (Cmd::save);
             add (Cmd::saveAs);
@@ -861,6 +889,8 @@ void MainComponent::menuItemSelected (int itemId, int)
         studio.engine().setSettings (settings);
         studio.sendChangeMessage();
     }
+    else if (itemId > deleteProjectMenuBase)
+        deleteRecentProject (itemId - deleteProjectMenuBase - 1);
     else if (itemId > colourMenuBase)
         studio.check (studio.session().setTrackColor (studio.selectedTrack(), model::Color { itemId - colourMenuBase - 1, {} }));
     else if (itemId > recentMenuBase)
