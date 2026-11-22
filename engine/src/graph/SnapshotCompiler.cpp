@@ -574,6 +574,8 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
 
     for (const auto* track : ordered)
     {
+        if (track->off)
+            continue; // L-TRH-7: an off track has no channel at all
         ChannelPlan plan;
         plan.trackId = track->id;
         plan.kind = track->kind;

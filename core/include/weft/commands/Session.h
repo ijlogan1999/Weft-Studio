@@ -173,6 +173,8 @@ public:
     EditResult setTrackVolume (const Id& trackId, double volumeDb);
     EditResult setTrackPan (const Id& trackId, double pan);
     EditResult setTrackMute (const Id& trackId, bool mute);
+    /** Track on/off (L-TRH-7): an off track isn't processed. Audio and instrument tracks only. */
+    EditResult setTrackOff (const Id& trackId, bool off);
     EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
     /** Input monitoring: "auto", "on" or "off" (F-REC-4). */
     EditResult setTrackMonitor (const Id& trackId, const std::string& mode);

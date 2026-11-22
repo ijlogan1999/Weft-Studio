@@ -172,6 +172,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-14** [UI] · L-TRH-3 · A track at the default height shows a volume slider and a pan knob on the header's second line; moving them sets the channel's volume and pan (one undo step per drag), the slider's bottom is −inf, and changes made in the mixer move them.
 
+**AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
+
 ## 5. Arrange (ARR)
 
 **AT-ARR-1** [UI] · F-ARR-1 · The ruler shows bar numbers that match the signature map; Ctrl+wheel zooms around the pointer position (the bar under the pointer stays under it within 2 px).

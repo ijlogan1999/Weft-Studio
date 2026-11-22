@@ -675,6 +675,8 @@ juce::PopupMenu TrackHeader::menu() const
     m.addItem (itemMoveUp, commandInfo (Cmd::moveTrackUp).name, ! studio.previewing() && at != order.end() && at != order.begin());
     m.addItem (itemMoveDown, commandInfo (Cmd::moveTrackDown).name, ! studio.previewing() && at != order.end() && at + 1 != order.end());
     m.addItem (itemDelete, commandInfo (Cmd::deleteTrack).name, editable && ! master);
+    if (t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument))
+        m.addItem (itemTrackOff, t->off ? "Turn Track On" : "Turn Track Off", editable);
     m.addSeparator();
     m.addItem (itemLock, lockText.isEmpty() ? "Lock Track" : "Unlock Track", ! other && ! studio.previewing());
     if (other && studio.session().isOwner() && ! studio.previewing())
@@ -694,6 +696,10 @@ void TrackHeader::pickMenu (int item)
         case itemMoveUp: studio.selectTrack (trackId); studio.perform (Cmd::moveTrackUp); break;
         case itemMoveDown: studio.selectTrack (trackId); studio.perform (Cmd::moveTrackDown); break;
         case itemDelete: studio.selectTrack (trackId); studio.perform (Cmd::deleteTrack); break;
+        case itemTrackOff:
+            if (const auto* t = studio.model().track (trackId))
+                studio.check (studio.session().setTrackOff (trackId, ! t->off));
+            break;
         case itemLock: studio.toggleLock (trackId); break;
         case itemBreakLock:
             if (studio.confirmBreakLock)
@@ -857,6 +863,15 @@ void TrackHeader::paint (juce::Graphics& g)
             break;
         drawBadge (g, badge, colourOf (*who), initials (who->displayName), who->state.status == collab::Presence::Status::recording);
         badge.translate (-20.0f, 0.0f);
+    }
+    if (t != nullptr && t->off)
+    {
+        // An off track (L-TRH-7) reads as dimmed, with "Off" where its kind would be.
+        g.setColour (colour (Token::surface).withAlpha (0.55f));
+        g.fillRect (trackPart);
+        g.setColour (colour (Token::textDim));
+        g.setFont (font (Type::caption));
+        g.drawText ("OFF", getWidth() - space::s1 - 40, static_cast<int> (trackPart.getBottom()) - 16, 40, 14, juce::Justification::centredRight);
     }
     g.setColour (colour (Token::background));
     g.fillRect (0, getHeight() - 1, getWidth(), 1);

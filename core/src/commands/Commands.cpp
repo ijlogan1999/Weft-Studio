@@ -249,6 +249,16 @@ EditResult Session::setTrackMute (const Id& trackId, bool mute)
     return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "mute", Value (mute))); });
 }
 
+EditResult Session::setTrackOff (const Id& trackId, bool off)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr)
+        return reject ("That track no longer exists.");
+    if (t->kind != TrackKind::audio && t->kind != TrackKind::instrument)
+        return reject ("Only audio and instrument tracks can be turned off.");
+    return run (off ? "Turn Track Off" : "Turn Track On", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "off", Value (off))); });
+}
+
 EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
 {
     const auto* t = projection.track (trackId);

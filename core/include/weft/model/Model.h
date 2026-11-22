@@ -128,6 +128,8 @@ struct Track
     InputAssignment input;
     OutputAssignment output;
     bool mute = false;
+    /** Track off (L-TRH-7): the channel isn't processed at all (no playback, plug-ins idle). Audio and instrument tracks. */
+    bool off = false;
     std::string monitor = "auto"; // auto | on | off
     std::optional<LockInfo> locked;
     ChannelStrip strip;

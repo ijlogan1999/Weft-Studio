@@ -98,6 +98,7 @@ public:
         itemMoveUp,
         itemMoveDown,
         itemDelete,
+        itemTrackOff,
         itemColour = 100 // + 1 .. paletteSize
     };
     /** The header the pointer is over while this one is dragged to reorder; nullptr when not dragging. */

@@ -241,6 +241,7 @@ Track Track::fromValue (const Id& id, const Value& v)
     t.input = InputAssignment::fromValue (v["input"]);
     t.output = t.kind == TrackKind::master ? OutputAssignment {} : OutputAssignment::fromValue (v["output"]);
     t.mute = v["mute"].asBool();
+    t.off = (t.kind == TrackKind::audio || t.kind == TrackKind::instrument) && v["off"].asBool();
     t.monitor = oneOf (v["monitor"], { "auto", "on", "off" }, "auto");
     if (v["locked"].isMap())
         t.locked = LockInfo { v["locked"]["by"].asString(), v["locked"]["at"].asInt(), v["locked"]["note"].asString() };
@@ -267,6 +268,7 @@ Value Track::toValue() const
         .set ("input", input.toValue())
         .set ("output", output.toValue())
         .set ("mute", mute)
+        .set ("off", off)
         .set ("monitor", monitor)
         .set ("locked", lock)
         .set ("strip", strip.toValue())

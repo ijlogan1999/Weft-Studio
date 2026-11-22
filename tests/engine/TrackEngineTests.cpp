@@ -196,3 +196,35 @@ TEST_CASE ("AT-TRK-13: input channel, output to a bus, and the MIDI channel filt
         REQUIRE (std::any_of (probe->seen.begin(), probe->seen.end(), [] (const auto& e) { return e.event.isNoteOn(); }));
     }
 }
+
+TEST_CASE ("AT-TRK-15: an off track plays nothing, sends nothing and can't record; on again plays", "[E][tracks][AT-TRK-15]")
+{
+    Rig rig;
+    constexpr float A = 1.0f / 64, B = 1.0f / 16;
+    addConstantMedia (rig, "b3:a", { A }, barSamples);
+    addConstantMedia (rig, "b3:b", { B }, barSamples);
+    const auto bus = rig.session.createTrack (TrackKind::bus, "Bus 1").value();
+    const auto a = trackWith (rig, "A", "b3:a");
+    const auto b = trackWith (rig, "B", "b3:b");
+    REQUIRE (rig.session.addSend (a, bus, 0.0));
+    rig.sync();
+    REQUIRE (level (rig) == 2 * A + B);
+
+    REQUIRE (rig.session.setTrackOff (a, true));
+    CHECK (rig.session.undoName() == "Turn Track Off");
+    rig.sync();
+    CHECK (level (rig) == B);
+    CHECK_FALSE (rig.session.setTrackOff (bus, true));
+    CHECK_FALSE (rig.session.setTrackOff (rig.session.model().info.masterTrackId, true));
+
+    // Armed while off: there's nothing to record on.
+    rig.engine.setArmedTracks ({ a });
+    const auto result = rig.engine.record (0);
+    INFO (result.message);
+    CHECK_FALSE (result.recording);
+    rig.engine.setArmedTracks ({});
+
+    REQUIRE (rig.session.setTrackOff (a, false));
+    rig.sync();
+    CHECK (level (rig) == 2 * A + B);
+}
