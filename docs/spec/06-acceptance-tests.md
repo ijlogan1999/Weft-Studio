@@ -366,6 +366,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-AUT-12** [E] · F-AUT-11 · Master volume automation affects the bounce; bus pan automation affects the bus output.
 
+**AT-AUT-13** [E] · F-AUT-11, D-W8-6 · A project with steep volume, pan, send and master volume automation (a 0 dB to −inf fade over 5 ms) bounces identically at block sizes 64, 512 and 2048, and the bounce matches live playback at a 240-sample device buffer to within 1e-6.
+
 ## 12. Tempo and signature (TMP)
 
 **AT-TMP-1** [U] · F-TMP-1 · Tempo map 120 BPM at tick 0, 60 BPM at tick 3,840: `sample(3,840)` = 96,000; `sample(4,800)` = 96,000 + 960 × 50 = 144,000; the inverse maps back exactly.

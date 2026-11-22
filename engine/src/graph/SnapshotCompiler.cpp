@@ -369,6 +369,11 @@ double AutomationPlan::laneValue (std::int64_t at) const noexcept
     return a.value + (b.value - a.value) * automation::shape (t, a.curve);
 }
 
+bool AutomationPlan::followsLane() const noexcept
+{
+    return ! nodes.empty() && std::isnan (slot->touched.load (std::memory_order_acquire)) && slot->glideLeft == 0;
+}
+
 double AutomationPlan::valueAt (std::int64_t at, int frames) const noexcept
 {
     auto& s = *slot;

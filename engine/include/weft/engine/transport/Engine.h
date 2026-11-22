@@ -374,6 +374,14 @@ private:
     std::vector<std::vector<float>> mix;
     std::vector<float*> mixPtrs;
     std::vector<float> scratchLeft, scratchRight;
+    std::vector<float> rampLeft, rampRight, rampSend; // per-sample automation gains (D-W8-6)
+    struct RolledSpan
+    {
+        int offset = 0, frames = 0;
+        std::int64_t position = 0;
+    };
+    std::array<RolledSpan, 16> rolledSpans {}; // this block's rolling spans, for the master's automation
+    std::size_t numRolledSpans = 0;
     float masterGainLeft = 1, masterGainRight = 1;
     bool masterGainSet = false;
     std::vector<MidiEvent> events;

@@ -78,6 +78,7 @@ struct ChannelState
     // Audio thread: the fader x pan gains reached at the end of the last span (AT-MIX-2 ramps).
     float gainLeft = 0, gainRight = 0;
     bool gainSet = false;
+    bool silenced = false; // muted or solo-silenced last span: the next audible span fades in
     // Delay lines by edge ("out", or "send:<send id>"). Message thread; snapshots hold shared copies.
     std::map<std::string, std::shared_ptr<DelayLine>> delays;
 

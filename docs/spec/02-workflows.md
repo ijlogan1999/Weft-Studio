@@ -320,6 +320,7 @@ input (hardware input / instrument output / bus input)
 - A write pass is one undo step.
 - Automation reaches the audio thread with sample-accurate interpolation at block boundaries for MVP (block size ≤ 512 samples), with per-sample smoothing for volume and pan to avoid zipper noise. **Decision D-W8-3:** sub-block accuracy for plugin parameters is via VST3 parameter change queues with sample offsets.
 - **Decision D-W8-4:** what a pass writes. Touch writes each touch from the moment it starts to its release, and a second touch in the same pass writes a second range. Latch writes from the first touch to stop. Write writes every existing lane of the track from play start, holding the value the control showed there until it's touched, plus any other control touched during the pass from its first touch. When the cycle jumps back, the pass keeps what it wrote before the jump and writes nothing more for that control. The Touch glide back is linear over 200 ms. Clicking Mute while its automation is live counts as a touch and a release. Touching a control with nothing to follow while stopped changes its static value, as in Off.
+- **Decision D-W8-6 (block-size independence):** while the transport rolls, a volume, pan or send lane that is playing as written (not touched or gliding back) is read at every 32nd sample of the timeline, counted from the project start, and the gain moves in a straight line between those readings. The audio device's buffer size and the bounce block size therefore change nothing, and a bounce matches playback sample for sample. Touches, glides and stopped playback keep the per-buffer ramp. Mute points still switch at the start of a buffer (D-W6-7).
 - **Decision D-W8-5:** the master's pan acts as balance, like a stereo track's, and the master's volume, pan, mute and insert parameters can all be automated (F-AUT-11).
 
 ### Collaboration notes
@@ -471,6 +472,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W8-3 | Automation interpolation and parameter queues. |
 | D-W8-4 | What Touch, Latch and Write passes write; cycle jumps; glide; mute clicks. |
 | D-W8-5 | Master pan is balance; master volume, pan, mute and inserts are automatable. |
+| D-W8-6 | Volume, pan and send lanes follow a 32-sample timeline grid, so bounces match playback at any block size. |
 | D-W9-1 | Warn when bouncing with undownloaded media. |
 | D-W9-2 | Offline bounce is deterministic (fixed dither seed). |
 | D-W9-3 | Where the bounce tail ends. |
