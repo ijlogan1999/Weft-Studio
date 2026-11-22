@@ -163,6 +163,7 @@ void readInfo (ProjectModel& m, const Value& root)
     info.punch = TimeRange::fromValue (root["punch"], TimeRange {});
     info.endMarker = root["endMarker"].isNumber() ? std::optional<Ticks> (std::max<std::int64_t> (0, root["endMarker"].asInt())) : std::nullopt;
     info.metronomeDefaults = MetronomeSettings::fromValue (root["metronomeDefaults"]);
+    info.key = KeySignature::fromValue (root["key"]);
 
     m.storedTrackOrder.clear();
     for (const auto& item : root["trackOrder"].asList())
@@ -308,7 +309,7 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         // Project fields are small; re-read them all (but not the collections).
         Value root = Value::map();
         for (const char* k : { "schemaVersion", "id", "name", "sampleRate", "recordBitDepth", "createdAt", "createdBy", "masterTrackId", "cycle",
-                               "punch", "endMarker", "metronomeDefaults", keys::trackOrder })
+                               "punch", "endMarker", "metronomeDefaults", "key", keys::trackOrder })
             if (auto v = document.get (doc::path ({ k })))
                 root.set (k, std::move (*v));
         readInfo (m, root);

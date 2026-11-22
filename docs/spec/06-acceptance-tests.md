@@ -52,6 +52,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-13** [U][UI] · F-PRJ-9 · Project Settings changes name and record bit depth; the next recording uses the new bit depth. Sample rate is editable while the project has no media and disabled afterwards.
 
+**AT-PRJ-15** [U][UI] · F-TMP-10 · The project key starts at C major; typing "f#m" in the control bar's key display sets F♯ minor as one undo step "Set Key" and nonsense changes nothing; Project Settings offers the 24 keys and sets B♭ major; names and sharps/flats follow D-DM-20; an exported MIDI file carries the key signature event.
+
 **AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
 
 ## 2. Transport (TRN)
@@ -556,6 +558,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-REC-16 | AT-REC-19 | | F-TMP-1 | AT-TMP-1, 2, 3, 7 |
 | F-TRK-1 | AT-TRK-1 | | F-TMP-3 | AT-TMP-4, 5 |
 | F-TRK-2 | AT-TRK-2 | | F-TMP-4 | AT-TMP-3, 6 |
+| | | | F-TMP-10 | AT-PRJ-15 |
 | F-TRK-4 | AT-TRK-3 | | F-EXP-1 | AT-EXP-1, 2, 10, 11 |
 | F-TRK-6 | AT-TRK-4 | | F-EXP-2 | AT-EXP-3, 4 |
 | F-TRK-7 | AT-TRK-5 | | F-EXP-3 | AT-EXP-5, 6 |

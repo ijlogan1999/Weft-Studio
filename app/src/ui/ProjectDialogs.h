@@ -92,6 +92,7 @@ public:
     juce::ComboBox bitDepth;   // ids: bits
     juce::ComboBox sampleRate; // ids: Hz
     juce::Label rateNote;
+    juce::ComboBox key;        // ids: tonic + 1 (major), tonic + 13 (minor)
     juce::ToggleButton metronome { "Metronome on" };
     juce::ComboBox metronomeDuring; // 1 record, 2 play, 3 both
     juce::ComboBox countIn;         // ids: bars + 1

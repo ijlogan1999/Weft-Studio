@@ -60,6 +60,7 @@ Project {
   endMarker: Ticks?
 
   metronomeDefaults: MetronomeSettings   // per-user settings start from this (D-DM-12)
+  key: { tonic: 0..11, mode: "major" | "minor" }   // F-TMP-10, D-DM-20
   automationLanes: Map<Id, AutomationLane>
 
   collab: CollabMeta              // §9
@@ -312,6 +313,8 @@ sample(t) = S_i + (t − T_i) × samplesPerTick_i     for T_i ≤ t < T_{i+1}
 ```
 Results are computed in float64 and rounded to the nearest sample only at the point of use. **Decision D-DM-19:** adding a tempo or signature change where one already exists (same tick or bar) changes that point instead of adding a second one; the first tempo and signature (id `"initial"`) can be changed but not moved or deleted. The inverse (sample → tick) uses the same segments.
 
+**Decision D-DM-20 (project key, F-TMP-10):** `key` holds the tonic as a pitch class (0 = C … 11 = B) and the mode, `major` or `minor`; a project without it (from before the field) is in C major. Set Key writes the whole map, so two people changing the key at once end with one of their choices (last writer wins), never a mix. The key is written with flats or sharps as it's usually spelled (D♭ major, C♯ minor, F♯ major/minor, E♭ minor) and exported MIDI files get a key signature event with the matching number of sharps or flats. Typing accepts a letter A–G, any number of `#`/`b` (or ♯/♭), then nothing or `M`/`maj`/`major` for major, `m`/`min`/`minor` for minor.
+
 **Bar/beat ↔ ticks.** A bar of `n/d` lasts `n × (4/d) × 960` ticks. Signature changes are only at bar starts, so bar *b*'s start tick is the sum of preceding bar lengths. Signature points are stored by bar number, so changing a meter shifts later bar numbers. **Decision D-DM-10:** when a signature point is inserted or changed, existing regions keep their tick positions (they don't jump to stay on the same bar number). Users who want content to follow bar numbers re-place it. This is simplest and avoids moving every object in a CRDT transaction.
 
 ---
@@ -502,6 +505,7 @@ All repairs are deterministic functions of the document state so every client sh
 | D-DM-17 | Orphaned regions go to a deterministic Recovered track. |
 | D-DM-18 | List moves are delete+insert with dedupe repair. |
 | D-DM-19 | Adding a tempo/signature change at an existing position edits that point. |
+| D-DM-20 | The project key is one map written whole; concurrent changes resolve last-writer-wins. |
 | D-DM-20 | Plugin state over 64 KB lives in `Blobs/<hash>.bin`; `state` holds the hash. |
 | D-DM-21 | VST3 uid is the 32-hex class ID; hosted ParamIds are VST3 parameter IDs; removed params revert to state. |
 | D-DM-22 | Segment curve shape and the fader taper formula. |

@@ -154,6 +154,8 @@ public:
     EditResult setSampleRate (int rate);
     /** Project Settings: the metronome the project opens with. */
     EditResult setMetronomeDefaults (const model::MetronomeSettings& settings);
+    /** The project's key (F-TMP-10); step "Set Key". */
+    EditResult setKey (const model::KeySignature& key);
     EditResult setCycle (bool enabled, Ticks start, Ticks end);
     EditResult setPunch (bool enabled, Ticks start, Ticks end);
     EditResult setEndMarker (std::optional<Ticks> end);

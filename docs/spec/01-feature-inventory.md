@@ -279,6 +279,7 @@ Tag counts at the end of the file.
 | F-TMP-7 | Video track | Later | Show a video file in sync with the timeline. |
 | F-TMP-8 | Tempo list editor | v2 | Table of tempo changes with editable position and BPM. |
 | F-TMP-9 | Beat mapping | Later | Align the bar grid to a free-tempo recording by marking beats. |
+| F-TMP-10 | Project key | MVP | One key for the project (tonic and major or minor), shown in the control bar, typed there or chosen in Project Settings, and written to exported MIDI files. Key changes along the timeline are F-TMP-5. |
 
 ## 13. Bounce and export (EXP)
 

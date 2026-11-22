@@ -126,6 +126,8 @@ std::optional<MidiFileData> parseMidiFile (std::span<const std::uint8_t> bytes, 
                 }
                 else if (type == 0x58 && len >= 2)
                     data.signatures.push_back ({ tick, p[0], 1 << std::min<int> (p[1], 6) });
+                else if (type == 0x59 && len == 2)
+                    data.keys.push_back ({ tick, static_cast<std::int8_t> (p[0]), p[1] != 0 });
                 in.pos += len;
                 continue;
             }
@@ -247,6 +249,9 @@ void addConductor (std::vector<TimedEvent>& events, const MidiFileData& data)
             ++power;
         events.push_back (meta (s.tick, 0x58, { static_cast<std::uint8_t> (s.numerator), power, 24, 8 }));
     }
+    for (const auto& k : data.keys)
+        events.push_back (meta (k.tick, 0x59, { static_cast<std::uint8_t> (static_cast<std::int8_t> (std::clamp (k.fifths, -7, 7))),
+                                                static_cast<std::uint8_t> (k.minor ? 1 : 0) }));
 }
 
 void addTrack (std::vector<TimedEvent>& events, const MidiFileTrack& track)

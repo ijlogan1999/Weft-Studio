@@ -746,3 +746,30 @@ TEST_CASE ("Share in a Synced Folder moves the project there; it saves itself an
     CHECK (drums);
     CHECK (ui.m().track (track)->name == "Vox");
 }
+
+TEST_CASE ("AT-PRJ-15 the key shows in the control bar, is typed there and set in Project Settings", "[UI][project][AT-PRJ-15]")
+{
+    Ui ui;
+    auto& key = ui.main->controlBar().keyDisplay();
+    ui.settle();
+    CHECK (key.getText() == keyText ({}));
+    key.setText ("f#m", juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().info.key == model::KeySignature { 6, true });
+    CHECK (ui.studio.session().undoName() == "Set Key");
+    CHECK (key.getText() == juce::String::fromUTF8 ("F\xE2\x99\xAF minor"));
+    key.setText ("nonsense", juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().info.key == model::KeySignature { 6, true });
+
+    {
+        ProjectSettingsDialog dialog (ui.studio);
+        CHECK (dialog.key.getSelectedId() == 6 + 1 + 12);
+        CHECK (dialog.key.getNumItems() == 24);
+        dialog.key.setSelectedId (10 + 1); // B flat major
+        REQUIRE (dialog.apply());
+    }
+    ui.settle();
+    CHECK (ui.m().info.key == model::KeySignature { 10, false });
+    CHECK (key.getText() == juce::String::fromUTF8 ("B\xE2\x99\xAD major"));
+}

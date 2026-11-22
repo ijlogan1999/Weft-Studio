@@ -389,6 +389,23 @@ struct MetronomeSettings
     Value toValue() const;
 };
 
+/** The project's key (F-TMP-10, D-DM-20): a tonic pitch class and major or minor. */
+struct KeySignature
+{
+    int tonic = 0; // pitch class, 0 = C ... 11 = B
+    bool minor = false;
+
+    /** "C major", "F# minor", "Bb major": sharps or flats as the key is usually written. */
+    std::string name() const;
+    /** Sharps (positive) or flats (negative), -6..6, as a MIDI file's key signature event wants. */
+    int fifths() const noexcept;
+    /** Reads what a person types: "F# minor", "f#m", "Bb", "Eb major", "A min". */
+    static std::optional<KeySignature> parse (const std::string& text);
+    static KeySignature fromValue (const Value& v);
+    Value toValue() const;
+    bool operator== (const KeySignature&) const = default;
+};
+
 /** Scalar project fields (collections live in ProjectModel). */
 struct ProjectInfo
 {
@@ -404,6 +421,7 @@ struct ProjectInfo
     TimeRange punch;
     std::optional<Ticks> endMarker;
     MetronomeSettings metronomeDefaults;
+    KeySignature key;
 };
 
 bool isValidSampleRate (int rate) noexcept;

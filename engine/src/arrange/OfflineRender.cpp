@@ -263,7 +263,9 @@ media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& 
     }
     file.tracks.push_back (std::move (track));
 
-    // The tempo and meter in force at the region start, then every change inside it.
+    // The project key (F-TMP-10), then the tempo and meter in force at the region start and
+    // every change inside it.
+    file.keys.push_back ({ 0, model.info.key.fifths(), model.info.key.minor });
     const auto regionEnd = r->start + r->length;
     file.tempos.push_back ({ 0, model.tempo.bpmAt (r->start) });
     for (const auto& p : model.storedTempoPoints)

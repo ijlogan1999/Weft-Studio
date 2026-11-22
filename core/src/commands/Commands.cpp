@@ -99,6 +99,15 @@ EditResult Session::setMetronomeDefaults (const model::MetronomeSettings& settin
     return run ("Set Metronome Defaults", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "metronomeDefaults" }), settings.toValue())); });
 }
 
+EditResult Session::setKey (const model::KeySignature& key)
+{
+    if (key.tonic < 0 || key.tonic > 11)
+        return reject ("The key's tonic is a pitch class from 0 (C) to 11 (B).");
+    if (key == model().info.key)
+        return reject ("The project is already in " + key.name() + ".");
+    return run ("Set Key", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "key" }), key.toValue())); });
+}
+
 EditResult Session::setCycle (bool enabled, Ticks start, Ticks end)
 {
     if (start < 0 || end <= start)

@@ -1,6 +1,7 @@
 #include "weft/model/Model.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 
@@ -743,6 +744,81 @@ Value MetronomeSettings::toValue() const
 {
     return Value::map().set ("enabled", enabled).set ("levelDb", levelDb).set ("during", during).set ("countInBars", countInBars);
 }
+
+namespace
+{
+constexpr std::array<const char*, 12> majorNames { "C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+constexpr std::array<const char*, 12> minorNames { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B" };
+constexpr std::array<int, 12> majorFifths { 0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5 };
+constexpr std::array<int, 12> minorFifths { -3, 4, -1, -6, 1, -4, 3, -2, 5, 0, -5, 2 };
+} // namespace
+
+std::string KeySignature::name() const
+{
+    const auto t = static_cast<std::size_t> (std::clamp (tonic, 0, 11));
+    return std::string (minor ? minorNames[t] : majorNames[t]) + (minor ? " minor" : " major");
+}
+
+int KeySignature::fifths() const noexcept
+{
+    const auto t = static_cast<std::size_t> (std::clamp (tonic, 0, 11));
+    return minor ? minorFifths[t] : majorFifths[t];
+}
+
+std::optional<KeySignature> KeySignature::parse (const std::string& text)
+{
+    std::string s;
+    for (const char c : text)
+        if (c != ' ' && c != '\t')
+            s += c;
+    if (s.empty())
+        return std::nullopt;
+    static constexpr std::array<int, 7> letters { 9, 11, 0, 2, 4, 5, 7 }; // A..G
+    const auto letter = static_cast<char> (std::tolower (static_cast<unsigned char> (s[0])));
+    if (letter < 'a' || letter > 'g')
+        return std::nullopt;
+    int pc = letters[static_cast<std::size_t> (letter - 'a')];
+    std::size_t i = 1;
+    // Accidentals: #, b, or the Unicode sharp and flat signs. No mode word starts with "b".
+    while (i < s.size())
+    {
+        if (s[i] == '#')
+            ++pc, ++i;
+        else if (s[i] == 'b')
+            --pc, ++i;
+        else if (s.compare (i, 3, "\xE2\x99\xAF") == 0)
+            ++pc, i += 3;
+        else if (s.compare (i, 3, "\xE2\x99\xAD") == 0)
+            --pc, i += 3;
+        else
+            break;
+    }
+    const auto mode = s.substr (i);
+    std::string lower;
+    for (const char c : mode)
+        lower += static_cast<char> (std::tolower (static_cast<unsigned char> (c)));
+    KeySignature key;
+    key.tonic = ((pc % 12) + 12) % 12;
+    if (mode.empty() || mode == "M" || lower == "maj" || lower == "major")
+        key.minor = false;
+    else if (mode == "m" || lower == "min" || lower == "minor")
+        key.minor = true;
+    else
+        return std::nullopt;
+    return key;
+}
+
+KeySignature KeySignature::fromValue (const Value& v)
+{
+    KeySignature k;
+    if (! v.isMap())
+        return k;
+    k.tonic = clampInt<int> (v["tonic"], 0, 0, 11);
+    k.minor = oneOf (v["mode"], { "major", "minor" }, "major") == "minor";
+    return k;
+}
+
+Value KeySignature::toValue() const { return Value::map().set ("tonic", tonic).set ("mode", minor ? "minor" : "major"); }
 
 bool isValidSampleRate (int rate) noexcept { return rate == 44100 || rate == 48000 || rate == 88200 || rate == 96000; }
 
