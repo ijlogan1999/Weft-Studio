@@ -204,6 +204,10 @@ public:
     /** A region's own color, or nullopt to follow its track (F-TRK-9). */
     EditResult setRegionColor (const Id& regionId, std::optional<model::Color> color);
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
+    /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-20); notes keep their stored pitch. */
+    EditResult setRegionTranspose (const Id& regionId, int semitones);
+    /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-20); results stay within 1..127. */
+    EditResult setRegionVelocityOffset (const Id& regionId, int offset);
 
     // Several regions (arrange view) ---------------------------------------------
     /** Drag move (W-3b): one undo step; the plan is planMove's. Moved regions go on top (D-W3-2). */

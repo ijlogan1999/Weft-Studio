@@ -240,6 +240,7 @@ void BounceDialog::begin (engine::BounceSettings s)
     }
     progress = 0;
     notice.setText (studio.bounceNotice().isEmpty() ? juce::String ("Bouncing...") : studio.bounceNotice(), juce::dontSendNotification);
+    notice.setColour (juce::Label::textColourId, colour (Token::text));
     setStage (Stage::rendering);
     startTimerHz (15);
 }
@@ -264,6 +265,8 @@ void BounceDialog::finished()
     }
     progress = 1.0;
     notice.setText (juce::String (r->message), juce::dontSendNotification);
+    // A clipped bounce reads as a warning, not as plain success (B6).
+    notice.setColour (juce::Label::textColourId, colour (r->clipped ? Token::warning : Token::text));
     addToProject.setEnabled (true);
     setStage (Stage::done);
 }

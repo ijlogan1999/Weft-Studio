@@ -143,7 +143,10 @@ TEST_CASE ("AT-ARR-15: region gain", "[E][arrange][AT-ARR-15]")
     REQUIRE (rig.session.setRegionGain (r, minusInfinityDb));
     CHECK (firstNonSilent (play (rig, 48000)) == -1);
 
-    REQUIRE (rig.session.setRegionGain (r, 40.0));
+    // Above +24 dB is refused, not clamped (R0 parity fix); +24 itself is the top.
+    CHECK_FALSE (rig.session.setRegionGain (r, 40.0));
+    CHECK (rig.session.model().region (r)->audio.gainDb == minusInfinityDb);
+    REQUIRE (rig.session.setRegionGain (r, 24.0));
     CHECK (rig.session.model().region (r)->audio.gainDb == 24.0);
     out = play (rig, 48000);
     CHECK (out[10] == Catch::Approx (rampValue (10) * std::pow (10.0, 24.0 / 20.0)).epsilon (1e-5));

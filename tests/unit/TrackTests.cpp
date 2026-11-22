@@ -8,6 +8,7 @@
 
 #include <catch2/catch_approx.hpp>
 
+#include <cmath>
 #include <filesystem>
 #include <random>
 
@@ -238,4 +239,22 @@ TEST_CASE ("AT-REC-19: warn when the disk holds less than 10 minutes for the arm
     CHECK (commands::needsDiskSpaceWarning (9 * perMinute, 48000, 24, 2));
     CHECK_FALSE (commands::needsDiskSpaceWarning (11 * perMinute, 48000, 24, 2));
     CHECK_FALSE (commands::needsDiskSpaceWarning (0, 48000, 24, 0)); // nothing armed for audio
+}
+
+TEST_CASE ("AT-MIX-14: volume above +6 dB and pan beyond full left/right are refused, not clamped", "[U][tracks][AT-MIX-14]")
+{
+    auto s = newSession();
+    const auto audio = firstTrackOfKind (s, TrackKind::audio);
+    REQUIRE (s.setTrackVolume (audio, -3.0));
+    const auto refused = s.setTrackVolume (audio, 40.0);
+    CHECK_FALSE (refused);
+    CHECK (refused.error == "Volume is -inf to +6 dB.");
+    CHECK (s.model().track (audio)->strip.volumeDb == -3.0);
+    CHECK (s.setTrackVolume (audio, 6.0));
+    CHECK (s.setTrackVolume (audio, -500.0)); // quieter than -inf is still silence
+    CHECK (s.model().track (audio)->strip.volumeDb == minusInfinityDb);
+    CHECK_FALSE (s.setTrackPan (audio, 1.5));
+    CHECK_FALSE (s.setTrackPan (audio, std::nan ("")));
+    CHECK (s.setTrackPan (audio, -1.0));
+    CHECK (s.model().track (audio)->strip.pan == -1.0);
 }

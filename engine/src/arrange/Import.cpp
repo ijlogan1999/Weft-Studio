@@ -15,6 +15,8 @@ struct DecodedAudio
 {
     std::filesystem::path file;
     model::MediaRef ref;
+    std::string trackName;
+    bool ownTrack = false; // one channel of a split multichannel file: always gets a new track
 };
 
 struct ParsedMidi
@@ -50,7 +52,7 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
     std::vector<DecodedAudio> audio;
     std::vector<ParsedMidi> midi;
 
-    std::vector<std::string> missing, narrowed;
+    std::vector<std::string> missing, splitFiles, truncated;
     // Read everything first, so a bad file doesn't leave half a drop behind.
     for (const auto& file : files)
     {
@@ -80,34 +82,66 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
             out.rejected.push_back (file.filename().string());
             continue;
         }
-        if (decoded->numChannels() > 2)
+        if (decoded->truncated)
+            truncated.push_back (file.filename().string());
+        // D-ARR-7: tracks are mono or stereo, so a file with more channels becomes one mono
+        // track per channel, named "<file> 1", "<file> 2"... (Decision D-ARR-7a).
+        std::vector<media::AudioData> parts;
+        const bool split = decoded->numChannels() > 2;
+        if (split)
         {
-            decoded->channels.resize (2); // D-ARR-7: tracks are mono or stereo
-            narrowed.push_back (file.filename().string());
+            for (auto& channel : decoded->channels)
+            {
+                media::AudioData mono;
+                mono.sampleRate = decoded->sampleRate;
+                mono.channels.push_back (std::move (channel));
+                parts.push_back (std::move (mono));
+            }
+            splitFiles.push_back (file.filename().string());
         }
-        auto converted = media::resample (*decoded, info.sampleRate);
-        const auto hash = media::storeMedia (converted, media::formatForBitDepth (info.recordBitDepth), mediaDir, &error);
-        if (! hash)
+        else
+            parts.push_back (std::move (*decoded));
+        bool stored = true;
+        std::vector<DecodedAudio> fromFile;
+        for (std::size_t part = 0; part < parts.size() && stored; ++part)
+        {
+            auto converted = media::resample (parts[part], info.sampleRate);
+            const auto hash = media::storeMedia (converted, media::formatForBitDepth (info.recordBitDepth), mediaDir, &error);
+            if (! hash)
+            {
+                stored = false;
+                break;
+            }
+            pool.load (mediaDir, *hash);
+            DecodedAudio a;
+            a.file = file;
+            a.trackName = file.stem().string() + (split ? " " + std::to_string (part + 1) : std::string());
+            a.ownTrack = split;
+            a.ref.hash = *hash;
+            a.ref.originalName = file.filename().string();
+            a.ref.format = "wav";
+            a.ref.sampleRate = info.sampleRate;
+            a.ref.channels = converted.numChannels();
+            a.ref.lengthSamples = converted.numFrames();
+            a.ref.bitDepth = info.recordBitDepth;
+            std::error_code ec;
+            a.ref.sizeBytes = static_cast<std::int64_t> (std::filesystem::file_size (mediaDir / media::mediaFileName (*hash), ec));
+            a.ref.addedBy = session.user();
+            fromFile.push_back (std::move (a));
+        }
+        if (! stored)
         {
             out.rejected.push_back (file.filename().string());
+            if (split)
+                splitFiles.pop_back();
+            if (decoded->truncated)
+                truncated.pop_back();
             continue;
         }
-        pool.load (mediaDir, *hash);
-        DecodedAudio a;
-        a.file = file;
-        a.ref.hash = *hash;
-        a.ref.originalName = file.filename().string();
-        a.ref.format = "wav";
-        a.ref.sampleRate = info.sampleRate;
-        a.ref.channels = converted.numChannels();
-        a.ref.lengthSamples = converted.numFrames();
-        a.ref.bitDepth = info.recordBitDepth;
-        std::error_code ec;
-        a.ref.sizeBytes = static_cast<std::int64_t> (std::filesystem::file_size (mediaDir / media::mediaFileName (*hash), ec));
-        a.ref.addedBy = session.user();
-        audio.push_back (std::move (a));
+        for (auto& a : fromFile)
+            audio.push_back (std::move (a));
     }
-    // Status text: missing files, then unreadable ones, then multichannel files cut to stereo.
+    // Status text: missing files, then unreadable ones, then damaged and multichannel files.
     auto names = [] (const std::vector<std::string>& list) {
         std::string text;
         for (std::size_t i = 0; i < list.size(); ++i)
@@ -123,8 +157,10 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
         append ("Couldn't find " + names (missing) + ".");
     if (! unreadable.empty())
         append ("Couldn't import " + names (unreadable) + ": unsupported or damaged file" + std::string (unreadable.size() > 1 ? "s." : "."));
-    if (! narrowed.empty())
-        append ("Kept the first two channels of " + names (narrowed) + ".");
+    if (! truncated.empty())
+        append (names (truncated) + (truncated.size() > 1 ? " are" : " is") + " shorter than the header says (damaged or partly copied); imported the audio that's there.");
+    if (! splitFiles.empty())
+        append ("Split " + names (splitFiles) + " into one mono track per channel.");
     if (audio.empty() && midi.empty())
         return out;
 
@@ -141,11 +177,11 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
         session.addMedia (a.ref);
         Id track = target.trackId;
         Ticks start = at;
-        if (ontoTrack)
+        if (ontoTrack && ! a.ownTrack)
             start = next;
         else
         {
-            const auto created = session.createTrack (model::TrackKind::audio, a.file.stem().string(), a.ref.channels);
+            const auto created = session.createTrack (model::TrackKind::audio, a.trackName, a.ref.channels);
             if (! created)
                 continue;
             track = *created;

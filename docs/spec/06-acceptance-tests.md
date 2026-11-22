@@ -214,7 +214,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-24** [U] · F-ARR-23 · Alt+Right with grid 1/16 moves selected regions +240 ticks; Alt+Left at tick 100 clamps to 0.
 
-**AT-ARR-25** [E] · F-ARR-26 (D-DM-4) · Dropping a 44.1 kHz stereo MP3 at bar 3 on an audio track creates a region at bar 3 whose media is a 48 kHz WAV (converted), hashed, in `Media/`; dropping 3 files below the last track creates 3 new tracks; unsupported files are rejected with a message naming them.
+**AT-ARR-25** [E] · F-ARR-26 (D-DM-4, D-ARR-7) · Dropping a 44.1 kHz stereo MP3 at bar 3 on an audio track creates a region at bar 3 whose media is a 48 kHz WAV (converted), hashed, in `Media/`; dropping 3 files below the last track creates 3 new tracks; unsupported files are rejected with a message naming them; a 6-channel file becomes 6 mono tracks; a WAV cut to a third of its length imports that third and the message says it's shorter than its header.
 
 **AT-ARR-26** [E] · F-ARR-27 · Dropping a type-1 SMF with 3 tracks and a tempo of 100 BPM creates 3 instrument tracks with Weft Keys and the notes at correct tick positions (converting the file's PPQN to 960); the project tempo is unchanged unless the project is empty, in which case it adopts the file's tempo map. **Decision D-AT-1** recorded here.
 
@@ -258,6 +258,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRL-15** [U][E] · F-PRL-15 · Ctrl+M mutes selected notes; muted notes are not sent at playback or bounce; Ctrl+M again unmutes.
 
+**AT-PRL-16** [E] · D-W4-9 · A MIDI region with Transpose +12 and Velocity +20 plays C3 at 100 as C4 at 120 without changing the stored note; −96 and +99 clamp the played note to pitch 0 and velocity 127; 97 and −100 are refused; each change is one undo step; audio regions refuse both.
+
 ## 8. Quantize (QNT)
 
 **AT-QNT-1** [U][E] · F-QNT-1 · Setting region quantize 1/8 at 100% plays notes at quantized positions while stored positions are unchanged; setting Off restores original timing in playback; Apply Quantize bakes positions (stored positions equal quantized) and sets region quantize Off, in one undo step.
@@ -270,7 +272,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-1** [UI] · F-MIX-1 · The mixer shows one strip per track in track order, then buses, then Master pinned on the right; selecting a strip selects its track.
 
-**AT-MIX-2** [E] · F-MIX-2 · Fader at −6.02 dB halves amplitude; −inf silences; max +6 dB; Alt+click resets to 0 dB; volume changes during playback ramp over ≤ 1 buffer with no step discontinuity (max delta check).
+**AT-MIX-2** [E] · F-MIX-2 · Fader at −6.02 dB halves amplitude; −inf silences; max +6 dB (higher values are refused, AT-MIX-14); Alt+click resets to 0 dB; volume changes during playback ramp over ≤ 1 buffer with no step discontinuity (max delta check).
 
 **AT-MIX-3** [E] · F-MIX-3 · Mono source, pan center: L and R each at −3.01 dB; hard left: L at 0 dB, R silent; hard right: inverse. Stereo source with balance −100 silences R and leaves L at 0 dB.
 
@@ -293,6 +295,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-MIX-12** [E] · F-MIX-13 · Track A with `TestLatency` (1,000 samples) and track B with none, both playing an impulse at bar 2: the two impulses arrive at the master at the same sample. Removing `TestLatency` keeps them aligned. A send from A to a bus is also aligned with B.
 
 **AT-MIX-13** [E] · F-MIX-13 · Changing compensation during playback produces no discontinuity larger than the 10 ms crossfade allows.
+
+**AT-MIX-14** [U] · F-MIX-1 · Volume above +6 dB, pan beyond ±1 and region gain above +24 dB are refused with a message, not clamped; values below −inf dB store as −inf.
 
 ## 10. Plugins (PLG)
 

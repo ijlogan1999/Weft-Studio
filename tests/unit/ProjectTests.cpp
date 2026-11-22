@@ -60,6 +60,7 @@ TEST_CASE ("AT-PRJ-1: a new project has exactly the default contents", "[U][proj
     CHECK (m.storedLanes.empty());
     CHECK (m.takeFolders.empty());
     CHECK (m.info.metronomeDefaults.countInBars == 1);
+    CHECK (m.info.metronomeDefaults.during == "both"); // D-W1-10: K clicks in playback too
     CHECK (audio->automationMode == "read");
     CHECK_FALSE (s.canUndo()); // creating the project is not an undo step
 }

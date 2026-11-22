@@ -378,7 +378,7 @@ struct MetronomeSettings
 {
     bool enabled = true;
     double levelDb = 0.0;
-    std::string during = "record"; // record | play | both (W-1: on during record, off during play)
+    std::string during = "both";   // record | play | both (D-W1-10: clicks whenever the metronome is on)
     int countInBars = 1;           // W-1: default 1 bar
 
     static MetronomeSettings fromValue (const Value& v);

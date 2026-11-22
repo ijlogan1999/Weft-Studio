@@ -122,7 +122,9 @@ bool WavReader::open (const std::filesystem::path& file, std::string* error)
                         && ((format == formatPcm && (bits == 16 || bits == 24 || bits == 32)) || (format == formatFloat && bits == 32));
     if (! haveData || ! supported)
         return fail (error, file.string() + ": unsupported WAV format");
-    dataSize = std::min (dataSize, fileSize - std::min (fileSize, dataOffset));
+    const auto available = fileSize - std::min (fileSize, dataOffset);
+    wavInfo.truncated = dataSize > available;
+    dataSize = std::min (dataSize, available);
     wavInfo.frames = static_cast<std::int64_t> (dataSize / (static_cast<std::uint64_t> (bits / 8) * static_cast<std::uint64_t> (wavInfo.channels)));
     return true;
 }
@@ -178,6 +180,7 @@ std::optional<AudioData> readWav (const std::filesystem::path& file, std::string
     const auto& info = reader.info();
     AudioData audio;
     audio.sampleRate = info.sampleRate;
+    audio.truncated = info.truncated;
     audio.channels.assign (static_cast<std::size_t> (info.channels), std::vector<float> (static_cast<std::size_t> (info.frames)));
     std::vector<float*> dest;
     for (auto& c : audio.channels)

@@ -54,7 +54,7 @@ Inspector::Inspector (Studio& s) : studio (s)
         sl.setRange (lo, hi, step);
         sl.setTextValueSuffix (suffix);
     };
-    setupSlider (regionGain, -30.0, 30.0, 0.1, " dB");
+    setupSlider (regionGain, -30.0, 24.0, 0.1, " dB");
     regionGain.setDoubleClickReturnValue (true, 0.0);
     describe (regionGain, "Region gain", "Region gain in dB (double-click resets)");
     regionGain.onDragStart = [this] { studio.session().beginGesture ("Region Gain"); };
@@ -120,6 +120,28 @@ Inspector::Inspector (Studio& s) : studio (s)
             studio.edited();
         };
         sl->onValueChange = [this] { setRegionQuantize(); };
+    }
+    setupSlider (regionTranspose, -96.0, 96.0, 1.0, " st");
+    setupSlider (regionVelocity, -99.0, 99.0, 1.0, "");
+    describe (regionTranspose, "Region transpose", "Plays the region's notes this many semitones up or down (double-click resets)");
+    describe (regionVelocity, "Region velocity", "Adds to every note's velocity when the region plays (double-click resets)");
+    for (auto* sl : { &regionTranspose, &regionVelocity })
+    {
+        sl->setDoubleClickReturnValue (true, 0.0);
+        const auto name = sl == &regionTranspose ? "Region Transpose" : "Region Velocity";
+        sl->onDragStart = [this, name] { studio.session().beginGesture (name); };
+        sl->onDragEnd = [this] {
+            studio.session().endGesture();
+            studio.edited();
+        };
+        sl->onValueChange = [this, sl] {
+            const auto* r = region();
+            if (r == nullptr || refreshing || ! r->isMidi)
+                return;
+            const auto v = static_cast<int> (std::lround (sl->getValue()));
+            studio.check (sl == &regionTranspose ? studio.session().setRegionTranspose (r->id, v)
+                                                 : studio.session().setRegionVelocityOffset (r->id, v));
+        };
     }
     describe (applyQuantize, Cmd::applyQuantize);
     applyQuantize.onClick = [this] {
@@ -205,7 +227,7 @@ Inspector::Inspector (Studio& s) : studio (s)
 
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &fadeIn, &fadeOut,
                                                                           &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
-                                                                          &applyQuantize, &notePitch, &noteVelocity, &noteLength, &notePosition,
+                                                                          &applyQuantize, &regionTranspose, &regionVelocity, &notePitch, &noteVelocity, &noteLength, &notePosition,
                                                                           &noteChannel, &trackName, &trackColour, &monitor })
     {
         // Every control is reachable with Tab; a click doesn't take focus from the arrange window.
@@ -286,10 +308,13 @@ void Inspector::refresh()
         fadeOutCurve.setSelectedItemIndex (curveIndex (r->audio.fadeOut.curve), juce::dontSendNotification);
     }
     const bool midi = r != nullptr && r->isMidi;
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &applyQuantize })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &applyQuantize,
+                                                                          &regionTranspose, &regionVelocity })
         c->setVisible (midi);
     if (midi)
     {
+        regionTranspose.setValue (r->midi.transpose, juce::dontSendNotification);
+        regionVelocity.setValue (r->midi.velocityOffset, juce::dontSendNotification);
         const auto& q = r->midi.quantize;
         int id = 1;
         for (std::size_t i = 1; q && i < gridValues().size(); ++i)
@@ -400,6 +425,8 @@ void Inspector::paint (juce::Graphics& g)
     label (regionQuantize, "Quantize");
     label (quantizeStrength, "Strength");
     label (quantizeSwing, "Swing");
+    label (regionTranspose, "Transpose");
+    label (regionVelocity, "Velocity");
     label (notePitch, "Pitch");
     label (noteVelocity, "Velocity");
     label (noteLength, "Length");
@@ -444,6 +471,8 @@ void Inspector::resized()
             quantizeStrength.setBounds (withLabel (row()));
             quantizeSwing.setBounds (withLabel (row()));
             applyQuantize.setBounds (withLabel (row()));
+            regionTranspose.setBounds (withLabel (row()));
+            regionVelocity.setBounds (withLabel (row()));
         }
         r.removeFromTop (space::s1);
     }

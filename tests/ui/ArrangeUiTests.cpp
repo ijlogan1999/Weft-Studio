@@ -768,15 +768,18 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
 {
     Ui ui;
     auto settings = [&] { return ui.studio.engine().settings(); };
-    REQUIRE (settings().metronomeDuring == engine::ClickDuring::record);
+    REQUIRE (settings().metronomeDuring == engine::ClickDuring::both); // D-W1-10
     if (settings().metronomeOn)
         CHECK (ui.studio.perform (Cmd::metronome));
     CHECK (ui.studio.perform (Cmd::metronome));
     CHECK (settings().metronomeOn);
-    CHECK (ui.studio.status.contains ("while recording"));
+    CHECK (ui.studio.status == "Click on.");
 
-    ui.main->menuItemSelected (MainComponent::clickDuringBoth, 4);
-    CHECK (settings().metronomeDuring == engine::ClickDuring::both);
+    ui.main->menuItemSelected (MainComponent::clickDuringRecord, 4);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::record);
+    CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (ui.studio.status.contains ("while recording"));
     const auto returned = settings().returnToStartOnStop;
     ui.main->menuItemSelected (MainComponent::returnToStart, 4);
     CHECK (settings().returnToStartOnStop != returned);
@@ -801,7 +804,7 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
     REQUIRE (ui.studio.newProject (ui.folder.path / "projects", second, &error));
     CHECK (settings().returnToStartOnStop == keep.returnToStartOnStop);
     CHECK (settings().midiMergeLinear == keep.midiMergeLinear);
-    CHECK (settings().metronomeDuring == engine::ClickDuring::record);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::both);
 }
 
 TEST_CASE ("F-TRN-3 Ctrl+Space pauses where the playhead is; Space returns to the play start", "[UI][transport]")

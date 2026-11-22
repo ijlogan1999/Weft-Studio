@@ -122,12 +122,36 @@ TEST_CASE ("AT-ARR-25: dropped audio is converted, hashed and placed; unsupporte
         CHECK (result.rejected == std::vector<std::string> { "gone.wav" });
         CHECK (result.message == "Couldn't find gone.wav.");
     }
-    SECTION ("a multichannel file keeps two channels and says so (D-ARR-7)")
+    SECTION ("a multichannel file becomes one mono track per channel and says so (D-ARR-7, B3)")
     {
-        const auto result = engine::importFiles (rig.session, rig.media, mediaDir, decoders, { writeSine (drops.path, "surround.wav", 48000, 6, 0.2) }, { 0, {} });
+        const auto result = engine::importFiles (rig.session, rig.media, mediaDir, decoders, { writeSine (drops.path, "surround.wav", 48000, 6, 0.2) },
+                                                 { 2 * barTicks, track });
+        REQUIRE (result.regions.size() == 6);
+        REQUIRE (result.tracks.size() == 6); // new tracks even when dropped on a track
+        for (std::size_t i = 0; i < 6; ++i)
+        {
+            const auto& r = *rig.session.model().region (result.regions[i]);
+            CHECK (r.start == 2 * barTicks);
+            CHECK (r.trackId == result.tracks[i]);
+            CHECK (rig.session.model().track (result.tracks[i])->name == "surround " + std::to_string (i + 1));
+            CHECK (rig.session.model().mediaRef (r.audio.media)->channels == 1);
+            CHECK (r.length == 9600);
+        }
+        CHECK (result.message == "Split surround.wav into one mono track per channel.");
+    }
+    SECTION ("a WAV shorter than its header imports what's there and says so (B2)")
+    {
+        const auto file = writeSine (drops.path, "cut.wav", 48000, 1, 1.0);
+        const auto full = std::filesystem::file_size (file);
+        const auto headerBytes = full - 48000 * 2; // 16-bit mono
+        std::filesystem::resize_file (file, headerBytes + 16000 * 2);
+        const auto result = engine::importFiles (rig.session, rig.media, mediaDir, decoders, { file }, { 0, {} });
         REQUIRE (result.regions.size() == 1);
-        CHECK (rig.session.model().mediaRef (rig.session.model().region (result.regions[0])->audio.media)->channels == 2);
-        CHECK (result.message == "Kept the first two channels of surround.wav.");
+        CHECK (rig.session.model().region (result.regions[0])->length == 16000);
+        CHECK (result.message == "cut.wav is shorter than the header says (damaged or partly copied); imported the audio that's there.");
+
+        const auto intact = engine::importFiles (rig.session, rig.media, mediaDir, decoders, { writeSine (drops.path, "whole.wav", 48000, 1, 0.5) }, { 0, {} });
+        CHECK (intact.message.empty());
     }
 }
 

@@ -172,3 +172,44 @@ TEST_CASE ("AT-QNT-1: region quantize plays quantized; Off restores the stored t
     REQUIRE (k.seen (0x90).size() == 1);
     CHECK (k.seen (0x90)[0].frame == ticksToSamples (250));
 }
+
+TEST_CASE ("AT-PRL-16: region transpose and velocity offset play without changing the notes; out of range is refused", "[E][pianoroll][AT-PRL-16]")
+{
+    KeysRig k;
+    model::Note n;
+    n.pos = 0;
+    n.length = 960;
+    n.pitch = 60;
+    n.velocity = 100;
+    REQUIRE (k.rig.session.addNote (k.region, n));
+    REQUIRE (k.rig.session.setRegionTranspose (k.region, 12));
+    REQUIRE (k.rig.session.setRegionVelocityOffset (k.region, 20));
+    k.play (barSamples);
+    REQUIRE (k.seen (0x90).size() == 1);
+    CHECK (k.seen (0x90)[0].event.data1 == 72);
+    CHECK (k.seen (0x90)[0].event.data2 == 120);
+    // The stored note is unchanged; the playback result stays within 1..127.
+    const auto& r = *k.rig.session.model().region (k.region);
+    CHECK (k.rig.session.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pitch == 60);
+    REQUIRE (k.rig.session.setRegionVelocityOffset (k.region, 99));
+    REQUIRE (k.rig.session.setRegionTranspose (k.region, -96));
+    k.play (barSamples);
+    REQUIRE (k.seen (0x90).size() == 1);
+    CHECK (k.seen (0x90)[0].event.data1 == 0);
+    CHECK (k.seen (0x90)[0].event.data2 == 127);
+
+    CHECK_FALSE (k.rig.session.setRegionTranspose (k.region, 97));
+    CHECK_FALSE (k.rig.session.setRegionVelocityOffset (k.region, -100));
+    CHECK (k.rig.session.model().region (k.region)->midi.transpose == -96);
+
+    // One undo step each.
+    k.rig.session.undo();
+    CHECK (k.rig.session.model().region (k.region)->midi.transpose == 12);
+    CHECK (k.rig.session.model().region (k.region)->midi.velocityOffset == 99);
+
+    // Audio regions refuse both.
+    const auto audio = k.rig.audioTrack();
+    const auto ar = k.rig.addAudioRegion (audio, 0, 4800);
+    CHECK_FALSE (k.rig.session.setRegionTranspose (ar, 1));
+    CHECK_FALSE (k.rig.session.setRegionVelocityOffset (ar, 1));
+}

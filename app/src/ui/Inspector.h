@@ -26,6 +26,8 @@ public:
     juce::ComboBox regionQuantize;
     juce::Slider quantizeStrength, quantizeSwing;
     juce::TextButton applyQuantize { "Apply Quantize" };
+    // MIDI region playback parameters (L-RPR-2).
+    juce::Slider regionTranspose, regionVelocity;
     // Note section (piano roll focus with notes selected).
     juce::Label notePitch, noteVelocity, noteLength, notePosition, noteChannel;
     // Track section.

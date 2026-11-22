@@ -191,7 +191,7 @@ double sineGainDb (Processor& p, double freq, float amplitude = 0.25f)
 
 // AT-MIX-2 ---------------------------------------------------------------------------------
 
-TEST_CASE ("AT-MIX-2: the fader scales by its dB value, clamps at +6 dB and ramps changes", "[E][mixer][AT-MIX-2]")
+TEST_CASE ("AT-MIX-2: the fader scales by its dB value, stops at +6 dB and ramps changes", "[E][mixer][AT-MIX-2]")
 {
     Rig rig;
     addMedia (rig, "b3:half", { constant (0.5f), constant (0.5f) });
@@ -205,7 +205,8 @@ TEST_CASE ("AT-MIX-2: the fader scales by its dB value, clamps at +6 dB and ramp
     CHECK (levelAt (0.0) == 0.5f);
     CHECK (levelAt (-6.0206) == Catch::Approx (0.25).epsilon (1e-4));
     CHECK (levelAt (minusInfinityDb) == 0.0f);
-    CHECK (levelAt (12.0) == Catch::Approx (0.5 * std::pow (10.0, 6.0 / 20.0)).epsilon (1e-4)); // clamped to +6 dB
+    CHECK (levelAt (6.0) == Catch::Approx (0.5 * std::pow (10.0, 6.0 / 20.0)).epsilon (1e-4));
+    CHECK_FALSE (rig.session.setTrackVolume (t, 12.0)); // above the top is refused (AT-MIX-14)
     CHECK (rig.session.model().track (t)->strip.volumeDb == 6.0);
 
     // A change while playing reaches its value within one buffer, without a step.

@@ -45,7 +45,7 @@ Shortcuts are Weft defaults (see `00-README.md`).
 5. If count-in is enabled (default: 1 bar), the system plays the metronome for one bar *before* the playhead position; the playhead starts one bar earlier and recording begins when it reaches the original position. The count-in clicks are not recorded.
 6. During recording:
    - A red "recording" region grows on each armed track from the record start point, with a live waveform overview.
-   - The metronome sounds if enabled for recording (default: on during record, off during play).
+   - The metronome sounds if enabled for recording (default: on during record and play, D-W1-10).
    - Existing regions on the armed track keep playing until the recording region reaches them; from that point the track plays the new recording only (new region is on top).
 7. User presses **Space** (stop) or **R** again (stop recording but keep playing; **Decision D-W1-2:** pressing R while recording stops recording and continues playback; Space stops both).
 8. On stop the system:
@@ -428,6 +428,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W1-5 | Punch regions get 10 ms handles with crossfades. |
 | D-W1-6 | Recording onto a track deleted remotely lands on a recovered track. |
 | D-W1-9 | Autopunch on sets the range to the cycle, else 4 bars from the playhead's bar; drag its ends (Shift+drag for a new range). |
+| D-W1-10 | New projects click during playback and recording ("Click During: Both"), so turning the metronome on is always audible; Recording only stays a choice in Project Settings. (Changed 2026-11.) |
 | D-W2-1 | Selected instrument track receives live MIDI unarmed. |
 | D-W2-2 | Recorded MIDI regions round outward to whole bars. |
 | D-W3-1 | Move snaps region start. |
@@ -437,7 +438,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-ARR-4 | Joined audio keeps the first fade-in and the last fade-out. |
 | D-ARR-5 | Smart snap uses the finest note grid whose lines are at least 16 px apart, else whole bars. |
 | D-ARR-6 | A take moves, copies and pastes with its whole take folder. |
-| D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels keep the first 2, and the status bar says so. |
+| D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels become one mono track per channel, named "<file> 1", "<file> 2"..., even when dropped on a track, and the status bar says so (changed 2026-11 from keeping the first 2 channels, which lost audio). A WAV whose data is shorter than its header says imports what's there, and the status bar says so. |
 | D-ARR-8 | The Loop Region command (no drag) loops up to the next region on the track; with none after it, to the cycle end when the cycle is on and ends later; otherwise for 3 repeats. A region directly followed by another isn't looped. |
 | D-W3-4 | Undo history is per session, not persisted. |
 | D-W4-1 | MIDI 60 is labeled C3. |
@@ -448,6 +449,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W4-6 | Scissors split a note into two at the snapped point. |
 | D-W4-7 | Controller points snap to the grid and hold until the next point; pitch bend is 14-bit centred on 8192. |
 | D-W4-8 | Velocity tool: one velocity step per pixel. |
+| D-W4-9 | MIDI region Transpose (−96…+96 semitones) and Velocity (−99…+99) are playback offsets set in the inspector; the stored notes don't change, results are clamped to 0–127 pitch and 1–127 velocity, and out-of-range values are refused. |
 | D-W5-1 | Swing 0–100% maps from straight to triplet feel. |
 | D-W5-2 | Quantize moves note starts only. |
 | D-W6-1 | Solo keeps upstream/downstream routing audible. |

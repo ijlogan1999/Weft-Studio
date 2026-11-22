@@ -224,6 +224,10 @@ EditResult Session::setTrackVolume (const Id& trackId, double volumeDb)
 {
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
+    // Values above the fader's top are refused rather than clamped, so callers see the mistake;
+    // anything below -inf dB is silence and stores as -inf.
+    if (std::isnan (volumeDb) || volumeDb > 6.0 + 1e-9)
+        return reject ("Volume is -inf to +6 dB.");
     return run ("Volume", [&] (TxnWriter& w) {
         return wrote (w.put (trackPath (trackId) / "strip" / "volumeDb", Value (std::clamp (volumeDb, minusInfinityDb, 6.0))));
     });
@@ -233,6 +237,8 @@ EditResult Session::setTrackPan (const Id& trackId, double pan)
 {
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
+    if (std::isnan (pan) || std::abs (pan) > 1.0 + 1e-9)
+        return reject ("Pan is -1 (left) to +1 (right).");
     return run ("Pan", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "strip" / "pan", Value (std::clamp (pan, -1.0, 1.0)))); });
 }
 
@@ -750,6 +756,8 @@ EditResult Session::setRegionGain (const Id& regionId, double gainDb)
         return reject ("That region no longer exists.");
     if (r->isMidi)
         return reject ("Region gain applies to audio regions.");
+    if (std::isnan (gainDb) || gainDb > 24.0 + 1e-9)
+        return reject ("Region gain is -inf to +24 dB.");
     return run ("Region Gain", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "audio" / "gainDb", Value (std::clamp (gainDb, minusInfinityDb, 24.0)));
         stamp (w, regionId);
@@ -793,6 +801,38 @@ EditResult Session::setRegionQuantize (const Id& regionId, std::optional<model::
         v = Value::map().set ("grid", q->grid).set ("strength", q->strength).set ("swing", q->swing);
     return run ("Region Quantize", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "midi" / "quantize", v);
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionTranspose (const Id& regionId, int semitones)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (! r->isMidi)
+        return reject ("Transpose applies to MIDI regions.");
+    if (semitones < -96 || semitones > 96)
+        return reject ("Transpose is -96 to +96 semitones.");
+    return run ("Region Transpose", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "transpose", Value (semitones));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionVelocityOffset (const Id& regionId, int offset)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (! r->isMidi)
+        return reject ("Velocity offset applies to MIDI regions.");
+    if (offset < -99 || offset > 99)
+        return reject ("Velocity offset is -99 to +99.");
+    return run ("Region Velocity", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "velocityOffset", Value (offset));
         stamp (w, regionId);
         return wrote (good);
     });

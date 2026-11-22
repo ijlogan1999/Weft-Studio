@@ -730,7 +730,7 @@ MetronomeSettings MetronomeSettings::fromValue (const Value& v)
         return m;
     m.enabled = v["enabled"].asBool (true);
     m.levelDb = clampDouble (v["levelDb"], 0.0, minusInfinityDb, 6.0);
-    m.during = oneOf (v["during"], { "record", "play", "both" }, "record");
+    m.during = oneOf (v["during"], { "record", "play", "both" }, "both");
     m.countInBars = clampInt<int> (v["countInBars"], 1, 0, 2);
     return m;
 }
