@@ -769,7 +769,7 @@ TEST_CASE ("Region and lane right-click menus: edit commands, Split Here, Color,
     const auto onA = ui.centreOf (a);
     CHECK (labels (tl.contextMenu (onA))
            == juce::StringArray { "Cut", "Copy", "Paste", "Delete", "Split Here", "Join", "Mute Regions", "Repeat Regions", "Loop Region", "Crossfade",
-                                  "Apply Quantize", "Color", "Add Comment on \"" + juce::String (ui.region (a).name) + "\"" });
+                                  "Apply Quantize", "Export Regions as Files...", "Color", "Add Comment on \"" + juce::String (ui.region (a).name) + "\"" });
 
     // Color applies to the whole selection as one undo step; Track Color clears the override.
     ui.studio.selection.set ({ a, b });
