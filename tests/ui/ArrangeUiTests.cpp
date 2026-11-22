@@ -423,7 +423,11 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
         if (! it.getItem().isSeparator)
             headerItems.add (it.getItem().text);
     CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
-                                              "Delete Track", "Lock Track", "Add Comment" });
+                                              "Delete Track", "Turn Track Off", "Lock Track", "Add Comment" });
+    header->pickMenu (TrackHeader::itemTrackOff); // L-TRH-7
+    CHECK (ui.m().track (audio)->off);
+    header->pickMenu (TrackHeader::itemTrackOff);
+    CHECK_FALSE (ui.m().track (audio)->off);
     header->pickMenu (TrackHeader::itemColour + 3);
     CHECK (ui.m().track (audio)->color.palette == 2);
     header->pickMenu (TrackHeader::itemMoveDown);
