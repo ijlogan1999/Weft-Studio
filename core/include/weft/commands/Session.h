@@ -234,6 +234,12 @@ public:
         inner fades, and in Media/), with the outer fades given. One undo step "Join Regions".
     */
     EditResult joinRegionsAs (const std::vector<Id>& regionIds, const model::MediaRef& rendered, model::Fade fadeIn, model::Fade fadeOut);
+    /**
+        Reverse (L-RGN-12): each region plays its paired file from the start (the file is the
+        region's audio backwards, already in Media/). One undo step "Reverse"; fades, gain and
+        position stay.
+    */
+    EditResult reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed);
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);

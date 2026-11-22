@@ -1732,6 +1732,8 @@ juce::PopupMenu Timeline::contextMenu (juce::Point<float> p) const
             add (c, editable);
         if (r->isMidi)
             add (Cmd::applyQuantize, editable);
+        else
+            add (Cmd::reverseRegions, editable);
         add (Cmd::exportRegions, true);
         menu.addSeparator();
         auto colours = colourMenu (contextTrackColour, r->color && r->color->rgb.empty() ? r->color->palette : -1);

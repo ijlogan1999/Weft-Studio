@@ -40,7 +40,9 @@ enum class Cmd
     // Export Regions as Files (L-EXP-2, L-EXP-3)
     exportRegions,
     // Discard Recording (L-REC-7, F-REC-18)
-    discardRecording
+    discardRecording,
+    // Reverse audio regions (L-RGN-12)
+    reverseRegions
 };
 
 struct CommandInfo

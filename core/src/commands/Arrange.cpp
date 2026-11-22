@@ -570,4 +570,35 @@ EditResult Session::joinRegionsAs (const std::vector<Id>& regionIds, const model
         return wrote (good);
     });
 }
+
+EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed)
+{
+    if (reversed.empty())
+        return reject ("Select audio regions to reverse.");
+    for (const auto& [id, media] : reversed)
+    {
+        const auto* r = projection.region (id);
+        if (r == nullptr)
+            return reject ("That region no longer exists.");
+        if (r->isMidi)
+            return reject ("Reverse applies to audio regions.");
+        if (media.lengthSamples < r->length)
+            return reject ("The reversed audio is shorter than the region.");
+    }
+    return run ("Reverse", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& [id, rendered] : reversed)
+        {
+            auto media = rendered;
+            media.addedBy = userId;
+            media.addedAt = clock();
+            if (projection.mediaRef (media.hash) == nullptr)
+                good = good && w.put (doc::path ({ keys::media, media.hash }), media.toValue());
+            good = good && w.put (regionPath (id) / "audio" / "media", Value (media.hash))
+                   && w.put (regionPath (id) / "audio" / "sourceOffset", Value (static_cast<std::int64_t> (0)));
+            stamp (w, id);
+        }
+        return wrote (good);
+    });
+}
 } // namespace weft::commands

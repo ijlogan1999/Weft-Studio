@@ -318,4 +318,59 @@ RegionExport exportRegions (const model::ProjectModel& model, const std::vector<
                      + (failed.size() == 1 ? " region." : " regions.");
     return out;
 }
+
+commands::EditResult reverseRegions (commands::Session& session, const std::vector<Id>& regionIds, MediaPool& media,
+                                     const std::filesystem::path& mediaDir)
+{
+    const auto& model = session.model();
+    std::vector<std::pair<Id, model::MediaRef>> reversed;
+    for (const auto& id : regionIds)
+    {
+        const auto* r = model.region (id);
+        const auto* ref = r != nullptr && ! r->isMidi ? model.mediaRef (r->audio.media) : nullptr;
+        if (ref == nullptr)
+            continue;
+        // The region's part of the file: from disk when it's there, else from memory.
+        media::AudioData audio;
+        audio.sampleRate = model.info.sampleRate;
+        media::WavReader reader;
+        if (reader.open (mediaDir / media::mediaFileName (ref->hash)))
+        {
+            audio.channels.assign (static_cast<std::size_t> (reader.info().channels), std::vector<float> (static_cast<std::size_t> (r->length)));
+            std::vector<float*> dest;
+            for (auto& c : audio.channels)
+                dest.push_back (c.data());
+            reader.read (r->audio.sourceOffset, r->length, dest.data());
+        }
+        else if (const auto source = media.find (ref->hash); source != nullptr && source->resident())
+        {
+            audio.channels.assign (static_cast<std::size_t> (source->numChannels()), std::vector<float> (static_cast<std::size_t> (r->length)));
+            bool missing = false;
+            for (int c = 0; c < source->numChannels(); ++c)
+                for (std::int64_t i = 0; i < r->length; ++i)
+                    audio.channels[static_cast<std::size_t> (c)][static_cast<std::size_t> (i)] = source->sample (c, r->audio.sourceOffset + i, missing);
+        }
+        else
+            return commands::EditResult::fail ("The audio for " + r->name + " isn't here yet.");
+        for (auto& c : audio.channels)
+            std::reverse (c.begin(), c.end());
+        std::string error;
+        const auto hash = media::storeMedia (audio, media::formatForBitDepth (model.info.recordBitDepth), mediaDir, &error);
+        if (! hash)
+            return commands::EditResult::fail (error);
+        if (media.find (*hash) == nullptr && ! media.load (mediaDir, *hash))
+            media.add (*hash, audio);
+        model::MediaRef out;
+        out.hash = *hash;
+        out.originalName = r->name + " (reversed).wav";
+        out.sampleRate = model.info.sampleRate;
+        out.channels = audio.numChannels();
+        out.lengthSamples = audio.numFrames();
+        out.bitDepth = model.info.recordBitDepth;
+        std::error_code ec;
+        out.sizeBytes = static_cast<std::int64_t> (std::filesystem::file_size (mediaDir / media::mediaFileName (*hash), ec));
+        reversed.emplace_back (id, out);
+    }
+    return session.reverseRegionsAs (reversed);
+}
 } // namespace weft::engine

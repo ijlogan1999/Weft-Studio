@@ -710,6 +710,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
+        case Cmd::reverseRegions:
             break;
     }
     return std::nullopt;
@@ -867,6 +868,7 @@ bool Studio::perform (Cmd command)
             return ! pieces.empty();
         }
         case Cmd::join: return check (engine::joinRegions (s, ids, pool, mediaDir()));
+        case Cmd::reverseRegions: return ! ids.empty() && check (engine::reverseRegions (s, ids, pool, mediaDir()));
         case Cmd::muteRegions: return ! ids.empty() && check (s.toggleRegionsMuted (ids));
         case Cmd::nudgeLeft:
         case Cmd::nudgeRight:
@@ -2344,6 +2346,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
+        Cmd::reverseRegions,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

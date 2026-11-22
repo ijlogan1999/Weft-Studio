@@ -79,6 +79,13 @@ std::optional<RenderedJoin> renderJoin (const model::ProjectModel& model, const 
 commands::EditResult joinRegions (commands::Session& session, const std::vector<Id>& regionIds, MediaPool& media,
                                   const std::filesystem::path& mediaDir);
 
+/**
+    Reverse (L-RGN-12): writes each selected audio region's part of its file, backwards, into
+    Media/ and points the region at it (one undo step "Reverse"). MIDI regions are skipped.
+*/
+commands::EditResult reverseRegions (commands::Session& session, const std::vector<Id>& regionIds, MediaPool& media,
+                                     const std::filesystem::path& mediaDir);
+
 /** One audio region as it plays (gain and fades, no track strip), mono or stereo like its file. */
 std::optional<media::AudioData> renderRegion (const model::ProjectModel& model, const Id& regionId, MediaPool& media, std::string* error = nullptr);
 

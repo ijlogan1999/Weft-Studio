@@ -230,6 +230,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-28** [U] · F-ARR-29 · Ctrl+R with a 2-bar region at bar 3 selected creates a copy at bar 5 with a new ID and the same content; repeating ×3 in the dialog creates copies at bars 5, 7, 9; a multi-region selection repeats as a block after its last end; one undo step.
 
+**AT-ARR-29** [E] · L-RGN-12 · Reverse Regions (Edit menu, audio region menu) writes the region's part of its file backwards into `Media/` and plays it from the start: the first sample is the old last one; position, length, gain and fades stay; one undo step "Reverse"; reversing again plays forwards; MIDI regions are refused.
+
 ## 6. Audio editor (EDA)
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
