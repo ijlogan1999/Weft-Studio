@@ -86,6 +86,12 @@ commands::EditResult joinRegions (commands::Session& session, const std::vector<
 commands::EditResult reverseRegions (commands::Session& session, const std::vector<Id>& regionIds, MediaPool& media,
                                      const std::filesystem::path& mediaDir);
 
+/**
+    Snap Edits to Zero Crossings (L-ATE-3): the frame nearest `frame`, within `radius`, where
+    the signal (all channels summed) changes sign or is 0. `frame` itself when there's none.
+*/
+std::int64_t nearestZeroCrossing (const MediaSource& source, std::int64_t frame, std::int64_t radius);
+
 /** One audio region as it plays (gain and fades, no track strip), mono or stereo like its file. */
 std::optional<media::AudioData> renderRegion (const model::ProjectModel& model, const Id& regionId, MediaPool& media, std::string* error = nullptr);
 

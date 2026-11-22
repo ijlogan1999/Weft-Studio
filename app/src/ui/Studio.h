@@ -121,6 +121,8 @@ public:
     arrange::Selection selection;
     arrange::Snap snap = arrange::Snap::smart();
     bool snapEnabled = true;
+    /** Audio editor trims land on the nearest zero crossing within 10 ms (L-ATE-3). Off by default. */
+    bool snapZeroCrossings = false;
     arrange::TimelineView view;
     Tool tool = Tool::pointer;
     PanelLayout layout;

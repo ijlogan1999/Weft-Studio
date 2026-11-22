@@ -373,4 +373,30 @@ commands::EditResult reverseRegions (commands::Session& session, const std::vect
     }
     return session.reverseRegionsAs (reversed);
 }
+
+std::int64_t nearestZeroCrossing (const MediaSource& source, std::int64_t frame, std::int64_t radius)
+{
+    const auto at = [&] (std::int64_t f) {
+        bool missing = false;
+        float sum = 0.0f;
+        for (int c = 0; c < source.numChannels(); ++c)
+            sum += source.sample (c, f, missing);
+        return sum;
+    };
+    // A crossing "at f" means the sample at f is 0 or has the other sign from f - 1.
+    const auto crosses = [&] (std::int64_t f) {
+        if (f <= 0 || f >= source.numFrames())
+            return f == 0 || f == source.numFrames();
+        const auto a = at (f - 1), b = at (f);
+        return b == 0.0f || (a < 0.0f) != (b < 0.0f);
+    };
+    for (std::int64_t d = 0; d <= radius; ++d)
+    {
+        if (crosses (frame - d))
+            return frame - d;
+        if (crosses (frame + d))
+            return frame + d;
+    }
+    return frame;
+}
 } // namespace weft::engine

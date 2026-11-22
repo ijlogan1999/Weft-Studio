@@ -850,7 +850,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             menu.addSeparator();
-            for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::keyboardMidi, Cmd::toggleTheme })
+            for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::snapZeroCrossings, Cmd::keyboardMidi,
+                            Cmd::toggleTheme })
                 add (c);
             break;
         case 6:

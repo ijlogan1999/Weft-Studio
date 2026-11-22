@@ -135,3 +135,41 @@ TEST_CASE ("AT-LIB-1 file browser lists supported files, previews on click, drag
     CHECK (regions.front()->length == 24000);
     CHECK (ui.main->side().media().rows().size() == 1);
 }
+
+TEST_CASE ("AT-EDA-2 Snap Edits to Zero Crossings moves audio editor trims onto a zero crossing", "[UI][AT-EDA-2]")
+{
+    Ui ui;
+    const auto id = importSine (ui, bar); // 440 Hz: a crossing about every 54.5 samples
+    ui.timeline().pointerDown (ui.centreOf (id), {}, 2);
+    ui.timeline().pointerUp (ui.centreOf (id), {});
+    ui.settle();
+    auto& editor = ui.main->bottom().audioEditor();
+    REQUIRE (editor.region() != nullptr);
+    REQUIRE (ui.studio.perform (Cmd::snapZeroCrossings));
+    REQUIRE (ui.studio.snapZeroCrossings);
+
+    const auto source = ui.studio.media().find (ui.region (id).audio.media);
+    REQUIRE (source != nullptr);
+    const auto value = [&] (std::int64_t f) {
+        bool missing = false;
+        return source->sample (0, f, missing) + source->sample (1, f, missing);
+    };
+    editor.samplesPerPixel = 1.0;
+    editor.originSample = 0.0;
+    const auto y = editor.waveArea().getCentreY();
+    editor.pointerDown ({ static_cast<float> (editor.sampleToX (0)), y });
+    editor.pointerDrag ({ static_cast<float> (editor.sampleToX (1000)), y }, false);
+    editor.pointerUp();
+    ui.settle();
+    const auto offset = ui.region (id).audio.sourceOffset;
+    CHECK (std::abs (offset - 1000) <= 30);
+    const auto a = value (offset - 1), b = value (offset);
+    CHECK ((b == 0.0f || (a < 0.0f) != (b < 0.0f)));
+
+    // The helper on its own: no crossing within the radius keeps the frame.
+    media::AudioData dc;
+    dc.channels.assign (1, std::vector<float> (1000, 0.25f));
+    const engine::MediaSource flat (dc);
+    CHECK (engine::nearestZeroCrossing (flat, 500, 100) == 500);
+    CHECK (engine::nearestZeroCrossing (flat, 50, 100) == 0); // the file start counts
+}

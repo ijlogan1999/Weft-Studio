@@ -240,6 +240,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
 
+**AT-EDA-2** [UI] · L-ATE-3, D-W3-6 · With View › Snap Edits to Zero Crossings on, dragging a region edge in the audio editor lands on the nearest sample, within 10 ms, where the summed signal crosses zero (or the file's start or end); with none in reach the edge goes where it was dragged.
+
 ## 7. Piano roll (PRL)
 
 **AT-PRL-1** [UI] · F-PRL-1 · Double-click a MIDI region opens the piano roll; the keyboard labels MIDI 60 as C3; selecting two regions on one track shows notes of both with boundary lines.

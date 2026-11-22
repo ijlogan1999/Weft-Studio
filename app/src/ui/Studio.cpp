@@ -710,7 +710,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
-        case Cmd::reverseRegions:
+        case Cmd::reverseRegions: case Cmd::snapZeroCrossings:
             break;
     }
     return std::nullopt;
@@ -948,6 +948,10 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::snapToggle: snapEnabled = ! snapEnabled; break;
+        case Cmd::snapZeroCrossings:
+            snapZeroCrossings = ! snapZeroCrossings;
+            setStatus (snapZeroCrossings ? "Audio editor trims snap to zero crossings." : "Zero-crossing snap off.");
+            break;
         case Cmd::keyboardMidi:
         {
             std::vector<engine::KeyboardMidi::Message> out;

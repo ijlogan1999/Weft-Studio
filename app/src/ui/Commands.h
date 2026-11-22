@@ -42,7 +42,9 @@ enum class Cmd
     // Discard Recording (L-REC-7, F-REC-18)
     discardRecording,
     // Reverse audio regions (L-RGN-12)
-    reverseRegions
+    reverseRegions,
+    // Audio editor (L-ATE-3)
+    snapZeroCrossings
 };
 
 struct CommandInfo
