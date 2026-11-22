@@ -159,7 +159,8 @@ TEST_CASE ("AT-ARR-26: a type 1 MIDI file makes instrument tracks; an empty proj
 {
     TempFolder drops;
     // 3 tracks of notes plus a conductor track at 100 BPM, 480 PPQN.
-    std::vector<std::vector<std::uint8_t>> tracks { smfTrack ({ smfTempo (0, 100.0) }) };
+    // The conductor also says G minor (two flats).
+    std::vector<std::vector<std::uint8_t>> tracks { smfTrack ({ smfTempo (0, 100.0), { 0, { 0xff, 0x59, 0x02, 0xfe, 0x01 } } }) };
     for (int t = 0; t < 3; ++t)
         tracks.push_back (smfTrack ({ smfName ("Part " + std::to_string (t + 1)),
                                       { 0, { 0x90, static_cast<std::uint8_t> (60 + t), 100 } },
@@ -195,6 +196,7 @@ TEST_CASE ("AT-ARR-26: a type 1 MIDI file makes instrument tracks; an empty proj
         const auto result = engine::importFiles (rig.session, rig.media, rig.folder.path / "Media", {}, { file }, { 0, {} });
         checkTracks (rig, result, 0);
         CHECK (rig.session.model().tempo.bpmAt (0) == Catch::Approx (100.0).epsilon (1e-5));
+        CHECK (rig.session.model().info.key == model::KeySignature { 7, true }); // F-TMP-10
     }
     SECTION ("a project with regions keeps its tempo")
     {
@@ -203,6 +205,7 @@ TEST_CASE ("AT-ARR-26: a type 1 MIDI file makes instrument tracks; an empty proj
         const auto result = engine::importFiles (rig.session, rig.media, rig.folder.path / "Media", {}, { file }, { 4 * barTicks, {} });
         checkTracks (rig, result, 4 * barTicks);
         CHECK (rig.session.model().tempo.bpmAt (0) == 120.0);
+        CHECK (rig.session.model().info.key == model::KeySignature {});
         REQUIRE (rig.session.undo().done);
         CHECK (rig.session.model().trackOrder.size() == 2);
     }

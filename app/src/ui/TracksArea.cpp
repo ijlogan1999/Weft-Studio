@@ -50,7 +50,7 @@ Ruler::Ruler (Studio& s) : studio (s)
 {
     setTitle ("Ruler");
     setTooltip ("Ruler: click to move the playhead; drag the top strip to set the cycle. Marker lane: double-click to add a marker. "
-                "Tempo lane: Ctrl+click to add a tempo change, drag a point to change it. Signature lane: double-click to change the meter.");
+                "Tempo lane: Ctrl+click to add a tempo change, drag a point to change it, Alt-drag to copy it. Signature lane: double-click to change the meter.");
 }
 
 namespace
@@ -386,7 +386,8 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
             dragFrom = point->pos;
             dragBpm = point->bpm;
             dragStart = p;
-            studio.session().beginGesture ("Tempo Change");
+            copyTempo = mods.isAltDown();
+            studio.session().beginGesture (copyTempo ? "Copy Tempo Change" : "Tempo Change");
             return;
         }
         if (mods.isCommandDown() || studio.tool == Tool::pencil)
@@ -454,7 +455,22 @@ void Ruler::pointerDrag (juce::Point<float> p)
             const auto perPixel = (hi - lo) / static_cast<double> (tempoLane - 10);
             const auto bpm = std::clamp (std::round ((dragBpm - static_cast<double> (p.y - dragStart.y) * perPixel) * 100.0) / 100.0, TempoMap::minBpm,
                                          TempoMap::maxBpm);
-            const auto pos = draggedTempo == "initial" || std::abs (p.x - dragStart.x) < 4.0f ? dragFrom : std::max<Ticks> (1, t);
+            const bool sideways = std::abs (p.x - dragStart.x) >= 4.0f;
+            if (copyTempo)
+            {
+                // Alt-drag copies: nothing changes until the copy leaves the original's place.
+                if (! sideways)
+                    break;
+                const auto copy = studio.session().addTempoPoint (std::max<Ticks> (1, t), dragBpm);
+                if (! copy)
+                {
+                    studio.setStatus (juce::String (studio.session().lastError()));
+                    break;
+                }
+                draggedTempo = *copy;
+                copyTempo = false;
+            }
+            const auto pos = draggedTempo == "initial" || ! sideways ? dragFrom : std::max<Ticks> (1, t);
             studio.check (studio.session().setTempoPoint (draggedTempo, pos, bpm));
             break;
         }

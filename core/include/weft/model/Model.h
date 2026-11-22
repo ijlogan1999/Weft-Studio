@@ -401,6 +401,8 @@ struct KeySignature
     int fifths() const noexcept;
     /** Reads what a person types: "F# minor", "f#m", "Bb", "Eb major", "A min". */
     static std::optional<KeySignature> parse (const std::string& text);
+    /** The key with that many sharps (positive) or flats (negative), as in a MIDI file. */
+    static KeySignature fromFifths (int fifths, bool minor) noexcept;
     static KeySignature fromValue (const Value& v);
     Value toValue() const;
     bool operator== (const KeySignature&) const = default;

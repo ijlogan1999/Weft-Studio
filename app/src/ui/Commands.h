@@ -44,7 +44,9 @@ enum class Cmd
     // Reverse audio regions (L-RGN-12)
     reverseRegions,
     // Audio editor (L-ATE-3)
-    snapZeroCrossings
+    snapZeroCrossings,
+    // Tap Tempo (L-TMP-9)
+    tapTempo
 };
 
 struct CommandInfo

@@ -827,7 +827,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         case 4:
         {
             for (auto c : { Cmd::playStop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
-                            Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch })
+                            Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
             const auto settings = studio.engine().settings();
             menu.addSeparator();

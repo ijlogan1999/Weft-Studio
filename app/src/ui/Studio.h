@@ -165,6 +165,8 @@ public:
     // Commands ---------------------------------------------------------------------
     /** Runs a command; false when it didn't apply (the status line says why). */
     bool perform (Cmd command);
+    /** Tap Tempo (L-TMP-9): one tap at `nowMs` (a millisecond clock). */
+    bool tapTempo (double nowMs);
     /** Keyboard MIDI mode gets the key first (AT-REC-20). True when it used the key. */
     bool keyboardMidiKey (const juce::KeyPress& key, bool down);
     bool keyboardMidiOn() const noexcept { return keys.enabled(); }
@@ -514,6 +516,8 @@ private:
     /** Discard Recording was chosen: where to go back to once the pass is finished. */
     std::optional<Ticks> discardRecordingFrom;
     Ticks recordPressedAt = 0; // the playhead when Record was pressed
+    std::vector<double> taps;  // Tap Tempo: the last taps, in ms
+    bool tapCommitted = false; // this run of taps has its undo step
     double lastMediaRefresh = 0;
     std::string deviceIdText;
     double lastPeerPoll = 0;

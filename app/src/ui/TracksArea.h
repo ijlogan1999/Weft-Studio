@@ -60,6 +60,7 @@ private:
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
+    bool copyTempo = false; // Alt-drag: the drag moves a copy, made once it moves sideways (L-TMP-3)
     juce::Point<float> dragStart;
     std::pair<double, double> dragRange;
 };

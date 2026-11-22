@@ -411,6 +411,10 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 4. Signature changes are added in the Signature lane at bar starts only; dialog asks numerator (1–32) and denominator (1, 2, 4, 8, 16, 32).
 5. MIDI regions and automation are anchored in musical time (ticks): when the tempo changes, they move in absolute time. Audio regions are anchored by their start in ticks but their content plays at its own speed (not stretched) in MVP. **Decision D-TMP-1** (see 03).
 6. Metronome and grid follow the maps.
+7. Alt-dragging a tempo change copies it: the original stays, and the copy is made once the pointer moves sideways and follows the drag like a moved point (L-TMP-3). The first tempo can be copied too. One undo step "Copy Tempo Change".
+8. Tap Tempo (Shift+T, Navigate menu) sets the tempo in effect at the playhead from the taps (L-TMP-9).
+
+- **Decision D-W11-1 (tap tempo):** taps more than 2 s apart start a new run. From the second tap on, the tempo is 60,000 ms divided by the average gap of the last four gaps (five taps), rounded to 0.01 BPM and clamped to 20–999. It changes the tempo in effect at the playhead, like typing in the tempo display (AT-TRN-13), and a whole run of taps is one undo step "Tap Tempo".
 
 ---
 
@@ -418,6 +422,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 
 | ID | Decision |
 |---|---|
+| D-W11-1 | Tap tempo averages the last four gaps; 2 s apart starts again; a run is one undo step. |
 | D-W0-1 | Device/project sample-rate mismatch: open, warn, resample playback, disable recording. |
 | D-W0-2 | Default driver WASAPI shared. |
 | D-W0-3 | Audio & MIDI preferences reuse Audio Setup; settings file marks first launch; Welcome every launch; No-audio mode runs on the system clock. |

@@ -710,7 +710,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
-        case Cmd::reverseRegions: case Cmd::snapZeroCrossings:
+        case Cmd::reverseRegions: case Cmd::snapZeroCrossings: case Cmd::tapTempo:
             break;
     }
     return std::nullopt;
@@ -948,6 +948,7 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::snapToggle: snapEnabled = ! snapEnabled; break;
+        case Cmd::tapTempo: return tapTempo (juce::Time::getMillisecondCounterHiRes());
         case Cmd::snapZeroCrossings:
             snapZeroCrossings = ! snapZeroCrossings;
             setStatus (snapZeroCrossings ? "Audio editor trims snap to zero crossings." : "Zero-crossing snap off.");
@@ -2341,6 +2342,41 @@ void Studio::setOnline (bool online)
     sendChangeMessage();
 }
 
+bool Studio::tapTempo (double nowMs)
+{
+    // L-TMP-9, D-W11-4: taps more than 2 s apart start again; the tempo in effect at the playhead
+    // follows the average of the last four gaps, and one run of taps is one undo step.
+    if (! taps.empty() && nowMs - taps.back() > 2000.0)
+        taps.clear();
+    if (! taps.empty() && nowMs <= taps.back())
+        return false;
+    taps.push_back (nowMs);
+    if (taps.size() > 5)
+        taps.erase (taps.begin());
+    if (taps.size() < 2)
+    {
+        tapCommitted = false;
+        setStatus ("Tap again to set the tempo.");
+        return true;
+    }
+    const auto bpm = 60000.0 * static_cast<double> (taps.size() - 1) / (taps.back() - taps.front());
+    auto& s = session();
+    if (tapCommitted && s.undoName() == "Tap Tempo")
+        s.undo();
+    s.beginGesture ("Tap Tempo");
+    const auto result = s.setTempoAt (playhead(), bpm);
+    s.endGesture();
+    tapCommitted = static_cast<bool> (result);
+    if (! result)
+    {
+        setStatus (juce::String (result.error));
+        return false;
+    }
+    edited();
+    setStatus ("Tempo " + juce::String (model().tempo.bpmAt (playhead()), 2) + " BPM from " + juce::String (static_cast<int> (taps.size())) + " taps.");
+    return true;
+}
+
 bool Studio::changesDocument (Cmd command)
 {
     static constexpr Cmd editing[] = {
@@ -2350,7 +2386,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
-        Cmd::reverseRegions,
+        Cmd::reverseRegions, Cmd::tapTempo,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

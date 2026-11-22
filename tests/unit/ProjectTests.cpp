@@ -239,6 +239,12 @@ TEST_CASE ("AT-PRJ-15 the project key: names, typing, Set Key with undo, MIDI ke
     CHECK (KeySignature { 9, true }.fifths() == 0);
     CHECK (KeySignature { 0, true }.fifths() == -3);
     CHECK (KeySignature { 4, true }.fifths() == 1);
+    for (int minor = 0; minor < 2; ++minor)
+        for (int tonic = 0; tonic < 12; ++tonic)
+        {
+            const KeySignature k { tonic, minor == 1 };
+            CHECK (KeySignature::fromFifths (k.fifths(), k.minor) == k);
+        }
 
     CHECK (KeySignature::parse ("F# minor") == KeySignature { 6, true });
     CHECK (KeySignature::parse ("f#m") == KeySignature { 6, true });

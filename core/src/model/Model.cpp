@@ -808,6 +808,13 @@ std::optional<KeySignature> KeySignature::parse (const std::string& text)
     return key;
 }
 
+KeySignature KeySignature::fromFifths (int fifths, bool minor) noexcept
+{
+    // Each sharp moves the major tonic up a fifth (7 semitones); a minor key sits 3 below.
+    const auto major = ((fifths * 7) % 12 + 12) % 12;
+    return { minor ? (major + 9) % 12 : major, minor };
+}
+
 KeySignature KeySignature::fromValue (const Value& v)
 {
     KeySignature k;

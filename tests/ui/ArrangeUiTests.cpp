@@ -651,6 +651,61 @@ TEST_CASE ("AT-TMP-3 Ctrl+click in the tempo lane adds a change; dragging it cha
     CHECK (ui.m().tempo.points().size() == 1);
 }
 
+TEST_CASE ("AT-TMP-8 Alt-drag copies a tempo change", "[UI][AT-TMP-8]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    const auto bar5 = static_cast<float> (ui.studio.view.tickToX (4.0 * 3840.0));
+    const auto bar7 = static_cast<float> (ui.studio.view.tickToX (6.0 * 3840.0));
+    REQUIRE (ui.studio.session().addTempoPoint (4 * 3840, 90.0));
+    ui.settle();
+    const auto y = ruler.tempoY (90.0);
+
+    // A click without moving sideways copies nothing.
+    ruler.pointerDown ({ bar5, y }, juce::ModifierKeys::altModifier);
+    ruler.pointerDrag ({ bar5 + 1.0f, y });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().tempo.points().size() == 2);
+
+    ruler.pointerDown ({ bar5, y }, juce::ModifierKeys::altModifier);
+    ruler.pointerDrag ({ bar5 + 20.0f, y });
+    ruler.pointerDrag ({ bar7, y });
+    ruler.pointerUp();
+    ui.settle();
+    REQUIRE (ui.m().tempo.points().size() == 3);
+    CHECK (ui.m().tempo.points()[1].pos == 4 * 3840);
+    CHECK (ui.m().tempo.points()[1].bpm == 90.0);
+    CHECK (ui.m().tempo.points()[2].pos == ui.studio.snapped (6 * 3840));
+    CHECK (ui.m().tempo.points()[2].bpm == 90.0);
+    CHECK (ui.studio.session().undoName() == "Copy Tempo Change");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.m().tempo.points().size() == 2);
+}
+
+TEST_CASE ("AT-TMP-9 Tap Tempo sets the tempo at the playhead from the taps", "[UI][AT-TMP-9]")
+{
+    Ui ui;
+    const auto before = ui.studio.session().undoName();
+    CHECK (ui.studio.tapTempo (1000.0)); // one tap: nothing yet
+    CHECK (ui.m().tempo.bpmAt (0) == 120.0);
+    CHECK (ui.studio.session().undoName() == before);
+    REQUIRE (ui.studio.session().setTempoAt (0, 100.0));
+    for (int i = 1; i < 5; ++i)
+        CHECK (ui.studio.tapTempo (1000.0 + 500.0 * i));
+    CHECK (ui.m().tempo.bpmAt (0) == 120.0);
+    CHECK (ui.studio.session().undoName() == "Tap Tempo");
+
+    // A pause over 2 s starts a new run: 400 ms gaps are 150 BPM.
+    for (int i = 0; i < 4; ++i)
+        CHECK (ui.studio.tapTempo (10000.0 + 400.0 * i));
+    CHECK (ui.m().tempo.bpmAt (0) == 150.0);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.m().tempo.bpmAt (0) == 120.0);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.m().tempo.bpmAt (0) == 100.0);
+}
+
 TEST_CASE ("W-11 signature lane: a change at a bar start from text; right-click deletes it", "[UI]")
 {
     Ui ui;
@@ -843,6 +898,7 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
     CHECK (items.contains ("Click During"));
     CHECK (items.contains ("Return to Start on Stop"));
     CHECK (items.contains ("MIDI Recording"));
+    CHECK (items.contains ("Tap Tempo"));
 
     // Opening another project keeps these options but takes the project's metronome defaults.
     const auto keep = settings();

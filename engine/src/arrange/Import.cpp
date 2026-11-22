@@ -198,6 +198,13 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
     for (const auto& m : midi)
     {
         const auto ppq = m.data.ticksPerQuarter;
+        if (emptyProject && ! m.data.keys.empty())
+        {
+            // F-TMP-10: an empty project also takes the file's first key.
+            const auto key = model::KeySignature::fromFifths (m.data.keys.front().fifths, m.data.keys.front().minor);
+            if (key != session.model().info.key)
+                session.setKey (key);
+        }
         if (emptyProject && (! m.data.tempos.empty() || ! m.data.signatures.empty()))
         {
             // D-AT-1: an empty project takes the file's tempo map.

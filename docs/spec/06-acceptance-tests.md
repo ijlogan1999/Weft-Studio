@@ -52,7 +52,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-13** [U][UI] · F-PRJ-9 · Project Settings changes name and record bit depth; the next recording uses the new bit depth. Sample rate is editable while the project has no media and disabled afterwards.
 
-**AT-PRJ-15** [U][UI] · F-TMP-10 · The project key starts at C major; typing "f#m" in the control bar's key display sets F♯ minor as one undo step "Set Key" and nonsense changes nothing; Project Settings offers the 24 keys and sets B♭ major; names and sharps/flats follow D-DM-20; an exported MIDI file carries the key signature event.
+**AT-PRJ-15** [U][UI] · F-TMP-10 · The project key starts at C major; typing "f#m" in the control bar's key display sets F♯ minor as one undo step "Set Key" and nonsense changes nothing; Project Settings offers the 24 keys and sets B♭ major; names and sharps/flats follow D-DM-20; an exported MIDI file carries the key signature event, and importing a MIDI file into an empty project takes the file's key (as it takes the tempo, D-AT-1).
 
 **AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
 
@@ -385,6 +385,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-TMP-6** [UI] · F-TMP-4 · G toggles the global tracks; marker, tempo, and signature lanes share the timeline zoom/scroll with the tracks area.
 
 **AT-TMP-7** [S] · F-TMP-1 · Two clients concurrently add tempo points at the same tick with different BPM: both converge to the point with the greater Id, and a conflict badge is shown on both.
+
+**AT-TMP-8** [UI] · F-TMP-1, L-TMP-3 · Alt-dragging a tempo change at bar 5 to bar 7 leaves bar 5 as it was and adds a change at bar 7 with the same BPM; a plain click without moving sideways adds nothing; undo removes the copy in one step.
+
+**AT-TMP-9** [UI] · L-TMP-9, D-W11-1 · Five Tap Tempo presses 500 ms apart set 120 BPM, then four 400 ms apart set 150 BPM as one more run; each run is one undo step; a single tap changes nothing.
 
 ## 13. Bounce and export (EXP)
 
