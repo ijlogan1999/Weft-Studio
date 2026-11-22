@@ -135,6 +135,8 @@ int EngineSnapshot::channelIndex (const Id& trackId) const noexcept
 
 namespace
 {
+std::int64_t delaySamples (const model::Region& r, double rate) { return std::llround (r.delayMs * rate / 1000.0); }
+
 void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const model::Track& track, EngineSnapshot& snapshot,
                   const MediaPool& mediaPool, double projectRate)
 {
@@ -157,22 +159,23 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
                 continue;
         }
         const auto loopEnd = r->loop && r->loop->enabled ? r->loop->endTicks : Ticks { 0 };
+        const auto delay = delaySamples (*r, deviceRate); // L-RGN-6: the whole region plays shifted
         if (r->isMidi)
         {
             const Ticks stopTick = std::max (r->start + r->length, loopEnd);
             for (Ticks s = r->start; s < stopTick; s += r->length)
             {
                 Instance inst { r, s, std::min (s + r->length, stopTick), 0, 0, 0 };
-                inst.start = snap->tickToSample (inst.startTick);
-                inst.end = snap->tickToSample (inst.endTick);
+                inst.start = snap->tickToSample (inst.startTick) + delay;
+                inst.end = snap->tickToSample (inst.endTick) + delay;
                 instances.push_back (inst);
             }
         }
         else
         {
-            const auto start = snap->tickToSample (r->start);
+            const auto start = snap->tickToSample (r->start) + delay;
             const auto length = std::max<std::int64_t> (1, std::llround (static_cast<double> (r->length) * projectToDevice));
-            const auto stop = std::max (start + length, loopEnd > r->start ? snap->tickToSample (loopEnd) : std::int64_t { 0 });
+            const auto stop = std::max (start + length, loopEnd > r->start ? snap->tickToSample (loopEnd) + delay : std::int64_t { 0 });
             for (auto s = start; s < stop; s += length)
                 instances.push_back ({ r, 0, 0, s, std::min (s + length, stop), length });
         }
@@ -282,13 +285,14 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
                 onTick = quantizeTick (onTick, q->grid, q->strength, q->swing * 100.0);
             if (onTick < inst.startTick || onTick >= inst.endTick)
                 continue;
-            const auto on = snap->tickToSample (onTick);
+            const auto noteDelay = delaySamples (r, deviceRate);
+            const auto on = snap->tickToSample (onTick) + noteDelay;
             const bool shown = std::any_of (visible.begin(), visible.end(), [on] (const Interval& iv) { return on >= iv.first && on < iv.second; });
             if (! shown)
                 continue;
             ScheduledNote n;
             n.on = on;
-            n.off = std::max (on + 1, snap->tickToSample (std::min (onTick + std::max<Ticks> (1, note->length), inst.endTick)));
+            n.off = std::max (on + 1, snap->tickToSample (std::min (onTick + std::max<Ticks> (1, note->length), inst.endTick)) + noteDelay);
             n.channel = static_cast<std::uint8_t> (std::clamp (note->channel, 1, 16));
             n.pitch = static_cast<std::uint8_t> (std::clamp (note->pitch + r.midi.transpose, 0, 127));
             n.velocity = static_cast<std::uint8_t> (std::clamp (note->velocity + r.midi.velocityOffset, 1, 127));
@@ -301,7 +305,7 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             const auto atTick = inst.startTick + (e.pos - windowStart);
             if (atTick < inst.startTick || atTick >= inst.endTick)
                 continue;
-            const auto at = snap->tickToSample (atTick);
+            const auto at = snap->tickToSample (atTick) + delaySamples (r, deviceRate);
             if (! std::any_of (visible.begin(), visible.end(), [at] (const Interval& iv) { return at >= iv.first && at < iv.second; }))
                 continue;
             if (auto out = scheduledEvent (e))

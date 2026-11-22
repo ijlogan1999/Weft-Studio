@@ -442,6 +442,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels become one mono track per channel, named "<file> 1", "<file> 2"..., even when dropped on a track, and the status bar says so (changed 2026-11 from keeping the first 2 channels, which lost audio). A WAV whose data is shorter than its header says imports what's there, and the status bar says so. |
 | D-ARR-8 | The Loop Region command (no drag) loops up to the next region on the track; with none after it, to the cycle end when the cycle is on and ends later; otherwise for 3 repeats. A region directly followed by another isn't looped. |
 | D-W3-4 | Undo history is per session, not persisted. |
+| D-W3-5 | Region Delay (inspector, audio and MIDI regions) shifts playback by −500…+500 ms without moving the region; it applies to loop repeats too, and the drawn region stays where it is. |
 | D-W4-1 | MIDI 60 is labeled C3. |
 | D-W4-2 | The pencil places a note on the grid line at or before the click; dragging on lengthens it in the same undo step. |
 | D-W4-3 | A transpose that would leave 0–127 for any selected note moves none; moving left stops at the earliest region start; drags commit on release; Alt bypasses snap; Ctrl+drag copies. |

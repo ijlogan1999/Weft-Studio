@@ -66,6 +66,18 @@ Inspector::Inspector (Studio& s) : studio (s)
         if (const auto* r = region(); r != nullptr && ! refreshing)
             studio.check (studio.session().setRegionGain (r->id, regionGain.getValue()));
     };
+    setupSlider (regionDelay, -500.0, 500.0, 0.1, " ms");
+    regionDelay.setDoubleClickReturnValue (true, 0.0);
+    describe (regionDelay, "Region delay", "Plays the region this much later, or earlier when negative (double-click resets)");
+    regionDelay.onDragStart = [this] { studio.session().beginGesture ("Region Delay"); };
+    regionDelay.onDragEnd = [this] {
+        studio.session().endGesture();
+        studio.edited();
+    };
+    regionDelay.onValueChange = [this] {
+        if (const auto* r = region(); r != nullptr && ! refreshing)
+            studio.check (studio.session().setRegionDelay (r->id, regionDelay.getValue()));
+    };
     setupSlider (fadeIn, 0.0, 10000.0, 1.0, " ms");
     setupSlider (fadeOut, 0.0, 10000.0, 1.0, " ms");
     describe (fadeIn, "Fade in", "Fade-in length in milliseconds");
@@ -225,7 +237,7 @@ Inspector::Inspector (Studio& s) : studio (s)
             studio.check (studio.session().setTrackMonitor (studio.selectedTrack(), modes[monitor.getSelectedItemIndex()]));
     };
 
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &fadeIn, &fadeOut,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &regionDelay, &fadeIn, &fadeOut,
                                                                           &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
                                                                           &applyQuantize, &regionTranspose, &regionVelocity, &notePitch, &noteVelocity, &noteLength, &notePosition,
                                                                           &noteChannel, &trackName, &trackColour, &monitor })
@@ -288,7 +300,7 @@ void Inspector::refresh()
     const juce::ScopedValueSetter<bool> guard (refreshing, true);
     const auto* r = region();
     const bool audio = r != nullptr && ! r->isMidi;
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay })
         c->setVisible (r != nullptr);
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve })
         c->setVisible (audio);
@@ -297,6 +309,7 @@ void Inspector::refresh()
         regionName.setText (juce::String (r->name), juce::dontSendNotification);
         regionMute.setToggleState (r->muted, juce::dontSendNotification);
         regionLoop.setToggleState (r->loop && r->loop->enabled, juce::dontSendNotification);
+        regionDelay.setValue (r->delayMs, juce::dontSendNotification);
     }
     if (audio)
     {
@@ -420,6 +433,7 @@ void Inspector::paint (juce::Graphics& g)
             g.drawText (text, labelX, c.getY(), labelWidth, c.getHeight(), juce::Justification::centredLeft);
     };
     label (regionGain, "Gain");
+    label (regionDelay, "Delay");
     label (fadeIn, "Fade in");
     label (fadeOut, "Fade out");
     label (regionQuantize, "Quantize");
@@ -457,6 +471,7 @@ void Inspector::resized()
         auto toggles = row();
         regionMute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2));
         regionLoop.setBounds (toggles);
+        regionDelay.setBounds (withLabel (row()));
         if (regionGain.isVisible())
         {
             regionGain.setBounds (withLabel (row()));

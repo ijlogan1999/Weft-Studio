@@ -208,6 +208,8 @@ public:
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
     /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-20); notes keep their stored pitch. */
     EditResult setRegionTranspose (const Id& regionId, int semitones);
+    /** Region playback delay, -500..+500 ms (L-RGN-6, D-W3-5); the region's position doesn't change. */
+    EditResult setRegionDelay (const Id& regionId, double delayMs);
     /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-20); results stay within 1..127. */
     EditResult setRegionVelocityOffset (const Id& regionId, int offset);
 

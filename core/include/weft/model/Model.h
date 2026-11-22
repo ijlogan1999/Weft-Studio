@@ -185,6 +185,8 @@ struct Region
     std::string name;
     std::optional<Color> color;
     bool muted = false;
+    /** Playback delay in milliseconds, -500..+500 (L-RGN-6, D-W3-5): the region plays this much later (or earlier). */
+    double delayMs = 0.0;
     std::int64_t z = 0;
     std::optional<RegionLoop> loop;
     Id takeFolderId;

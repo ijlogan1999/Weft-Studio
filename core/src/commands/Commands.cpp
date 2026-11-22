@@ -832,6 +832,19 @@ EditResult Session::setRegionTranspose (const Id& regionId, int semitones)
     });
 }
 
+EditResult Session::setRegionDelay (const Id& regionId, double delayMs)
+{
+    if (projection.region (regionId) == nullptr)
+        return reject ("That region no longer exists.");
+    if (std::isnan (delayMs) || delayMs < -500.0 || delayMs > 500.0)
+        return reject ("Delay is -500 to +500 ms.");
+    return run ("Region Delay", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "delayMs", Value (delayMs));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
 EditResult Session::setRegionVelocityOffset (const Id& regionId, int offset)
 {
     const auto* r = projection.region (regionId);

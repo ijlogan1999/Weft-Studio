@@ -289,6 +289,7 @@ Region Region::fromValue (const Id& id, const Value& v)
     if (! v["color"].isNull())
         r.color = Color::fromValue (v["color"]);
     r.muted = v["muted"].asBool();
+    r.delayMs = clampDouble (v["delayMs"], 0.0, -500.0, 500.0);
     r.z = v["z"].asInt();
     if (v["loop"].isMap())
         r.loop = RegionLoop { v["loop"]["enabled"].asBool(), v["loop"]["endTicks"].asInt() };
@@ -342,6 +343,7 @@ Value Region::toValue() const
                   .set ("name", name)
                   .set ("color", color ? color->toValue() : Value())
                   .set ("muted", muted)
+                  .set ("delayMs", delayMs)
                   .set ("z", z)
                   .set ("loop", loop ? Value::map().set ("enabled", loop->enabled).set ("endTicks", loop->endTicks) : Value())
                   .set ("takeFolderId", takeFolderId.empty() ? Value() : Value (takeFolderId))
