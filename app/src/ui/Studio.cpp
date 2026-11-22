@@ -448,6 +448,15 @@ void Studio::tick()
         {
             if (! outcome->message.empty())
                 status = outcome->message;
+            if (discardRecordingFrom)
+            {
+                // Redo brings the take back; its files stay in Media/ until then.
+                if (outcome->committed && sess->undoName() == "Record")
+                    sess->undo();
+                locate (*discardRecordingFrom);
+                discardRecordingFrom.reset();
+                status = "Discarded the recording.";
+            }
             edited();
         }
 }
@@ -700,7 +709,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
-        case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions:
+        case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
             break;
     }
     return std::nullopt;
@@ -738,6 +747,16 @@ bool Studio::perform (Cmd command)
                 eng->play (playhead());
             locatedAt.reset();
             break;
+        case Cmd::discardRecording:
+            // F-REC-18: stop, throw the take away (tick() undoes its Record step), back to where it started.
+            if (! recording())
+            {
+                setStatus ("Discard Recording works while recording.");
+                return false;
+            }
+            discardRecordingFrom = recordPressedAt;
+            eng->stop();
+            break;
         case Cmd::record:
         {
             if (recording())
@@ -750,7 +769,8 @@ bool Studio::perform (Cmd command)
                 setStatus ("Recording needs an audio device: choose one in Audio & MIDI Settings.");
                 return false;
             }
-            const auto result = eng->record (playhead());
+            recordPressedAt = playhead();
+            const auto result = eng->record (recordPressedAt);
             locatedAt.reset();
             if (! result.message.empty())
                 setStatus (juce::String (result.message));
@@ -2322,7 +2342,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addMarker, Cmd::muteNotes, Cmd::quantize, Cmd::transposeUp, Cmd::transposeDown, Cmd::octaveUp,
         Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
-        Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown,
+        Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

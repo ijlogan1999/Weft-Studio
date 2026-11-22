@@ -509,6 +509,9 @@ private:
     std::unique_ptr<collab::SyncClient> syncClient;
     std::unique_ptr<collab::MediaSync> mediaSyncer;
     bool mediaDirty = false;
+    /** Discard Recording was chosen: where to go back to once the pass is finished. */
+    std::optional<Ticks> discardRecordingFrom;
+    Ticks recordPressedAt = 0; // the playhead when Record was pressed
     double lastMediaRefresh = 0;
     std::string deviceIdText;
     double lastPeerPoll = 0;

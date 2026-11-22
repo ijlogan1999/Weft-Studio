@@ -38,7 +38,9 @@ enum class Cmd
     // Pause (F-TRN-3)
     pause,
     // Export Regions as Files (L-EXP-2, L-EXP-3)
-    exportRegions
+    exportRegions,
+    // Discard Recording (L-REC-7, F-REC-18)
+    discardRecording
 };
 
 struct CommandInfo

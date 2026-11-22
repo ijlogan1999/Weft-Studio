@@ -138,6 +138,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-20** [E][UI] · F-REC-17 · With keyboard MIDI mode on (Ctrl+K) and an instrument track selected, pressing A sends note-on C3 (60) and releasing sends note-off; K sends C4 (72); X then A sends C4; C lowers velocity by 20 (clamped 1–127); notes are recorded when recording. With the mode off, letter keys run their normal commands and number keys jump to markers. Holding a key does not retrigger the note (key repeat ignored).
 
+**AT-REC-21** [UI] · F-REC-18, L-REC-7 · Ctrl+. while recording stops, removes the take (its Record step is undone, so Redo brings it back) and returns the playhead to where recording started; when not recording it does nothing and says so.
+
 ## 4. Tracks (TRK)
 
 **AT-TRK-1** [E] · F-TRK-1 · A mono audio track's region is output equally to L and R at center pan (−3 dB each per pan law); a stereo track preserves channel separation.

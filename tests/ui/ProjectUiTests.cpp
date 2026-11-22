@@ -320,6 +320,46 @@ TEST_CASE ("AT-PRJ-13 Project Settings changes name and record bit depth; sample
     CHECK (locked.rateNote.getText() == "Fixed once there's audio.");
 }
 
+TEST_CASE ("AT-REC-21 Ctrl+. discards the recording in progress and goes back to where it started", "[UI][record][AT-REC-21]")
+{
+    Ui ui;
+    auto& device = static_cast<engine::NullDevice&> (ui.studio.device());
+    device.setInputGenerator ([] (int, std::int64_t frame, float* dest, int n) {
+        for (int i = 0; i < n; ++i)
+            dest[i] = 0.25f * static_cast<float> (std::sin (static_cast<double> (frame + i) * 0.05));
+    });
+    auto settings = ui.studio.engine().settings();
+    settings.countInBars = 0;
+    settings.metronomeOn = false;
+    ui.studio.engine().setSettings (settings);
+    ui.studio.engine().setRecordWriterThread (false);
+    ui.studio.toggleArm (ui.m().trackOrder.front());
+
+    CHECK_FALSE (ui.studio.perform (Cmd::discardRecording)); // not recording
+    ui.studio.locate (3840);
+    ui.renderAudio();
+    REQUIRE (ui.studio.perform (Cmd::record));
+    ui.renderAudio (48000);
+    REQUIRE (ui.studio.recording());
+    REQUIRE (ui.studio.perform (Cmd::discardRecording));
+    ui.renderAudio (2048);
+    for (int i = 0; i < 50 && ui.studio.engine().recordingPending(); ++i)
+    {
+        ui.studio.tick();
+        ui.renderAudio (512);
+    }
+    ui.studio.tick();
+    ui.renderAudio (512);
+    CHECK_FALSE (ui.studio.playing());
+    CHECK_FALSE (ui.studio.recording());
+    CHECK (ui.m().regions.empty());
+    CHECK (ui.studio.playhead() == 3840);
+    CHECK (ui.studio.status == "Discarded the recording.");
+    // Redo brings the take back.
+    REQUIRE (ui.studio.perform (Cmd::redo));
+    CHECK (ui.m().regions.size() == 1);
+}
+
 TEST_CASE ("New and Open ask to save unsaved changes: Cancel stays, Don't Save drops them, Save keeps them", "[UI][project]")
 {
     Ui ui;
