@@ -128,6 +128,10 @@ struct Track
     InputAssignment input;
     OutputAssignment output;
     bool mute = false;
+    /** Track off (L-TRH-7): the channel isn't processed at all (no playback, plug-ins idle). Audio and instrument tracks. */
+    bool off = false;
+    /** Hidden (L-TRH-10): no row in the tracks area unless Show Hidden Tracks is on; still plays. */
+    bool hidden = false;
     std::string monitor = "auto"; // auto | on | off
     std::optional<LockInfo> locked;
     ChannelStrip strip;
@@ -183,6 +187,8 @@ struct Region
     std::string name;
     std::optional<Color> color;
     bool muted = false;
+    /** Playback delay in milliseconds, -500..+500 (L-RGN-6, D-W3-5): the region plays this much later (or earlier). */
+    double delayMs = 0.0;
     std::int64_t z = 0;
     std::optional<RegionLoop> loop;
     Id takeFolderId;
@@ -378,11 +384,30 @@ struct MetronomeSettings
 {
     bool enabled = true;
     double levelDb = 0.0;
-    std::string during = "record"; // record | play | both (W-1: on during record, off during play)
+    std::string during = "both";   // record | play | both (D-W1-10: clicks whenever the metronome is on)
     int countInBars = 1;           // W-1: default 1 bar
 
     static MetronomeSettings fromValue (const Value& v);
     Value toValue() const;
+};
+
+/** The project's key (F-TMP-10, D-DM-20): a tonic pitch class and major or minor. */
+struct KeySignature
+{
+    int tonic = 0; // pitch class, 0 = C ... 11 = B
+    bool minor = false;
+
+    /** "C major", "F# minor", "Bb major": sharps or flats as the key is usually written. */
+    std::string name() const;
+    /** Sharps (positive) or flats (negative), -6..6, as a MIDI file's key signature event wants. */
+    int fifths() const noexcept;
+    /** Reads what a person types: "F# minor", "f#m", "Bb", "Eb major", "A min". */
+    static std::optional<KeySignature> parse (const std::string& text);
+    /** The key with that many sharps (positive) or flats (negative), as in a MIDI file. */
+    static KeySignature fromFifths (int fifths, bool minor) noexcept;
+    static KeySignature fromValue (const Value& v);
+    Value toValue() const;
+    bool operator== (const KeySignature&) const = default;
 };
 
 /** Scalar project fields (collections live in ProjectModel). */
@@ -400,6 +425,8 @@ struct ProjectInfo
     TimeRange punch;
     std::optional<Ticks> endMarker;
     MetronomeSettings metronomeDefaults;
+    KeySignature key;
+    bool showHiddenTracks = false; // L-TRH-10: hidden tracks get rows again (to unhide them)
 };
 
 bool isValidSampleRate (int rate) noexcept;

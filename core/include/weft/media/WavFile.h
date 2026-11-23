@@ -19,6 +19,8 @@ struct AudioData
 {
     double sampleRate = 48000.0;
     std::vector<std::vector<float>> channels; // channels[c][frame]
+    /** The file promised more audio than it holds (cut short by a crash or a partial copy). */
+    bool truncated = false;
 
     int numChannels() const noexcept { return static_cast<int> (channels.size()); }
     std::int64_t numFrames() const noexcept { return channels.empty() ? 0 : static_cast<std::int64_t> (channels[0].size()); }
@@ -53,6 +55,8 @@ struct WavInfo
     bool isFloat = false;
     std::int64_t frames = 0;
     std::optional<BextInfo> bext;
+    /** The data chunk is shorter than its header says; frames counts what is there. */
+    bool truncated = false;
 };
 
 /** Random-access reader: parses the header once, then reads any frame range. */

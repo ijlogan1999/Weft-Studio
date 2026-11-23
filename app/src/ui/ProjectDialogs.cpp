@@ -194,6 +194,11 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     describe (sampleRate, "Sample rate", rateEditable ? "The project's sample rate" : "Fixed once the project has audio");
     rateNote.setText (rateEditable ? "" : "Fixed once there's audio.", juce::dontSendNotification);
     rateNote.setColour (juce::Label::textColourId, colour (Token::textDim));
+    for (int minor = 0; minor < 2; ++minor)
+        for (int tonic = 0; tonic < 12; ++tonic)
+            key.addItem (keyText ({ tonic, minor == 1 }), tonic + 1 + 12 * minor);
+    key.setSelectedId (info.key.tonic + 1 + (info.key.minor ? 12 : 0), juce::dontSendNotification);
+    describe (key, "Key", "The project's key; written to exported MIDI files");
 
     const auto& m = info.metronomeDefaults;
     metronome.setToggleState (m.enabled, juce::dontSendNotification);
@@ -225,10 +230,10 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
             onClose();
     };
     styleError (error);
-    for (auto* c : std::initializer_list<juce::Component*> { &name, &bitDepth, &sampleRate, &rateNote, &metronome, &metronomeDuring, &countIn,
+    for (auto* c : std::initializer_list<juce::Component*> { &name, &bitDepth, &sampleRate, &rateNote, &key, &metronome, &metronomeDuring, &countIn,
                                                              &metronomeLevel, &ok, &cancel, &error })
         addAndMakeVisible (c);
-    setSize (500, 310);
+    setSize (500, 344);
 }
 
 bool ProjectSettingsDialog::apply()
@@ -243,6 +248,9 @@ bool ProjectSettingsDialog::apply()
         results.push_back (session.setRecordBitDepth (bitDepth.getSelectedId()));
     if (sampleRate.isEnabled() && sampleRate.getSelectedId() != info.sampleRate)
         results.push_back (session.setSampleRate (sampleRate.getSelectedId()));
+    const model::KeySignature chosen { (key.getSelectedId() - 1) % 12, key.getSelectedId() > 12 };
+    if (key.getSelectedId() > 0 && chosen != info.key)
+        results.push_back (session.setKey (chosen));
     model::MetronomeSettings m = info.metronomeDefaults;
     m.enabled = metronome.getToggleState();
     m.during = metronomeDuring.getSelectedId() == 2 ? "play" : metronomeDuring.getSelectedId() == 3 ? "both" : "record";
@@ -263,7 +271,7 @@ bool ProjectSettingsDialog::apply()
 
 void ProjectSettingsDialog::paint (juce::Graphics& g)
 {
-    drawLabels (g, { "Name", "Recording", "Sample rate", "Metronome", "Plays during", "Count-in", "Level" });
+    drawLabels (g, { "Name", "Recording", "Sample rate", "Key", "Metronome", "Plays during", "Count-in", "Level" });
 }
 
 void ProjectSettingsDialog::resized()
@@ -273,10 +281,11 @@ void ProjectSettingsDialog::resized()
     bitDepth.setBounds (controlX, 16 + rowHeight, 160, 26);
     sampleRate.setBounds (controlX, 16 + 2 * rowHeight, 160, 26);
     rateNote.setBounds (controlX + 170, 16 + 2 * rowHeight, w - 170, 26);
-    metronome.setBounds (controlX, 16 + 3 * rowHeight, w, 26);
-    metronomeDuring.setBounds (controlX, 16 + 4 * rowHeight, 220, 26);
-    countIn.setBounds (controlX, 16 + 5 * rowHeight, 120, 26);
-    metronomeLevel.setBounds (controlX, 16 + 6 * rowHeight, w, 26);
+    key.setBounds (controlX, 16 + 3 * rowHeight, 160, 26);
+    metronome.setBounds (controlX, 16 + 4 * rowHeight, w, 26);
+    metronomeDuring.setBounds (controlX, 16 + 5 * rowHeight, 220, 26);
+    countIn.setBounds (controlX, 16 + 6 * rowHeight, 120, 26);
+    metronomeLevel.setBounds (controlX, 16 + 7 * rowHeight, w, 26);
     error.setBounds (labelX, getHeight() - 42, getWidth() - 240, 28);
     ok.setBounds (getWidth() - 200, getHeight() - 42, 84, 28);
     cancel.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);

@@ -99,6 +99,15 @@ EditResult Session::setMetronomeDefaults (const model::MetronomeSettings& settin
     return run ("Set Metronome Defaults", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "metronomeDefaults" }), settings.toValue())); });
 }
 
+EditResult Session::setKey (const model::KeySignature& key)
+{
+    if (key.tonic < 0 || key.tonic > 11)
+        return reject ("The key's tonic is a pitch class from 0 (C) to 11 (B).");
+    if (key == model().info.key)
+        return reject ("The project is already in " + key.name() + ".");
+    return run ("Set Key", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "key" }), key.toValue())); });
+}
+
 EditResult Session::setCycle (bool enabled, Ticks start, Ticks end)
 {
     if (start < 0 || end <= start)
@@ -224,6 +233,10 @@ EditResult Session::setTrackVolume (const Id& trackId, double volumeDb)
 {
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
+    // Values above the fader's top are refused rather than clamped, so callers see the mistake;
+    // anything below -inf dB is silence and stores as -inf.
+    if (std::isnan (volumeDb) || volumeDb > 6.0 + 1e-9)
+        return reject ("Volume is -inf to +6 dB.");
     return run ("Volume", [&] (TxnWriter& w) {
         return wrote (w.put (trackPath (trackId) / "strip" / "volumeDb", Value (std::clamp (volumeDb, minusInfinityDb, 6.0))));
     });
@@ -233,6 +246,8 @@ EditResult Session::setTrackPan (const Id& trackId, double pan)
 {
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
+    if (std::isnan (pan) || std::abs (pan) > 1.0 + 1e-9)
+        return reject ("Pan is -1 (left) to +1 (right).");
     return run ("Pan", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "strip" / "pan", Value (std::clamp (pan, -1.0, 1.0)))); });
 }
 
@@ -241,6 +256,34 @@ EditResult Session::setTrackMute (const Id& trackId, bool mute)
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
     return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "mute", Value (mute))); });
+}
+
+EditResult Session::setTrackOff (const Id& trackId, bool off)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr)
+        return reject ("That track no longer exists.");
+    if (t->kind != TrackKind::audio && t->kind != TrackKind::instrument)
+        return reject ("Only audio and instrument tracks can be turned off.");
+    return run (off ? "Turn Track Off" : "Turn Track On", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "off", Value (off))); });
+}
+
+EditResult Session::setTrackHidden (const Id& trackId, bool hidden)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (t->kind == TrackKind::master)
+        return reject ("The master can't be hidden.");
+    if (t->hidden == hidden)
+        return reject (hidden ? "That track is already hidden." : "That track isn't hidden.");
+    return run (hidden ? "Hide Track" : "Unhide Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "hidden", Value (hidden))); });
+}
+
+EditResult Session::setShowHiddenTracks (bool show)
+{
+    return run (show ? "Show Hidden Tracks" : "Hide Hidden Tracks",
+                [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "showHiddenTracks" }), Value (show))); });
 }
 
 EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
@@ -750,6 +793,8 @@ EditResult Session::setRegionGain (const Id& regionId, double gainDb)
         return reject ("That region no longer exists.");
     if (r->isMidi)
         return reject ("Region gain applies to audio regions.");
+    if (std::isnan (gainDb) || gainDb > 24.0 + 1e-9)
+        return reject ("Region gain is -inf to +24 dB.");
     return run ("Region Gain", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "audio" / "gainDb", Value (std::clamp (gainDb, minusInfinityDb, 24.0)));
         stamp (w, regionId);
@@ -793,6 +838,51 @@ EditResult Session::setRegionQuantize (const Id& regionId, std::optional<model::
         v = Value::map().set ("grid", q->grid).set ("strength", q->strength).set ("swing", q->swing);
     return run ("Region Quantize", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "midi" / "quantize", v);
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionTranspose (const Id& regionId, int semitones)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (! r->isMidi)
+        return reject ("Transpose applies to MIDI regions.");
+    if (semitones < -96 || semitones > 96)
+        return reject ("Transpose is -96 to +96 semitones.");
+    return run ("Region Transpose", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "transpose", Value (semitones));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionDelay (const Id& regionId, double delayMs)
+{
+    if (projection.region (regionId) == nullptr)
+        return reject ("That region no longer exists.");
+    if (std::isnan (delayMs) || delayMs < -500.0 || delayMs > 500.0)
+        return reject ("Delay is -500 to +500 ms.");
+    return run ("Region Delay", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "delayMs", Value (delayMs));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionVelocityOffset (const Id& regionId, int offset)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (! r->isMidi)
+        return reject ("Velocity offset applies to MIDI regions.");
+    if (offset < -99 || offset > 99)
+        return reject ("Velocity offset is -99 to +99.");
+    return run ("Region Velocity", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "velocityOffset", Value (offset));
         stamp (w, regionId);
         return wrote (good);
     });

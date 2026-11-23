@@ -151,8 +151,11 @@ AudioEditor::Edge AudioEditor::edgeAt (float x) const
 
 std::int64_t AudioEditor::snapSource (const model::Region& r, double sourceSample, bool bypass) const
 {
-    const auto s = static_cast<std::int64_t> (std::llround (sourceSample));
-    if (bypass || ! studio.snapEnabled || studio.snap.kind == arrange::Snap::Kind::off)
+    auto s = static_cast<std::int64_t> (std::llround (sourceSample));
+    if (studio.snapZeroCrossings && ! bypass)
+        if (const auto source = studio.media().find (r.audio.media))
+            s = engine::nearestZeroCrossing (*source, s, static_cast<std::int64_t> (source->sampleRate() / 100.0)); // 10 ms
+    if (bypass || studio.snapZeroCrossings || ! studio.snapEnabled || studio.snap.kind == arrange::Snap::Kind::off)
         return s;
     // Snap where that sample would play on the timeline, then map back.
     const auto& tempo = studio.model().tempo;

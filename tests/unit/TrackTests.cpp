@@ -3,11 +3,14 @@
 
 #include "Fixtures.h"
 
+#include "weft/arrange/Selection.h"
+#include "weft/commands/Arrange.h"
 #include "weft/commands/LocalView.h"
 #include "weft/media/WavFile.h"
 
 #include <catch2/catch_approx.hpp>
 
+#include <cmath>
 #include <filesystem>
 #include <random>
 
@@ -238,4 +241,64 @@ TEST_CASE ("AT-REC-19: warn when the disk holds less than 10 minutes for the arm
     CHECK (commands::needsDiskSpaceWarning (9 * perMinute, 48000, 24, 2));
     CHECK_FALSE (commands::needsDiskSpaceWarning (11 * perMinute, 48000, 24, 2));
     CHECK_FALSE (commands::needsDiskSpaceWarning (0, 48000, 24, 0)); // nothing armed for audio
+}
+
+TEST_CASE ("AT-MIX-14: volume above +6 dB and pan beyond full left/right are refused, not clamped", "[U][tracks][AT-MIX-14]")
+{
+    auto s = newSession();
+    const auto audio = firstTrackOfKind (s, TrackKind::audio);
+    REQUIRE (s.setTrackVolume (audio, -3.0));
+    const auto refused = s.setTrackVolume (audio, 40.0);
+    CHECK_FALSE (refused);
+    CHECK (refused.error == "Volume is -inf to +6 dB.");
+    CHECK (s.model().track (audio)->strip.volumeDb == -3.0);
+    CHECK (s.setTrackVolume (audio, 6.0));
+    CHECK (s.setTrackVolume (audio, -500.0)); // quieter than -inf is still silence
+    CHECK (s.model().track (audio)->strip.volumeDb == minusInfinityDb);
+    CHECK_FALSE (s.setTrackPan (audio, 1.5));
+    CHECK_FALSE (s.setTrackPan (audio, std::nan ("")));
+    CHECK (s.setTrackPan (audio, -1.0));
+    CHECK (s.model().track (audio)->strip.pan == -1.0);
+}
+
+TEST_CASE ("AT-TRK-16: a hidden track has no row, still plays, and comes back with Show Hidden Tracks", "[U][tracks][AT-TRK-16]")
+{
+    auto s = newSession();
+    REQUIRE (s.deleteTrack (firstTrackOfKind (s, TrackKind::audio)));
+    const auto a = s.createTrack (TrackKind::instrument, "A").value();
+    const auto b = s.createTrack (TrackKind::instrument, "B").value();
+    const auto c = s.createTrack (TrackKind::instrument, "C").value();
+    const auto ra = s.createMidiRegion (a, 0, 960).value();
+    const auto rc = s.createMidiRegion (c, 0, 960).value();
+    REQUIRE (s.model().rows == std::vector<Id> { a, b, c });
+
+    REQUIRE (s.setTrackHidden (b, true));
+    CHECK (s.undoName() == "Hide Track");
+    CHECK (s.model().track (b)->hidden);
+    CHECK (s.model().trackOrder.size() == 3); // still in the order, so it still plays
+    CHECK (s.model().rows == std::vector<Id> { a, c });
+    CHECK (commands::trackRow (s.model(), b) == -1);
+    CHECK (commands::trackRow (s.model(), c) == 1);
+    CHECK_FALSE (s.setTrackHidden (b, true));
+    CHECK_FALSE (s.setTrackHidden (s.model().info.masterTrackId, true));
+
+    // Rows skip it: a region dragged down one row lands on C, and a marquee over rows 0-1 takes A and C.
+    REQUIRE (s.moveRegions ({ ra }, 0, 1));
+    CHECK (s.model().region (ra)->trackId == c);
+    arrange::Selection selection;
+    selection.rubberBand (s.model(), 0, 1, 0.0, 100.0, false);
+    CHECK (selection.contains (ra));
+    CHECK (selection.contains (rc));
+
+    REQUIRE (s.setShowHiddenTracks (true));
+    CHECK (s.model().info.showHiddenTracks);
+    CHECK (s.model().rows == std::vector<Id> { a, b, c });
+    REQUIRE (s.setTrackHidden (b, false));
+    CHECK (s.undoName() == "Unhide Track");
+    REQUIRE (s.setShowHiddenTracks (false));
+    CHECK (s.model().rows.size() == 3);
+
+    // Saved with the track.
+    REQUIRE (s.setTrackHidden (c, true));
+    CHECK (model::Track::fromValue (c, s.model().track (c)->toValue()).hidden);
 }

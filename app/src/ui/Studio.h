@@ -121,6 +121,8 @@ public:
     arrange::Selection selection;
     arrange::Snap snap = arrange::Snap::smart();
     bool snapEnabled = true;
+    /** Audio editor trims land on the nearest zero crossing within 10 ms (L-ATE-3). Off by default. */
+    bool snapZeroCrossings = false;
     arrange::TimelineView view;
     Tool tool = Tool::pointer;
     PanelLayout layout;
@@ -163,6 +165,8 @@ public:
     // Commands ---------------------------------------------------------------------
     /** Runs a command; false when it didn't apply (the status line says why). */
     bool perform (Cmd command);
+    /** Tap Tempo (L-TMP-9): one tap at `nowMs` (a millisecond clock). */
+    bool tapTempo (double nowMs);
     /** Keyboard MIDI mode gets the key first (AT-REC-20). True when it used the key. */
     bool keyboardMidiKey (const juce::KeyPress& key, bool down);
     bool keyboardMidiOn() const noexcept { return keys.enabled(); }
@@ -225,6 +229,17 @@ public:
     std::vector<std::string> missingPlugins() const;
     /** File › Open Recent (F-PRJ-6). */
     project::RecentProjects& recentProjects() noexcept { return recent; }
+    /**
+        File › Delete Project (L-PRJ-8): moves a project folder to the system Trash (it can be
+        restored from there) and takes it off Open Recent. The open project can't be deleted.
+    */
+    bool deleteProject (const std::filesystem::path& root, std::string* error = nullptr);
+    /** Export Regions as Files (L-EXP-2, L-EXP-3): the selected regions into `destination`; returns the files written. */
+    std::vector<std::filesystem::path> exportSelectedRegions (const std::filesystem::path& destination);
+    /** How deleteProject removes a folder; the system Trash unless a test replaces it. */
+    std::function<bool (const std::filesystem::path&)> moveToTrash = [] (const std::filesystem::path& dir) {
+        return juce::File (juce::String::fromUTF8 (reinterpret_cast<const char*> (dir.u8string().c_str()))).moveToTrash();
+    };
     /** Don't Save: archives the recovery log, so the next open doesn't offer to recover these changes. */
     void discardUnsavedChanges();
     /** A new project nobody has edited or saved: it's deleted when replaced or on quit. */
@@ -498,6 +513,11 @@ private:
     std::unique_ptr<collab::SyncClient> syncClient;
     std::unique_ptr<collab::MediaSync> mediaSyncer;
     bool mediaDirty = false;
+    /** Discard Recording was chosen: where to go back to once the pass is finished. */
+    std::optional<Ticks> discardRecordingFrom;
+    Ticks recordPressedAt = 0; // the playhead when Record was pressed
+    std::vector<double> taps;  // Tap Tempo: the last taps, in ms
+    bool tapCommitted = false; // this run of taps has its undo step
     double lastMediaRefresh = 0;
     std::string deviceIdText;
     double lastPeerPoll = 0;

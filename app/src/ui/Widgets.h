@@ -27,6 +27,15 @@ inline void describe (juce::Component& c, const juce::String& name, const juce::
         makeFocusable (c);
 }
 
+/** A key for display: "F♯ minor", "B♭ major" (the model's # and b as sharp and flat signs). */
+inline juce::String keyText (const model::KeySignature& key)
+{
+    auto name = juce::String (key.name());
+    const auto space = name.indexOfChar (' ');
+    auto tonic = name.substring (0, space).replace ("#", juce::String::charToString (0x266F)).replace ("b", juce::String::charToString (0x266D));
+    return tonic + name.substring (space);
+}
+
 inline void describe (juce::Component& c, Cmd command) { describe (c, commandInfo (command).name, tooltipFor (command)); }
 
 /** A text or icon button for a command; toggles show their state. */

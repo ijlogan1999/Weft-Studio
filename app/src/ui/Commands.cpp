@@ -94,6 +94,12 @@ std::vector<CommandInfo> build()
         { Cmd::duplicateTrackWithRegions, "Duplicate Track with Regions", "Ctrl+Shift+D", { key ('D', ctrl | shift) } },
         { Cmd::moveTrackUp, "Move Track Up", "", {} },
         { Cmd::moveTrackDown, "Move Track Down", "", {} },
+        { Cmd::exportRegions, "Export Regions as Files...", "", {} },
+        { Cmd::discardRecording, "Discard Recording", "Ctrl+.", { key ('.', ctrl) } },
+        { Cmd::reverseRegions, "Reverse Regions", "", {} },
+        { Cmd::snapZeroCrossings, "Snap Edits to Zero Crossings", "", {} },
+        { Cmd::tapTempo, "Tap Tempo", "Shift+T", { key ('T', shift) } },
+        { Cmd::showHiddenTracks, "Show Hidden Tracks", "Ctrl+Shift+H", { key ('H', ctrl | shift) } },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

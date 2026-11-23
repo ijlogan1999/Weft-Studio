@@ -163,6 +163,8 @@ void readInfo (ProjectModel& m, const Value& root)
     info.punch = TimeRange::fromValue (root["punch"], TimeRange {});
     info.endMarker = root["endMarker"].isNumber() ? std::optional<Ticks> (std::max<std::int64_t> (0, root["endMarker"].asInt())) : std::nullopt;
     info.metronomeDefaults = MetronomeSettings::fromValue (root["metronomeDefaults"]);
+    info.key = KeySignature::fromValue (root["key"]);
+    info.showHiddenTracks = root["showHiddenTracks"].asBool();
 
     m.storedTrackOrder.clear();
     for (const auto& item : root["trackOrder"].asList())
@@ -308,7 +310,7 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         // Project fields are small; re-read them all (but not the collections).
         Value root = Value::map();
         for (const char* k : { "schemaVersion", "id", "name", "sampleRate", "recordBitDepth", "createdAt", "createdBy", "masterTrackId", "cycle",
-                               "punch", "endMarker", "metronomeDefaults", keys::trackOrder })
+                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", keys::trackOrder })
             if (auto v = document.get (doc::path ({ k })))
                 root.set (k, std::move (*v));
         readInfo (m, root);
@@ -366,6 +368,11 @@ void Projector::derive (ProjectModel& m, const Document& document)
                 missing.push_back (id);
     std::sort (missing.begin(), missing.end());
     m.trackOrder.insert (m.trackOrder.end(), missing.begin(), missing.end());
+    // The tracks area's rows: the order without hidden tracks, unless they're shown (L-TRH-10).
+    m.rows.clear();
+    for (const auto& id : m.trackOrder)
+        if (const auto* t = m.track (id); t != nullptr && (! t->hidden || m.info.showHiddenTracks))
+            m.rows.push_back (id);
 
     // 4. Tempo and signature points: one per position, greater Id wins (D-DM-9).
     m.tempo = TempoMap (dedupeByPosition (m.storedTempoPoints, [] (const TempoPoint& p) { return p.pos; }), static_cast<double> (m.info.sampleRate));

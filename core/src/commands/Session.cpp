@@ -121,6 +121,7 @@ std::optional<Session> Session::createNew (const NewProjectOptions& options, Use
                      .set ("punch", model::TimeRange {}.toValue())
                      .set ("endMarker", Value())
                      .set ("metronomeDefaults", model::MetronomeSettings {}.toValue())
+                     .set ("key", model::KeySignature {}.toValue())
                      .set (model::keys::automationLanes, Value::map())
                      .set (model::keys::collab, Value::map()
                                                     .set ("projectId", projectId)

@@ -50,7 +50,7 @@ Ruler::Ruler (Studio& s) : studio (s)
 {
     setTitle ("Ruler");
     setTooltip ("Ruler: click to move the playhead; drag the top strip to set the cycle. Marker lane: double-click to add a marker. "
-                "Tempo lane: Ctrl+click to add a tempo change, drag a point to change it. Signature lane: double-click to change the meter.");
+                "Tempo lane: Ctrl+click to add a tempo change, drag a point to change it, Alt-drag to copy it. Signature lane: double-click to change the meter.");
 }
 
 namespace
@@ -386,7 +386,8 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
             dragFrom = point->pos;
             dragBpm = point->bpm;
             dragStart = p;
-            studio.session().beginGesture ("Tempo Change");
+            copyTempo = mods.isAltDown();
+            studio.session().beginGesture (copyTempo ? "Copy Tempo Change" : "Tempo Change");
             return;
         }
         if (mods.isCommandDown() || studio.tool == Tool::pencil)
@@ -454,7 +455,22 @@ void Ruler::pointerDrag (juce::Point<float> p)
             const auto perPixel = (hi - lo) / static_cast<double> (tempoLane - 10);
             const auto bpm = std::clamp (std::round ((dragBpm - static_cast<double> (p.y - dragStart.y) * perPixel) * 100.0) / 100.0, TempoMap::minBpm,
                                          TempoMap::maxBpm);
-            const auto pos = draggedTempo == "initial" || std::abs (p.x - dragStart.x) < 4.0f ? dragFrom : std::max<Ticks> (1, t);
+            const bool sideways = std::abs (p.x - dragStart.x) >= 4.0f;
+            if (copyTempo)
+            {
+                // Alt-drag copies: nothing changes until the copy leaves the original's place.
+                if (! sideways)
+                    break;
+                const auto copy = studio.session().addTempoPoint (std::max<Ticks> (1, t), dragBpm);
+                if (! copy)
+                {
+                    studio.setStatus (juce::String (studio.session().lastError()));
+                    break;
+                }
+                draggedTempo = *copy;
+                copyTempo = false;
+            }
+            const auto pos = draggedTempo == "initial" || ! sideways ? dragFrom : std::max<Ticks> (1, t);
             studio.check (studio.session().setTempoPoint (draggedTempo, pos, bpm));
             break;
         }
@@ -552,6 +568,81 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
         b->setHasFocusOutline (true);
         addAndMakeVisible (*b);
     }
+    // Volume and pan (L-TRH-3): the mixer's fader law and gestures, so one drag is one undo
+    // step, and a drag while automation plays touches it like the mixer does (W-8).
+    const auto target = [] (const char* kind) {
+        model::AutomationTarget t;
+        t.kind = kind;
+        return t;
+    };
+    volume.setSliderStyle (juce::Slider::LinearBar);
+    volume.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    volume.setNormalisableRange (fader::range());
+    volume.setDoubleClickReturnValue (true, 0.0, juce::ModifierKeys::altModifier);
+    volume.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
+    volume.setPopupDisplayEnabled (true, true, nullptr);
+    volume.textFromValueFunction = [] (double v) { return fader::dbText (v <= fader::minDb + 1e-6 ? fader::silentDb : v) + " dB"; };
+    describe (volume, "Volume", "Volume (double-click: 0 dB, Shift-drag: fine)");
+    volume.onDragStart = [this, target] {
+        liveVolume = studio.automationLive (trackId, target ("volume"));
+        if (! liveVolume)
+            studio.session().beginGesture ("Volume");
+    };
+    volume.onDragEnd = [this, target] {
+        if (liveVolume)
+            studio.releaseControl (trackId, target ("volume"));
+        else
+        {
+            studio.session().endGesture();
+            studio.edited();
+        }
+        liveVolume = false;
+    };
+    volume.onValueChange = [this, target] {
+        const auto v = volume.getValue();
+        const auto db = v <= fader::minDb + 1e-6 ? fader::silentDb : v;
+        if (liveVolume)
+            return studio.touchControl (trackId, target ("volume"), automation::fromDb (db));
+        studio.check (studio.session().setTrackVolume (trackId, db));
+    };
+    pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    pan.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    pan.setRange (-100.0, 100.0, 0.0);
+    pan.setDoubleClickReturnValue (true, 0.0, juce::ModifierKeys::altModifier);
+    pan.setVelocityModeParameters (0.2, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
+    pan.setLookAndFeel (&knobs.get());
+    pan.setPopupDisplayEnabled (true, true, nullptr);
+    pan.textFromValueFunction = [] (double v) {
+        const auto amount = juce::roundToInt (v);
+        return amount == 0 ? juce::String ("C") : juce::String (std::abs (amount)) + (amount < 0 ? "L" : "R");
+    };
+    describe (pan, "Pan", "Pan (double-click: centre)");
+    pan.onDragStart = [this, target] {
+        livePan = studio.automationLive (trackId, target ("pan"));
+        if (! livePan)
+            studio.session().beginGesture ("Pan");
+    };
+    pan.onDragEnd = [this, target] {
+        if (livePan)
+            studio.releaseControl (trackId, target ("pan"));
+        else
+        {
+            studio.session().endGesture();
+            studio.edited();
+        }
+        livePan = false;
+    };
+    pan.onValueChange = [this, target] {
+        if (livePan)
+            return studio.touchControl (trackId, target ("pan"), automation::fromPan (pan.getValue() / 100.0));
+        studio.check (studio.session().setTrackPan (trackId, pan.getValue() / 100.0));
+    };
+    for (auto* sl : { &volume, &pan })
+    {
+        makeFocusable (*sl);
+        addChildComponent (sl);
+    }
+
     mode.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
     describe (mode, "Automation mode");
     makeFocusable (mode);
@@ -600,6 +691,10 @@ juce::PopupMenu TrackHeader::menu() const
     m.addItem (itemMoveUp, commandInfo (Cmd::moveTrackUp).name, ! studio.previewing() && at != order.end() && at != order.begin());
     m.addItem (itemMoveDown, commandInfo (Cmd::moveTrackDown).name, ! studio.previewing() && at != order.end() && at + 1 != order.end());
     m.addItem (itemDelete, commandInfo (Cmd::deleteTrack).name, editable && ! master);
+    if (t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument))
+        m.addItem (itemTrackOff, t->off ? "Turn Track On" : "Turn Track Off", editable);
+    if (t != nullptr && ! master)
+        m.addItem (itemHide, t->hidden ? "Unhide Track" : "Hide Track", editable);
     m.addSeparator();
     m.addItem (itemLock, lockText.isEmpty() ? "Lock Track" : "Unlock Track", ! other && ! studio.previewing());
     if (other && studio.session().isOwner() && ! studio.previewing())
@@ -619,6 +714,19 @@ void TrackHeader::pickMenu (int item)
         case itemMoveUp: studio.selectTrack (trackId); studio.perform (Cmd::moveTrackUp); break;
         case itemMoveDown: studio.selectTrack (trackId); studio.perform (Cmd::moveTrackDown); break;
         case itemDelete: studio.selectTrack (trackId); studio.perform (Cmd::deleteTrack); break;
+        case itemTrackOff:
+            if (const auto* t = studio.model().track (trackId))
+                studio.check (studio.session().setTrackOff (trackId, ! t->off));
+            break;
+        case itemHide:
+            if (const auto* t = studio.model().track (trackId))
+            {
+                const bool hide = ! t->hidden;
+                studio.check (studio.session().setTrackHidden (trackId, hide));
+                if (hide && ! studio.model().info.showHiddenTracks)
+                    studio.setStatus ("Track hidden. View > Show Hidden Tracks brings it back.");
+            }
+            break;
         case itemLock: studio.toggleLock (trackId); break;
         case itemBreakLock:
             if (studio.confirmBreakLock)
@@ -698,6 +806,10 @@ void TrackHeader::refresh()
     solo.setToggleState (studio.localView().soloed.contains (trackId), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (trackId), juce::dontSendNotification);
     arm.setVisible (commands::LocalView::canArm (*t));
+    if (! volume.isMouseButtonDown())
+        volume.setValue (std::clamp (t->strip.volumeDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
+    if (! pan.isMouseButtonDown())
+        pan.setValue (t->strip.pan * 100.0, juce::dontSendNotification);
     rebuildAutomation();
 
     // A lock (04 §6.1, §9.6): the icon shows; someone else's lock disables the shared controls.
@@ -708,7 +820,7 @@ void TrackHeader::refresh()
     lock.setColours (lockColour, lockColour.brighter (0.3f), lockColour.darker (0.2f));
     lock.setTooltip (lockTip.isEmpty() ? juce::String() : lockTip + (locked ? juce::String() : juce::String (" (click to unlock)")));
     name.setEditable (false, ! locked, true);
-    std::vector<juce::Component*> shared { &name, &mute, &mode };
+    std::vector<juce::Component*> shared { &name, &mute, &mode, &volume, &pan };
     for (auto& p : parameters)
         shared.push_back (p.get());
     for (auto& b : addLane)
@@ -764,7 +876,7 @@ void TrackHeader::paint (juce::Graphics& g)
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::monoSmall));
     g.drawText (juce::String (number), space::s1, space::s1, space::s3 - space::half, size::control, juce::Justification::centredRight);
-    if (t != nullptr && trackPart.getHeight() >= 48.0f)
+    if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible())
     {
         g.setFont (font (Type::body));
         const auto kind = t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
@@ -778,6 +890,22 @@ void TrackHeader::paint (juce::Graphics& g)
             break;
         drawBadge (g, badge, colourOf (*who), initials (who->displayName), who->state.status == collab::Presence::Status::recording);
         badge.translate (-20.0f, 0.0f);
+    }
+    if (t != nullptr && t->off)
+    {
+        // An off track (L-TRH-7) reads as dimmed, with "Off" where its kind would be.
+        g.setColour (colour (Token::surface).withAlpha (0.55f));
+        g.fillRect (trackPart);
+        g.setColour (colour (Token::textDim));
+        g.setFont (font (Type::caption));
+        g.drawText ("OFF", getWidth() - space::s1 - 40, static_cast<int> (trackPart.getBottom()) - 16, 40, 14, juce::Justification::centredRight);
+    }
+    if (t != nullptr && t->hidden)
+    {
+        // Shown only while Show Hidden Tracks is on (L-TRH-10): marked so it's clear it'll go.
+        g.setColour (colour (Token::textDim));
+        g.setFont (font (Type::caption));
+        g.drawText ("HIDDEN", getWidth() - space::s1 - 56, static_cast<int> (trackPart.getY()) + 2, 56, 14, juce::Justification::centredRight);
     }
     g.setColour (colour (Token::background));
     g.fillRect (0, getHeight() - 1, getWidth(), 1);
@@ -819,6 +947,18 @@ void TrackHeader::resized()
         row.removeFromRight (space::half);
     }
     name.setBounds (row.withTrimmedRight (space::half));
+    // Second line: volume, then pan; collaborator badges keep the right end (painted).
+    const auto second = juce::Rectangle<int> (r.getX(), space::s1 + size::control + 2, r.getWidth(), 16);
+    const bool roomy = trackPart.getHeight() >= 48;
+    volume.setVisible (roomy);
+    pan.setVisible (roomy);
+    if (roomy)
+    {
+        auto line = second.withTrimmedRight (static_cast<int> (badges().size()) * 20);
+        pan.setBounds (line.removeFromRight (18).withSizeKeepingCentre (18, 18));
+        line.removeFromRight (space::half);
+        volume.setBounds (line.withSizeKeepingCentre (line.getWidth(), 12));
+    }
     // Automation lanes: the parameter and "+" on each; the track's mode on the first (W-8 step 1).
     for (std::size_t i = 0; i < parameters.size(); ++i)
     {
@@ -938,12 +1078,12 @@ Timeline::Timeline (Studio& s) : studio (s)
     setWantsKeyboardFocus (false);
 }
 
-int Timeline::rows() const { return static_cast<int> (studio.model().trackOrder.size()); }
+int Timeline::rows() const { return static_cast<int> (studio.model().rows.size()); }
 
 juce::Rectangle<float> Timeline::rowBounds (int row) const
 {
     float y = static_cast<float> (-scrollY);
-    const auto& order = studio.model().trackOrder;
+    const auto& order = studio.model().rows;
     for (int i = 0; i < row && i < static_cast<int> (order.size()); ++i)
         y += static_cast<float> (studio.rowHeight (order[static_cast<std::size_t> (i)]));
     const auto h = row < static_cast<int> (order.size()) ? studio.rowHeight (order[static_cast<std::size_t> (row)]) : defaultTrackHeight;
@@ -954,7 +1094,7 @@ juce::Rectangle<float> Timeline::rowBounds (int row) const
 
 juce::Rectangle<float> Timeline::laneBounds (int row) const
 {
-    const auto& order = studio.model().trackOrder;
+    const auto& order = studio.model().rows;
     auto r = rowBounds (row);
     if (row >= 0 && row < static_cast<int> (order.size()))
         r.setHeight (static_cast<float> (studio.trackHeight (order[static_cast<std::size_t> (row)])));
@@ -974,7 +1114,7 @@ std::optional<Timeline::AutomationHit> Timeline::automationLaneAt (juce::Point<f
     const auto row = rowAt (p.y);
     if (row < 0 || row >= rows())
         return std::nullopt;
-    const auto trackId = studio.model().trackOrder[static_cast<std::size_t> (row)];
+    const auto trackId = studio.model().rows[static_cast<std::size_t> (row)];
     const auto lanes = studio.shownLanes (trackId);
     for (std::size_t i = 0; i < lanes.size(); ++i)
         if (const auto box = automationBounds (row, i); box.contains (p))
@@ -1274,7 +1414,7 @@ const model::Region* Timeline::regionAt (juce::Point<float> p) const
     if (row < 0 || row >= rows())
         return nullptr;
     const model::Region* best = nullptr;
-    for (const auto* r : m.regionsOnTrack (m.trackOrder[static_cast<std::size_t> (row)]))
+    for (const auto* r : m.regionsOnTrack (m.rows[static_cast<std::size_t> (row)]))
     {
         if (! r->takeFolderId.empty())
             if (const auto f = m.takeFolders.find (r->takeFolderId); f != m.takeFolders.end() && f->second->activeTakeId != r->id)
@@ -1485,7 +1625,7 @@ void Timeline::paint (juce::Graphics& g)
         const auto lane = rowBounds (row);
         if (lane.getBottom() < 0 || lane.getY() > getHeight())
             continue;
-        if (m.trackOrder[static_cast<std::size_t> (row)] == studio.selectedTrack())
+        if (m.rows[static_cast<std::size_t> (row)] == studio.selectedTrack())
         {
             g.setColour (colour (Token::laneAlt));
             g.fillRect (lane);
@@ -1510,7 +1650,7 @@ void Timeline::paint (juce::Graphics& g)
     if (studio.automationView)
         for (int row = 0; row < rows(); ++row)
         {
-            const auto trackId = m.trackOrder[static_cast<std::size_t> (row)];
+            const auto trackId = m.rows[static_cast<std::size_t> (row)];
             const auto lanes = studio.shownLanes (trackId);
             for (std::size_t i = 0; i < lanes.size(); ++i)
             {
@@ -1641,6 +1781,9 @@ juce::PopupMenu Timeline::contextMenu (juce::Point<float> p) const
             add (c, editable);
         if (r->isMidi)
             add (Cmd::applyQuantize, editable);
+        else
+            add (Cmd::reverseRegions, editable);
+        add (Cmd::exportRegions, true);
         menu.addSeparator();
         auto colours = colourMenu (contextTrackColour, r->color && r->color->rgb.empty() ? r->color->palette : -1);
         colours.addSeparator();
@@ -1700,7 +1843,7 @@ void Timeline::pickContext (int item, juce::Point<float> p)
     a.pos = std::max<Ticks> (0, studio.snapped (tickAt (p.x)));
     const auto row = rowAt (p.y);
     if (row >= 0 && row < rows())
-        a.trackId = m.trackOrder[static_cast<std::size_t> (row)];
+        a.trackId = m.rows[static_cast<std::size_t> (row)];
     if (const auto* r = regionAt (p))
         a.regionId = r->id;
     studio.startComment (a);
@@ -1793,7 +1936,7 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
     }
     const auto* r = regionAt (p);
     const auto row = rowAt (p.y);
-    const auto trackId = row >= 0 && row < rows() ? m.trackOrder[static_cast<std::size_t> (row)] : Id {};
+    const auto trackId = row >= 0 && row < rows() ? m.rows[static_cast<std::size_t> (row)] : Id {};
     if (! trackId.empty())
         studio.selectTrack (trackId);
     if (mods.isPopupMenu())
@@ -2029,7 +2172,7 @@ void Timeline::wheel (juce::Point<float> p, juce::ModifierKeys mods, float delta
 {
     if (mods.isCommandDown() && mods.isShiftDown())
     {
-        const auto h = studio.model().trackOrder.empty() ? defaultTrackHeight : studio.trackHeight (studio.model().trackOrder.front());
+        const auto h = studio.model().rows.empty() ? defaultTrackHeight : studio.trackHeight (studio.model().rows.front());
         studio.setAllTrackHeights (h + juce::roundToInt (deltaY * 40.0f));
     }
     else if (mods.isCommandDown())
@@ -2064,7 +2207,7 @@ engine::ImportOutcome Timeline::dropFiles (const std::vector<std::filesystem::pa
     engine::DropTarget target;
     target.at = studio.snapped (std::max<Ticks> (0, tickAt (p.x)));
     if (row >= 0 && row < rows())
-        target.trackId = studio.model().trackOrder[static_cast<std::size_t> (row)];
+        target.trackId = studio.model().rows[static_cast<std::size_t> (row)];
     return studio.importFiles (files, target);
 }
 
@@ -2094,7 +2237,7 @@ void Timeline::mouseMove (const juce::MouseEvent& e)
     const auto row = rowAt (e.position.y);
     if (row >= 0 && row < rows())
         studio.setPointer (collab::Presence::Pointer { collab::Presence::View::arrange, tickAt (e.position.x),
-                                                       studio.model().trackOrder[static_cast<std::size_t> (row)], -1 });
+                                                       studio.model().rows[static_cast<std::size_t> (row)], -1 });
     else
         studio.setPointer (std::nullopt);
     const auto* r = studio.tool == Tool::pointer ? regionAt (e.position) : nullptr;
@@ -2146,7 +2289,7 @@ TracksArea::~TracksArea() { studio.removeChangeListener (this); }
 
 void TracksArea::rebuildHeaders()
 {
-    const auto& order = studio.model().trackOrder;
+    const auto& order = studio.model().rows;
     if (order != shownTracks)
     {
         trackHeaders.clear();

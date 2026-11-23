@@ -172,3 +172,78 @@ TEST_CASE ("AT-QNT-1: region quantize plays quantized; Off restores the stored t
     REQUIRE (k.seen (0x90).size() == 1);
     CHECK (k.seen (0x90)[0].frame == ticksToSamples (250));
 }
+
+TEST_CASE ("AT-PRL-16: region transpose and velocity offset play without changing the notes; out of range is refused", "[E][pianoroll][AT-PRL-16]")
+{
+    KeysRig k;
+    model::Note n;
+    n.pos = 0;
+    n.length = 960;
+    n.pitch = 60;
+    n.velocity = 100;
+    REQUIRE (k.rig.session.addNote (k.region, n));
+    REQUIRE (k.rig.session.setRegionTranspose (k.region, 12));
+    REQUIRE (k.rig.session.setRegionVelocityOffset (k.region, 20));
+    k.play (barSamples);
+    REQUIRE (k.seen (0x90).size() == 1);
+    CHECK (k.seen (0x90)[0].event.data1 == 72);
+    CHECK (k.seen (0x90)[0].event.data2 == 120);
+    // The stored note is unchanged; the playback result stays within 1..127.
+    const auto& r = *k.rig.session.model().region (k.region);
+    CHECK (k.rig.session.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pitch == 60);
+    REQUIRE (k.rig.session.setRegionVelocityOffset (k.region, 99));
+    REQUIRE (k.rig.session.setRegionTranspose (k.region, -96));
+    k.play (barSamples);
+    REQUIRE (k.seen (0x90).size() == 1);
+    CHECK (k.seen (0x90)[0].event.data1 == 0);
+    CHECK (k.seen (0x90)[0].event.data2 == 127);
+
+    CHECK_FALSE (k.rig.session.setRegionTranspose (k.region, 97));
+    CHECK_FALSE (k.rig.session.setRegionVelocityOffset (k.region, -100));
+    CHECK (k.rig.session.model().region (k.region)->midi.transpose == -96);
+
+    // One undo step each.
+    k.rig.session.undo();
+    CHECK (k.rig.session.model().region (k.region)->midi.transpose == 12);
+    CHECK (k.rig.session.model().region (k.region)->midi.velocityOffset == 99);
+
+    // Audio regions refuse both.
+    const auto audio = k.rig.audioTrack();
+    const auto ar = k.rig.addAudioRegion (audio, 0, 4800);
+    CHECK_FALSE (k.rig.session.setRegionTranspose (ar, 1));
+    CHECK_FALSE (k.rig.session.setRegionVelocityOffset (ar, 1));
+}
+
+TEST_CASE ("AT-ARR-30: region delay shifts MIDI and audio playback without moving the region", "[E][arrange][AT-ARR-30]")
+{
+    KeysRig k;
+    model::Note n;
+    n.pos = 960;
+    n.length = 480;
+    REQUIRE (k.rig.session.addNote (k.region, n));
+    REQUIRE (k.rig.session.setRegionDelay (k.region, 100.0));
+    CHECK (k.rig.session.model().region (k.region)->start == 0);
+    k.play (barSamples);
+    const auto ticksToSamples = [] (Ticks t) { return t * barSamples / barTicks; };
+    REQUIRE (k.seen (0x90).size() == 1);
+    CHECK (k.seen (0x90)[0].frame == ticksToSamples (960) + 4800);
+    REQUIRE (k.seen (0x80).size() == 1);
+    CHECK (k.seen (0x80)[0].frame == ticksToSamples (1440) + 4800);
+
+    REQUIRE (k.rig.session.setRegionDelay (k.region, -10.0));
+    k.play (barSamples);
+    REQUIRE (k.seen (0x90).size() == 1);
+    CHECK (k.seen (0x90)[0].frame == ticksToSamples (960) - 480);
+    CHECK_FALSE (k.rig.session.setRegionDelay (k.region, 501.0));
+
+    // Audio: the region's first sample arrives 10 ms late.
+    const auto audio = k.rig.audioTrack();
+    const auto r = k.rig.addAudioRegion (audio, barTicks, 4800);
+    REQUIRE (k.rig.session.setRegionDelay (r, 10.0));
+    engine::OfflineRenderOptions options;
+    options.from = barTicks;
+    options.frames = 2000;
+    const auto out = engine::renderOffline (k.rig.session.model(), k.rig.media, options);
+    CHECK (out.channels[0][479] == 0.0f);
+    CHECK (out.channels[0][480] != 0.0f);
+}

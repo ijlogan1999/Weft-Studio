@@ -494,3 +494,57 @@ TEST_CASE ("AT-RT-1 automated playback and touches allocate nothing on the audio
     CHECK (v.allocations == 0);
     CHECK (v.blockingCalls == 0);
 }
+
+TEST_CASE ("AT-AUT-13 steep automation bounces the same at any block size and matches playback", "[E][automation][AT-AUT-13]")
+{
+    Rig rig (240);
+    const auto track = dcTrack (rig, 2, 1); // mono: the pan lane uses the constant-power law
+    const auto bus = rig.session.createTrack (TrackKind::bus, "Bus").value();
+    const auto sendId = rig.session.addSend (track, bus, 0.0).value();
+    const auto master = rig.session.model().info.masterTrackId;
+    // Volume: 0 dB, then down to -inf over 10 ticks (250 samples, about 5 ms) and back up.
+    point (rig, track, target ("volume"), 0, zeroDb);
+    point (rig, track, target ("volume"), 1000, zeroDb);
+    point (rig, track, target ("volume"), 1010, 0.0);
+    point (rig, track, target ("volume"), 1500, 0.0);
+    point (rig, track, target ("volume"), 1507, zeroDb);
+    point (rig, track, target ("pan"), 300, automation::fromPan (-1.0));
+    point (rig, track, target ("pan"), 313, automation::fromPan (1.0));
+    point (rig, track, sendTarget (sendId), 600, zeroDb);
+    point (rig, track, sendTarget (sendId), 604, 0.0);
+    point (rig, master, target ("volume"), 2000, zeroDb);
+    point (rig, master, target ("volume"), 2011, automation::fromDb (-12.0));
+    rig.sync();
+
+    const std::int64_t frames = 3000 * samplesPerTick;
+    const auto bounce = [&] (int block) {
+        OfflineRenderOptions options;
+        options.frames = frames;
+        options.blockSize = block;
+        auto out = renderOffline (rig.session.model(), rig.media, options);
+        REQUIRE (out.channels.size() == 2);
+        REQUIRE (out.channels[0].size() >= static_cast<std::size_t> (frames));
+        return out;
+    };
+    const auto b64 = bounce (64), b512 = bounce (512), b2048 = bounce (2048);
+    const auto maxDiff = [&] (const std::vector<float>& a, const std::vector<float>& b) {
+        float d = 0;
+        for (std::size_t i = 0; i < static_cast<std::size_t> (frames); ++i)
+            d = std::max (d, std::abs (a[i] - b[i]));
+        return d;
+    };
+    for (std::size_t ch = 0; ch < 2; ++ch)
+    {
+        CHECK (maxDiff (b64.channels[ch], b512.channels[ch]) == 0.0f);
+        CHECK (maxDiff (b64.channels[ch], b2048.channels[ch]) == 0.0f);
+    }
+
+    rig.engine.play (0);
+    const auto live = render (rig, frames);
+    CHECK (maxDiff (live.left, b512.channels[0]) < 1e-6f);
+    CHECK (maxDiff (live.right, b512.channels[1]) < 1e-6f);
+
+    // The fade is really there (panned right by then): full level before it, silent after it.
+    CHECK (std::abs (b512.channels[1][static_cast<std::size_t> (900 * samplesPerTick)]) > 0.1f);
+    CHECK (std::abs (b512.channels[1][static_cast<std::size_t> (1200 * samplesPerTick)]) < 1e-6f);
+}

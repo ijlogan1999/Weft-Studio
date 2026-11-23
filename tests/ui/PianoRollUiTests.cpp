@@ -392,6 +392,28 @@ TEST_CASE ("AT-QNT-1 the inspector sets region quantize and applies it", "[UI]")
     CHECK_FALSE (ui.region (ui.midi).midi.quantize.has_value());
 }
 
+TEST_CASE ("AT-PRL-16 the inspector sets MIDI region transpose and velocity", "[UI][AT-PRL-16]")
+{
+    RollUi ui;
+    ui.studio.selection.set ({ ui.midi });
+    ui.studio.edited();
+    ui.settle();
+    auto& inspector = ui.main->inspector();
+    REQUIRE (inspector.regionTranspose.isVisible());
+    REQUIRE (inspector.regionVelocity.isVisible());
+    CHECK_FALSE (inspector.regionGain.isVisible());
+    inspector.regionTranspose.setValue (-12.0, juce::sendNotificationSync);
+    inspector.regionVelocity.setValue (15.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (ui.midi).midi.transpose == -12);
+    CHECK (ui.region (ui.midi).midi.velocityOffset == 15);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.region (ui.midi).midi.velocityOffset == 0);
+    CHECK (inspector.regionVelocity.getValue() == 0.0);
+}
+
 // Run with: weft_ui_tests "[.screenshot-pianoroll]" (writes WEFT_SCREENSHOT or ./pianoroll.png).
 TEST_CASE ("Screenshot of the piano roll", "[.screenshot-pianoroll]")
 {

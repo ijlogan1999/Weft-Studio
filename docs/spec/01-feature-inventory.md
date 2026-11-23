@@ -73,7 +73,7 @@ Tag counts at the end of the file.
 | F-REC-15 | Recording file format | MVP | Recordings are written as WAV (BWF) at project sample rate and project bit depth. |
 | F-REC-16 | Disk-space warning | MVP | Warn before recording if remaining disk time for armed tracks is under 10 minutes. |
 | F-REC-17 | Computer keyboard as MIDI input | MVP | Ctrl+K toggles keyboard mode: letter keys play notes (A=C, W=C#, S=D … K=C one octave up), Z/X shift octave, C/V change velocity; played notes reach the selected instrument track and can be recorded. |
-| F-REC-18 | Discard last recording | v2 | Ctrl+. while recording stops, throws away the take, and returns to the record start. |
+| F-REC-18 | Discard last recording | MVP | Ctrl+. while recording stops, throws away the take, and returns to the record start. |
 | F-REC-19 | Take folder management | v2 | Flatten a take folder to its active take or comp, unpack takes to separate tracks, rename and delete takes. |
 
 ## 4. Tracks (TRK)
@@ -279,6 +279,7 @@ Tag counts at the end of the file.
 | F-TMP-7 | Video track | Later | Show a video file in sync with the timeline. |
 | F-TMP-8 | Tempo list editor | v2 | Table of tempo changes with editable position and BPM. |
 | F-TMP-9 | Beat mapping | Later | Align the bar grid to a free-tempo recording by marking beats. |
+| F-TMP-10 | Project key | MVP | One key for the project (tonic and major or minor), shown in the control bar, typed there or chosen in Project Settings, and written to exported MIDI files. Key changes along the timeline are F-TMP-5. |
 
 ## 13. Bounce and export (EXP)
 

@@ -139,7 +139,7 @@ public:
     bool readOnlyBannerShown() const { return readOnly.isVisible(); }
     PreviewBanner& previewBanner() noexcept { return preview; }
     const ReadOnlyBanner& readOnlyBanner() const noexcept { return readOnly; }
-    static constexpr int recentMenuBase = 10000, colourMenuBase = 20000;
+    static constexpr int recentMenuBase = 10000, colourMenuBase = 20000, deleteProjectMenuBase = 40000;
     /** Navigate menu options kept in the local transport settings (F-TRN-7, F-REC-7). */
     enum TransportItem
     {
@@ -148,7 +148,8 @@ public:
         clickDuringBoth,
         returnToStart = 30010,
         mergeLinear = 30020,
-        mergeCycle
+        mergeCycle,
+        replaceMidi
     };
 
 private:
@@ -160,6 +161,8 @@ private:
     void alert (const juce::String& title, const juce::String& text);
     void opened (const Studio::OpenResult& result);
     void chooseProjectToOpen();
+    /** File › Delete Project: asks, then moves Open Recent item `index` to the Trash (L-PRJ-8). */
+    void deleteRecentProject (int index);
     /** File › Import Audio: files land at the playhead, on the selected audio track or on new tracks. */
     void chooseAudioToImport();
     /** Runs `next` once signed in, asking first when signed out. */

@@ -154,6 +154,12 @@ public:
     EditResult setSampleRate (int rate);
     /** Project Settings: the metronome the project opens with. */
     EditResult setMetronomeDefaults (const model::MetronomeSettings& settings);
+    /** Hide or unhide a track (L-TRH-10); steps "Hide Track" / "Unhide Track". Not the master. */
+    EditResult setTrackHidden (const Id& trackId, bool hidden);
+    /** Whether hidden tracks get rows (L-TRH-10). */
+    EditResult setShowHiddenTracks (bool show);
+    /** The project's key (F-TMP-10); step "Set Key". */
+    EditResult setKey (const model::KeySignature& key);
     EditResult setCycle (bool enabled, Ticks start, Ticks end);
     EditResult setPunch (bool enabled, Ticks start, Ticks end);
     EditResult setEndMarker (std::optional<Ticks> end);
@@ -173,6 +179,8 @@ public:
     EditResult setTrackVolume (const Id& trackId, double volumeDb);
     EditResult setTrackPan (const Id& trackId, double pan);
     EditResult setTrackMute (const Id& trackId, bool mute);
+    /** Track on/off (L-TRH-7): an off track isn't processed. Audio and instrument tracks only. */
+    EditResult setTrackOff (const Id& trackId, bool off);
     EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
     /** Input monitoring: "auto", "on" or "off" (F-REC-4). */
     EditResult setTrackMonitor (const Id& trackId, const std::string& mode);
@@ -204,6 +212,12 @@ public:
     /** A region's own color, or nullopt to follow its track (F-TRK-9). */
     EditResult setRegionColor (const Id& regionId, std::optional<model::Color> color);
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
+    /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-20); notes keep their stored pitch. */
+    EditResult setRegionTranspose (const Id& regionId, int semitones);
+    /** Region playback delay, -500..+500 ms (L-RGN-6, D-W3-5); the region's position doesn't change. */
+    EditResult setRegionDelay (const Id& regionId, double delayMs);
+    /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-20); results stay within 1..127. */
+    EditResult setRegionVelocityOffset (const Id& regionId, int offset);
 
     // Several regions (arrange view) ---------------------------------------------
     /** Drag move (W-3b): one undo step; the plan is planMove's. Moved regions go on top (D-W3-2). */
@@ -230,6 +244,12 @@ public:
         inner fades, and in Media/), with the outer fades given. One undo step "Join Regions".
     */
     EditResult joinRegionsAs (const std::vector<Id>& regionIds, const model::MediaRef& rendered, model::Fade fadeIn, model::Fade fadeOut);
+    /**
+        Reverse (L-RGN-12): each region plays its paired file from the start (the file is the
+        region's audio backwards, already in Media/). One undo step "Reverse"; fades, gain and
+        position stay.
+    */
+    EditResult reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed);
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);

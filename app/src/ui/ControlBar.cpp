@@ -39,7 +39,7 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         for (std::size_t i = 0; i < group.size(); ++i)
             group[i]->setConnectedEdges ((i > 0 ? juce::Button::ConnectedOnLeft : 0) | (i + 1 < group.size() ? juce::Button::ConnectedOnRight : 0));
 
-    for (auto* l : { &position, &time, &tempo, &signature, &cpu })
+    for (auto* l : { &position, &time, &tempo, &signature, &key, &cpu })
     {
         l->setJustificationType (juce::Justification::centredLeft);
         l->setFont (font (Type::monoValue));
@@ -54,10 +54,12 @@ ControlBar::ControlBar (Studio& s) : studio (s)
     describe (time, "Time", "Position in time");
     describe (tempo, "Tempo", "Tempo at the playhead (double-click to type)");
     describe (signature, "Time signature", "Time signature at the playhead (double-click to type, e.g. 3/4)");
+    describe (key, "Key", "The project's key (double-click to type, e.g. F# minor or Bb)");
     describe (cpu, "CPU", "Audio thread load and dropouts");
     position.setEditable (false, true);
     tempo.setEditable (false, true);
     signature.setEditable (false, true);
+    key.setEditable (false, true);
     position.onTextChange = [this] {
         if (const auto t = parseBarsBeats (position.getText().toStdString(), studio.model().signatures))
             studio.locate (*t);
@@ -74,6 +76,14 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         if (parts.size() == 2)
             studio.check (studio.session().setSignatureAt (studio.model().signatures.barAt (studio.playhead()).bar, parts[0].getIntValue(),
                                                            parts[1].getIntValue()));
+        refresh();
+    };
+    key.onTextChange = [this] {
+        const auto typed = model::KeySignature::parse (key.getText().toStdString());
+        if (! typed)
+            studio.setStatus ("Type a key like C, F# minor or Bbm.");
+        else if (*typed != studio.model().info.key)
+            studio.check (studio.session().setKey (*typed));
         refresh();
     };
 
@@ -160,6 +170,8 @@ void ControlBar::timerCallback()
         const auto& sig = m.signatures.signatureAtBar (m.signatures.barAt (t).bar);
         signature.setText (juce::String (sig.numerator) + "/" + juce::String (sig.denominator), juce::dontSendNotification);
     }
+    if (! key.isBeingEdited())
+        key.setText (keyText (m.info.key), juce::dontSendNotification);
     const auto load = studio.engine().cpuLoad();
     cpu.setText ("CPU " + juce::String (juce::roundToInt (load * 100.0)) + "%", juce::dontSendNotification);
     const auto level = load > 0.9 || studio.engine().dropouts() > 0 ? Token::record : load > 0.7 ? Token::warning : Token::textDim;
@@ -184,7 +196,7 @@ std::vector<std::vector<juce::Button*>> ControlBar::groups()
 
 juce::Rectangle<int> ControlBar::displayBounds() const
 {
-    return position.getBounds().getUnion (signature.getBounds()).expanded (space::s1, 0).withY (space::half).withHeight (getHeight() - space::s1);
+    return position.getBounds().getUnion (key.getBounds()).expanded (space::s1, 0).withY (space::half).withHeight (getHeight() - space::s1);
 }
 
 void ControlBar::paint (juce::Graphics& g)
@@ -215,7 +227,7 @@ void ControlBar::paint (juce::Graphics& g)
     depth::well (g, display, radius::r2);
     g.setFont (font (Type::monoSmall));
     g.setColour (colour (Token::textDim));
-    for (auto [label, caption] : { std::pair<juce::Label*, const char*> { &tempo, "BPM" }, { &signature, "SIG" } })
+    for (auto [label, caption] : { std::pair<juce::Label*, const char*> { &tempo, "BPM" }, { &signature, "SIG" }, { &key, "KEY" } })
         if (label->isVisible())
             g.drawText (caption, label->getX(), label->getY() - 14, label->getWidth(), 14, juce::Justification::bottomLeft);
 }
@@ -242,6 +254,7 @@ void ControlBar::resized()
     items.push_back ({ &position, 136 });
     items.push_back ({ &tempo, 64 });
     items.push_back ({ &signature, 40 });
+    items.push_back ({ &key, 64 });
     gap (space::s2);
     items.push_back ({ &metronome, 48 });
     items.push_back ({ &punch, 56 });
@@ -302,7 +315,7 @@ void ControlBar::resized()
     }
     // Inside the counter: bars and beats over the time; tempo and signature values on the lower
     // line under their captions (painted).
-    for (auto* l : { &tempo, &signature })
+    for (auto* l : { &tempo, &signature, &key })
         l->setBounds (l->getBounds().withTop (getHeight() / 2 - 2).withHeight (18));
     const auto counter = position.getBounds();
     time.setVisible (position.isVisible());

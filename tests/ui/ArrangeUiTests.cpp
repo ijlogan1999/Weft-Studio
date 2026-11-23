@@ -263,6 +263,50 @@ TEST_CASE ("AT-TRK-4 New Track dialog creates numbered tracks below the selectio
     CHECK (ui.m().trackOrder.size() == 1);
 }
 
+TEST_CASE ("AT-TRK-14 volume and pan in the track header follow and set the channel strip", "[UI][AT-TRK-14]")
+{
+    Ui ui;
+    auto& header = *ui.main->tracks().headers().front();
+    const auto id = header.trackId;
+    REQUIRE (header.volume.isVisible());
+    REQUIRE (header.pan.isVisible());
+    CHECK (header.volume.getValue() == 0.0);
+
+    header.volume.setValue (-12.0, juce::sendNotificationSync);
+    header.pan.setValue (-50.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (id)->strip.volumeDb == -12.0);
+    CHECK (ui.m().track (id)->strip.pan == -0.5);
+
+    // An edit made elsewhere (the mixer, a collaborator) moves the header's controls.
+    REQUIRE (ui.studio.session().setTrackVolume (id, -3.0));
+    ui.studio.edited();
+    ui.settle();
+    CHECK (header.volume.getValue() == -3.0);
+
+    // The bottom of the fader is -inf.
+    header.volume.setValue (header.volume.getMinimum(), juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (id)->strip.volumeDb == minusInfinityDb);
+}
+
+TEST_CASE ("AT-EXP-12 Export Regions as Files needs a selection and writes into the chosen folder", "[UI][AT-EXP-12]")
+{
+    Ui ui;
+    ui.studio.selection.clear();
+    CHECK_FALSE (ui.studio.perform (Cmd::exportRegions));
+    CHECK (ui.studio.status == "Select regions to export.");
+    const auto keys = ui.studio.session().createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto region = ui.studio.session().createMidiRegion (keys, 0, 3840).value();
+    ui.studio.selection.set (std::vector<Id> { region });
+    CHECK (ui.studio.perform (Cmd::exportRegions)); // the folder chooser (desktop only)
+    const auto files = ui.studio.exportSelectedRegions (ui.folder.path / "exports");
+    REQUIRE (files.size() == 1);
+    CHECK (std::filesystem::exists (files[0]));
+    CHECK (files[0].extension() == ".mid");
+    CHECK (ui.studio.status.startsWith ("Exported 1 region"));
+}
+
 TEST_CASE ("AT-TRK-6 renaming in the track header: Enter, Esc, empty", "[UI]")
 {
     Ui ui;
@@ -379,7 +423,11 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
         if (! it.getItem().isSeparator)
             headerItems.add (it.getItem().text);
     CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
-                                              "Delete Track", "Lock Track", "Add Comment" });
+                                              "Delete Track", "Turn Track Off", "Hide Track", "Lock Track", "Add Comment" });
+    header->pickMenu (TrackHeader::itemTrackOff); // L-TRH-7
+    CHECK (ui.m().track (audio)->off);
+    header->pickMenu (TrackHeader::itemTrackOff);
+    CHECK_FALSE (ui.m().track (audio)->off);
     header->pickMenu (TrackHeader::itemColour + 3);
     CHECK (ui.m().track (audio)->color.palette == 2);
     header->pickMenu (TrackHeader::itemMoveDown);
@@ -603,6 +651,108 @@ TEST_CASE ("AT-TMP-3 Ctrl+click in the tempo lane adds a change; dragging it cha
     CHECK (ui.m().tempo.points().size() == 1);
 }
 
+TEST_CASE ("AT-TRK-16 Hide Track removes the row; Show Hidden Tracks brings it back to unhide", "[UI][AT-TRK-16]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    REQUIRE (ui.studio.session().createTrack (model::TrackKind::audio, "Second"));
+    ui.studio.edited();
+    ui.settle();
+    const auto second = ui.m().trackOrder[1];
+    const auto headerFor = [&] (const Id& id) -> TrackHeader* {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return h.get();
+        return nullptr;
+    };
+    REQUIRE (headerFor (first) != nullptr);
+    headerFor (first)->pickMenu (TrackHeader::itemHide);
+    ui.settle();
+    CHECK (ui.m().track (first)->hidden);
+    CHECK (headerFor (first) == nullptr);
+    REQUIRE (ui.main->tracks().headers().size() == 1);
+    CHECK (ui.timeline().rows() == 1);
+    CHECK (ui.main->tracks().headers().front()->getY() == juce::roundToInt (ui.timeline().rowBounds (0).getY()));
+    CHECK (ui.main->tracks().headers().front()->trackId == second);
+
+    REQUIRE (ui.studio.perform (Cmd::showHiddenTracks));
+    ui.settle();
+    REQUIRE (headerFor (first) != nullptr);
+    CHECK (ui.timeline().rows() == 2);
+    juce::StringArray items;
+    const auto hm = headerFor (first)->menu();
+    for (juce::PopupMenu::MenuItemIterator it (hm); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Unhide Track"));
+    headerFor (first)->pickMenu (TrackHeader::itemHide);
+    ui.settle();
+    CHECK_FALSE (ui.m().track (first)->hidden);
+    REQUIRE (ui.studio.perform (Cmd::showHiddenTracks));
+    ui.settle();
+    CHECK (ui.timeline().rows() == 2);
+
+    juce::StringArray view;
+    const auto menu = ui.main->getMenuForIndex (5, "View");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        view.add (it.getItem().text);
+    CHECK (view.contains ("Show Hidden Tracks"));
+}
+
+TEST_CASE ("AT-TMP-8 Alt-drag copies a tempo change", "[UI][AT-TMP-8]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    const auto bar5 = static_cast<float> (ui.studio.view.tickToX (4.0 * 3840.0));
+    const auto bar7 = static_cast<float> (ui.studio.view.tickToX (6.0 * 3840.0));
+    REQUIRE (ui.studio.session().addTempoPoint (4 * 3840, 90.0));
+    ui.settle();
+    const auto y = ruler.tempoY (90.0);
+
+    // A click without moving sideways copies nothing.
+    ruler.pointerDown ({ bar5, y }, juce::ModifierKeys::altModifier);
+    ruler.pointerDrag ({ bar5 + 1.0f, y });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().tempo.points().size() == 2);
+
+    ruler.pointerDown ({ bar5, y }, juce::ModifierKeys::altModifier);
+    ruler.pointerDrag ({ bar5 + 20.0f, y });
+    ruler.pointerDrag ({ bar7, y });
+    ruler.pointerUp();
+    ui.settle();
+    REQUIRE (ui.m().tempo.points().size() == 3);
+    CHECK (ui.m().tempo.points()[1].pos == 4 * 3840);
+    CHECK (ui.m().tempo.points()[1].bpm == 90.0);
+    CHECK (ui.m().tempo.points()[2].pos == ui.studio.snapped (6 * 3840));
+    CHECK (ui.m().tempo.points()[2].bpm == 90.0);
+    CHECK (ui.studio.session().undoName() == "Copy Tempo Change");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.m().tempo.points().size() == 2);
+}
+
+TEST_CASE ("AT-TMP-9 Tap Tempo sets the tempo at the playhead from the taps", "[UI][AT-TMP-9]")
+{
+    Ui ui;
+    const auto before = ui.studio.session().undoName();
+    CHECK (ui.studio.tapTempo (1000.0)); // one tap: nothing yet
+    CHECK (ui.m().tempo.bpmAt (0) == 120.0);
+    CHECK (ui.studio.session().undoName() == before);
+    REQUIRE (ui.studio.session().setTempoAt (0, 100.0));
+    for (int i = 1; i < 5; ++i)
+        CHECK (ui.studio.tapTempo (1000.0 + 500.0 * i));
+    CHECK (ui.m().tempo.bpmAt (0) == 120.0);
+    CHECK (ui.studio.session().undoName() == "Tap Tempo");
+
+    // A pause over 2 s starts a new run: 400 ms gaps are 150 BPM.
+    for (int i = 0; i < 4; ++i)
+        CHECK (ui.studio.tapTempo (10000.0 + 400.0 * i));
+    CHECK (ui.m().tempo.bpmAt (0) == 150.0);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.m().tempo.bpmAt (0) == 120.0);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.m().tempo.bpmAt (0) == 100.0);
+}
+
 TEST_CASE ("W-11 signature lane: a change at a bar start from text; right-click deletes it", "[UI]")
 {
     Ui ui;
@@ -725,7 +875,7 @@ TEST_CASE ("Region and lane right-click menus: edit commands, Split Here, Color,
     const auto onA = ui.centreOf (a);
     CHECK (labels (tl.contextMenu (onA))
            == juce::StringArray { "Cut", "Copy", "Paste", "Delete", "Split Here", "Join", "Mute Regions", "Repeat Regions", "Loop Region", "Crossfade",
-                                  "Apply Quantize", "Color", "Add Comment on \"" + juce::String (ui.region (a).name) + "\"" });
+                                  "Apply Quantize", "Export Regions as Files...", "Color", "Add Comment on \"" + juce::String (ui.region (a).name) + "\"" });
 
     // Color applies to the whole selection as one undo step; Track Color clears the override.
     ui.studio.selection.set ({ a, b });
@@ -768,15 +918,18 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
 {
     Ui ui;
     auto settings = [&] { return ui.studio.engine().settings(); };
-    REQUIRE (settings().metronomeDuring == engine::ClickDuring::record);
+    REQUIRE (settings().metronomeDuring == engine::ClickDuring::both); // D-W1-10
     if (settings().metronomeOn)
         CHECK (ui.studio.perform (Cmd::metronome));
     CHECK (ui.studio.perform (Cmd::metronome));
     CHECK (settings().metronomeOn);
-    CHECK (ui.studio.status.contains ("while recording"));
+    CHECK (ui.studio.status == "Click on.");
 
-    ui.main->menuItemSelected (MainComponent::clickDuringBoth, 4);
-    CHECK (settings().metronomeDuring == engine::ClickDuring::both);
+    ui.main->menuItemSelected (MainComponent::clickDuringRecord, 4);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::record);
+    CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (ui.studio.perform (Cmd::metronome));
+    CHECK (ui.studio.status.contains ("while recording"));
     const auto returned = settings().returnToStartOnStop;
     ui.main->menuItemSelected (MainComponent::returnToStart, 4);
     CHECK (settings().returnToStartOnStop != returned);
@@ -792,6 +945,7 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
     CHECK (items.contains ("Click During"));
     CHECK (items.contains ("Return to Start on Stop"));
     CHECK (items.contains ("MIDI Recording"));
+    CHECK (items.contains ("Tap Tempo"));
 
     // Opening another project keeps these options but takes the project's metronome defaults.
     const auto keep = settings();
@@ -801,7 +955,7 @@ TEST_CASE ("Navigate menu: Click During, Return to Start on Stop and MIDI Record
     REQUIRE (ui.studio.newProject (ui.folder.path / "projects", second, &error));
     CHECK (settings().returnToStartOnStop == keep.returnToStartOnStop);
     CHECK (settings().midiMergeLinear == keep.midiMergeLinear);
-    CHECK (settings().metronomeDuring == engine::ClickDuring::record);
+    CHECK (settings().metronomeDuring == engine::ClickDuring::both);
 }
 
 TEST_CASE ("F-TRN-3 Ctrl+Space pauses where the playhead is; Space returns to the play start", "[UI][transport]")

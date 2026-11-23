@@ -24,6 +24,7 @@ public:
     std::vector<CommandButton*> commandButtons();
     juce::Label& positionDisplay() noexcept { return position; }
     juce::Label& tempoDisplay() noexcept { return tempo; }
+    juce::Label& keyDisplay() noexcept { return key; }
     juce::ComboBox& snapChoice() noexcept { return snapBox; }
     Avatars& collaboratorAvatars() noexcept { return avatars; }
 
@@ -40,7 +41,7 @@ private:
         play { "Play", Cmd::playStop, true }, record { "Record", Cmd::record, true }, cycle { "Cycle", Cmd::cycle, true };
     CommandButton metronome { "Click", Cmd::metronome, true }, punch { "Punch", Cmd::autopunch, true }, snap { "Snap", Cmd::snapToggle, true },
         follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true };
-    juce::Label position, time, tempo, signature, cpu;
+    juce::Label position, time, tempo, signature, key, cpu;
     juce::ComboBox countIn, snapBox;
     Avatars avatars { studio };
     int avatarsWidth = 0;

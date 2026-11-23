@@ -448,6 +448,15 @@ void Studio::tick()
         {
             if (! outcome->message.empty())
                 status = outcome->message;
+            if (discardRecordingFrom)
+            {
+                // Redo brings the take back; its files stay in Media/ until then.
+                if (outcome->committed && sess->undoName() == "Record")
+                    sess->undo();
+                locate (*discardRecordingFrom);
+                discardRecordingFrom.reset();
+                status = "Discarded the recording.";
+            }
             edited();
         }
 }
@@ -700,7 +709,8 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
-        case Cmd::moveTrackDown: case Cmd::pause:
+        case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
+        case Cmd::reverseRegions: case Cmd::snapZeroCrossings: case Cmd::tapTempo: case Cmd::showHiddenTracks:
             break;
     }
     return std::nullopt;
@@ -738,6 +748,16 @@ bool Studio::perform (Cmd command)
                 eng->play (playhead());
             locatedAt.reset();
             break;
+        case Cmd::discardRecording:
+            // F-REC-18: stop, throw the take away (tick() undoes its Record step), back to where it started.
+            if (! recording())
+            {
+                setStatus ("Discard Recording works while recording.");
+                return false;
+            }
+            discardRecordingFrom = recordPressedAt;
+            eng->stop();
+            break;
         case Cmd::record:
         {
             if (recording())
@@ -750,7 +770,8 @@ bool Studio::perform (Cmd command)
                 setStatus ("Recording needs an audio device: choose one in Audio & MIDI Settings.");
                 return false;
             }
-            const auto result = eng->record (playhead());
+            recordPressedAt = playhead();
+            const auto result = eng->record (recordPressedAt);
             locatedAt.reset();
             if (! result.message.empty())
                 setStatus (juce::String (result.message));
@@ -847,6 +868,7 @@ bool Studio::perform (Cmd command)
             return ! pieces.empty();
         }
         case Cmd::join: return check (engine::joinRegions (s, ids, pool, mediaDir()));
+        case Cmd::reverseRegions: return ! ids.empty() && check (engine::reverseRegions (s, ids, pool, mediaDir()));
         case Cmd::muteRegions: return ! ids.empty() && check (s.toggleRegionsMuted (ids));
         case Cmd::nudgeLeft:
         case Cmd::nudgeRight:
@@ -926,6 +948,15 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::snapToggle: snapEnabled = ! snapEnabled; break;
+        case Cmd::tapTempo: return tapTempo (juce::Time::getMillisecondCounterHiRes());
+        case Cmd::showHiddenTracks:
+            if (! check (session().setShowHiddenTracks (! model().info.showHiddenTracks)))
+                return false;
+            break;
+        case Cmd::snapZeroCrossings:
+            snapZeroCrossings = ! snapZeroCrossings;
+            setStatus (snapZeroCrossings ? "Audio editor trims snap to zero crossings." : "Zero-crossing snap off.");
+            break;
         case Cmd::keyboardMidi:
         {
             std::vector<engine::KeyboardMidi::Message> out;
@@ -958,6 +989,15 @@ bool Studio::perform (Cmd command)
         case Cmd::saveVersion:
         case Cmd::importAudio:
         case Cmd::quit:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::exportRegions:
+            if (selection.ids().empty())
+            {
+                setStatus ("Select regions to export.");
+                return false;
+            }
             if (uiCommand)
                 uiCommand (command);
             break;
@@ -1246,6 +1286,33 @@ bool Studio::newProject (const fs::path& parent, const commands::NewProjectOptio
     return true;
 }
 
+std::vector<fs::path> Studio::exportSelectedRegions (const fs::path& destination)
+{
+    const auto ids = selection.ids();
+    const auto result = engine::exportRegions (model(), { ids.begin(), ids.end() }, pool, destination, model().info.recordBitDepth);
+    setStatus (juce::String::fromUTF8 (result.message.c_str()));
+    return result.files;
+}
+
+bool Studio::deleteProject (const fs::path& root, std::string* error)
+{
+    auto fail = [error] (std::string why) {
+        if (error != nullptr)
+            *error = std::move (why);
+        return false;
+    };
+    std::error_code ec;
+    if (fs::equivalent (root, projectRoot(), ec))
+        return fail ("That project is open. Open another project first.");
+    if (! project::isProjectFolder (root))
+        return fail ("That isn't a Weft project folder.");
+    if (! moveToTrash (root))
+        return fail ("Couldn't move the project to the Trash.");
+    recent.remove (root);
+    setStatus ("Moved " + juce::String::fromUTF8 (project::utf8 (root.filename()).c_str()) + " to the Trash.");
+    return true;
+}
+
 Studio::OpenResult Studio::openProject (const fs::path& picked, Recovery recovery)
 {
     OpenResult result;
@@ -1389,6 +1456,7 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     settings.returnToStartOnStop = before.returnToStartOnStop;
     settings.midiMergeLinear = before.midiMergeLinear;
     settings.midiMergeCycle = before.midiMergeCycle;
+    settings.midiReplace = before.midiReplace;
     eng->setSettings (settings);
     loadProjectMedia();
     syncEngine();
@@ -2278,6 +2346,41 @@ void Studio::setOnline (bool online)
     sendChangeMessage();
 }
 
+bool Studio::tapTempo (double nowMs)
+{
+    // L-TMP-9, D-W11-4: taps more than 2 s apart start again; the tempo in effect at the playhead
+    // follows the average of the last four gaps, and one run of taps is one undo step.
+    if (! taps.empty() && nowMs - taps.back() > 2000.0)
+        taps.clear();
+    if (! taps.empty() && nowMs <= taps.back())
+        return false;
+    taps.push_back (nowMs);
+    if (taps.size() > 5)
+        taps.erase (taps.begin());
+    if (taps.size() < 2)
+    {
+        tapCommitted = false;
+        setStatus ("Tap again to set the tempo.");
+        return true;
+    }
+    const auto bpm = 60000.0 * static_cast<double> (taps.size() - 1) / (taps.back() - taps.front());
+    auto& s = session();
+    if (tapCommitted && s.undoName() == "Tap Tempo")
+        s.undo();
+    s.beginGesture ("Tap Tempo");
+    const auto result = s.setTempoAt (playhead(), bpm);
+    s.endGesture();
+    tapCommitted = static_cast<bool> (result);
+    if (! result)
+    {
+        setStatus (juce::String (result.error));
+        return false;
+    }
+    edited();
+    setStatus ("Tempo " + juce::String (model().tempo.bpmAt (playhead()), 2) + " BPM from " + juce::String (static_cast<int> (taps.size())) + " taps.");
+    return true;
+}
+
 bool Studio::changesDocument (Cmd command)
 {
     static constexpr Cmd editing[] = {
@@ -2286,7 +2389,8 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addMarker, Cmd::muteNotes, Cmd::quantize, Cmd::transposeUp, Cmd::transposeDown, Cmd::octaveUp,
         Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
-        Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown,
+        Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
+        Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

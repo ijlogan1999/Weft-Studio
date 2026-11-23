@@ -53,6 +53,7 @@ struct ProjectModel
 
     // Derived (repaired) views.
     std::vector<Id> trackOrder;                           // deduped, complete, excludes master (repairs 1, 2)
+    std::vector<Id> rows;                                 // trackOrder without hidden tracks unless shown (L-TRH-10)
     std::map<Id, Id> recoveredTrackFor;                   // orphan region -> Recovered track id (repair 3)
     std::map<Id, Ref<Track>> syntheticTracks;             // Recovered lanes not yet in the document
     TempoMap tempo;                                       // repair 4

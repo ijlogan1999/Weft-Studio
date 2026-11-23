@@ -123,6 +123,9 @@ struct AutomationPlan
     /** What the target plays at a position: a touch, a glide back to the lane, or the lane.
         `frames` advances the glide. Audio thread. */
     double valueAt (std::int64_t at, int frames) const noexcept;
+    /** True when the target plays its lane as written: it has points and isn't touched or
+        gliding back. Call after valueAt for the span. Audio thread. */
+    bool followsLane() const noexcept;
 };
 
 /**

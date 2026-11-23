@@ -34,6 +34,7 @@ add_executable(weft_engine_tests
     engine/BounceTests.cpp
     engine/FuzzTests.cpp
     engine/ImportTests.cpp
+    engine/ExportRegionTests.cpp
     engine/MixerEngineTests.cpp
     engine/NullDeviceTests.cpp
     engine/PianoRollEngineTests.cpp

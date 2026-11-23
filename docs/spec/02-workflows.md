@@ -45,7 +45,7 @@ Shortcuts are Weft defaults (see `00-README.md`).
 5. If count-in is enabled (default: 1 bar), the system plays the metronome for one bar *before* the playhead position; the playhead starts one bar earlier and recording begins when it reaches the original position. The count-in clicks are not recorded.
 6. During recording:
    - A red "recording" region grows on each armed track from the record start point, with a live waveform overview.
-   - The metronome sounds if enabled for recording (default: on during record, off during play).
+   - The metronome sounds if enabled for recording (default: on during record and play, D-W1-10).
    - Existing regions on the armed track keep playing until the recording region reaches them; from that point the track plays the new recording only (new region is on top).
 7. User presses **Space** (stop) or **R** again (stop recording but keep playing; **Decision D-W1-2:** pressing R while recording stops recording and continues playback; Space stops both).
 8. On stop the system:
@@ -320,6 +320,7 @@ input (hardware input / instrument output / bus input)
 - A write pass is one undo step.
 - Automation reaches the audio thread with sample-accurate interpolation at block boundaries for MVP (block size ≤ 512 samples), with per-sample smoothing for volume and pan to avoid zipper noise. **Decision D-W8-3:** sub-block accuracy for plugin parameters is via VST3 parameter change queues with sample offsets.
 - **Decision D-W8-4:** what a pass writes. Touch writes each touch from the moment it starts to its release, and a second touch in the same pass writes a second range. Latch writes from the first touch to stop. Write writes every existing lane of the track from play start, holding the value the control showed there until it's touched, plus any other control touched during the pass from its first touch. When the cycle jumps back, the pass keeps what it wrote before the jump and writes nothing more for that control. The Touch glide back is linear over 200 ms. Clicking Mute while its automation is live counts as a touch and a release. Touching a control with nothing to follow while stopped changes its static value, as in Off.
+- **Decision D-W8-6 (block-size independence):** while the transport rolls, a volume, pan or send lane that is playing as written (not touched or gliding back) is read at every 32nd sample of the timeline, counted from the project start, and the gain moves in a straight line between those readings. The audio device's buffer size and the bounce block size therefore change nothing, and a bounce matches playback sample for sample. Touches, glides and stopped playback keep the per-buffer ramp. Mute points still switch at the start of a buffer (D-W6-7).
 - **Decision D-W8-5:** the master's pan acts as balance, like a stereo track's, and the master's volume, pan, mute and insert parameters can all be automated (F-AUT-11).
 
 ### Collaboration notes
@@ -410,6 +411,10 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 4. Signature changes are added in the Signature lane at bar starts only; dialog asks numerator (1–32) and denominator (1, 2, 4, 8, 16, 32).
 5. MIDI regions and automation are anchored in musical time (ticks): when the tempo changes, they move in absolute time. Audio regions are anchored by their start in ticks but their content plays at its own speed (not stretched) in MVP. **Decision D-TMP-1** (see 03).
 6. Metronome and grid follow the maps.
+7. Alt-dragging a tempo change copies it: the original stays, and the copy is made once the pointer moves sideways and follows the drag like a moved point (L-TMP-3). The first tempo can be copied too. One undo step "Copy Tempo Change".
+8. Tap Tempo (Shift+T, Navigate menu) sets the tempo in effect at the playhead from the taps (L-TMP-9).
+
+- **Decision D-W11-1 (tap tempo):** taps more than 2 s apart start a new run. From the second tap on, the tempo is 60,000 ms divided by the average gap of the last four gaps (five taps), rounded to 0.01 BPM and clamped to 20–999. It changes the tempo in effect at the playhead, like typing in the tempo display (AT-TRN-13), and a whole run of taps is one undo step "Tap Tempo".
 
 ---
 
@@ -417,6 +422,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 
 | ID | Decision |
 |---|---|
+| D-W11-1 | Tap tempo averages the last four gaps; 2 s apart starts again; a run is one undo step. |
 | D-W0-1 | Device/project sample-rate mismatch: open, warn, resample playback, disable recording. |
 | D-W0-2 | Default driver WASAPI shared. |
 | D-W0-3 | Audio & MIDI preferences reuse Audio Setup; settings file marks first launch; Welcome every launch; No-audio mode runs on the system clock. |
@@ -428,8 +434,10 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W1-5 | Punch regions get 10 ms handles with crossfades. |
 | D-W1-6 | Recording onto a track deleted remotely lands on a recovered track. |
 | D-W1-9 | Autopunch on sets the range to the cycle, else 4 bars from the playhead's bar; drag its ends (Shift+drag for a new range). |
+| D-W1-10 | New projects click during playback and recording ("Click During: Both"), so turning the metronome on is always audible; Recording only stays a choice in Project Settings. (Changed 2026-11.) |
 | D-W2-1 | Selected instrument track receives live MIDI unarmed. |
 | D-W2-2 | Recorded MIDI regions round outward to whole bars. |
+| D-W2-4 | MIDI Recording › Replace (off by default): a pass deletes the notes and controllers already on its track between where it started recording and where it stopped (the whole cycle for a cycle pass), deletes regions that end up empty inside that range, and makes a new region instead of merging. It all undoes with the recording. |
 | D-W3-1 | Move snaps region start. |
 | D-W3-2 | Overlap stacking by per-region z-order. |
 | D-W3-3 | Split keeps crossing notes whole in the left region. |
@@ -437,9 +445,12 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-ARR-4 | Joined audio keeps the first fade-in and the last fade-out. |
 | D-ARR-5 | Smart snap uses the finest note grid whose lines are at least 16 px apart, else whole bars. |
 | D-ARR-6 | A take moves, copies and pastes with its whole take folder. |
-| D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels keep the first 2, and the status bar says so. |
+| D-ARR-7 | Audio dropped on an audio track lands there end to end; other drops make a track per file named after it. Files with more than 2 channels become one mono track per channel, named "<file> 1", "<file> 2"..., even when dropped on a track, and the status bar says so (changed 2026-11 from keeping the first 2 channels, which lost audio). A WAV whose data is shorter than its header says imports what's there, and the status bar says so. |
 | D-ARR-8 | The Loop Region command (no drag) loops up to the next region on the track; with none after it, to the cycle end when the cycle is on and ends later; otherwise for 3 repeats. A region directly followed by another isn't looped. |
 | D-W3-4 | Undo history is per session, not persisted. |
+| D-W3-5 | Region Delay (inspector, audio and MIDI regions) shifts playback by −500…+500 ms without moving the region; it applies to loop repeats too, and the drawn region stays where it is. |
+| D-W3-7 | Hide Track (track header menu) takes a track's row out of the tracks area; it still plays and shows in the mixer. View › Show Hidden Tracks (Ctrl+Shift+H) brings hidden rows back, marked HIDDEN, so they can be unhidden. Both the flags and the switch are saved with the project and shared with collaborators. Row-based edits (dragging regions across rows, the marquee) skip hidden rows. |
+| D-W3-6 | Snap Edits to Zero Crossings (View menu, off by default, per user) applies to audio editor trims: the edge goes to the nearest zero crossing of the channels summed within 10 ms, in place of grid snap; Alt still bypasses it. |
 | D-W4-1 | MIDI 60 is labeled C3. |
 | D-W4-2 | The pencil places a note on the grid line at or before the click; dragging on lengthens it in the same undo step. |
 | D-W4-3 | A transpose that would leave 0–127 for any selected note moves none; moving left stops at the earliest region start; drags commit on release; Alt bypasses snap; Ctrl+drag copies. |
@@ -448,6 +459,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W4-6 | Scissors split a note into two at the snapped point. |
 | D-W4-7 | Controller points snap to the grid and hold until the next point; pitch bend is 14-bit centred on 8192. |
 | D-W4-8 | Velocity tool: one velocity step per pixel. |
+| D-W4-9 | MIDI region Transpose (−96…+96 semitones) and Velocity (−99…+99) are playback offsets set in the inspector; the stored notes don't change, results are clamped to 0–127 pitch and 1–127 velocity, and out-of-range values are refused. |
 | D-W5-1 | Swing 0–100% maps from straight to triplet feel. |
 | D-W5-2 | Quantize moves note starts only. |
 | D-W6-1 | Solo keeps upstream/downstream routing audible. |
@@ -466,6 +478,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W8-3 | Automation interpolation and parameter queues. |
 | D-W8-4 | What Touch, Latch and Write passes write; cycle jumps; glide; mute clicks. |
 | D-W8-5 | Master pan is balance; master volume, pan, mute and inserts are automatable. |
+| D-W8-6 | Volume, pan and send lanes follow a 32-sample timeline grid, so bounces match playback at any block size. |
 | D-W9-1 | Warn when bouncing with undownloaded media. |
 | D-W9-2 | Offline bounce is deterministic (fixed dither seed). |
 | D-W9-3 | Where the bounce tail ends. |

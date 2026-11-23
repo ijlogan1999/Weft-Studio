@@ -127,7 +127,7 @@ TEST_CASE ("AT-PRJ-1 New Project at 48 kHz has the default contents; File menu h
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (! it.getItem().isSeparator)
             file.add (it.getItem().text);
-    CHECK (file == juce::StringArray { "New Project", "Open", "Open Recent", "Save", "Save As", "Save Version...", "Bounce", "Import Audio...", "Project Settings",
+    CHECK (file == juce::StringArray { "New Project", "Open", "Open Recent", "Delete Project", "Save", "Save As", "Save Version...", "Bounce", "Import Audio...", "Export Regions as Files...", "Project Settings",
                                   "Audio & MIDI Settings", "Exit" });
 
     NewProjectDialog dialog (ui.studio);
@@ -224,6 +224,45 @@ TEST_CASE ("AT-PRJ-10 Open Recent lists the 10 most recent, newest first; a dele
     CHECK (welcome.recent[0]->getButtonText() == "Project 10");
 }
 
+TEST_CASE ("AT-PRJ-14 File > Delete Project moves a recent project to the Trash after asking; the open one can't be deleted", "[UI][project][AT-PRJ-14]")
+{
+    Ui ui;
+    std::vector<fs::path> trashed;
+    ui.studio.moveToTrash = [&] (const fs::path& dir) {
+        trashed.push_back (dir);
+        fs::remove_all (dir);
+        return true;
+    };
+    const auto first = makeProject (ui.folder.path / "library", "Old Song");
+    const auto second = makeProject (ui.folder.path / "library", "New Song");
+    ui.main->openProject (first);
+    ui.settle();
+    ui.main->openProject (second);
+    ui.settle();
+    REQUIRE (ui.studio.recentProjects().items()[1] == first);
+
+    // Cancel leaves it.
+    ui.main->menuItemSelected (MainComponent::deleteProjectMenuBase + 2, 0);
+    REQUIRE (ui.main->projectQuestionPending());
+    CHECK (ui.main->projectQuestion().contains ("Old Song"));
+    ui.main->answerProject (0);
+    CHECK (fs::exists (first));
+
+    ui.main->menuItemSelected (MainComponent::deleteProjectMenuBase + 2, 0);
+    ui.main->answerProject (1);
+    ui.settle();
+    CHECK (trashed == std::vector<fs::path> { first });
+    CHECK_FALSE (fs::exists (first));
+    CHECK (std::find (ui.studio.recentProjects().items().begin(), ui.studio.recentProjects().items().end(), first)
+           == ui.studio.recentProjects().items().end());
+    CHECK (ui.studio.status.contains ("Moved Old Song.weft to the Trash"));
+
+    std::string error;
+    CHECK_FALSE (ui.studio.deleteProject (second, &error));
+    CHECK (error == "That project is open. Open another project first.");
+    CHECK (fs::exists (second));
+}
+
 TEST_CASE ("AT-PRJ-13 Project Settings changes name and record bit depth; sample rate locks once there's media", "[UI][project][AT-PRJ-13]")
 {
     Ui ui;
@@ -279,6 +318,46 @@ TEST_CASE ("AT-PRJ-13 Project Settings changes name and record bit depth; sample
     ProjectSettingsDialog locked (ui.studio);
     CHECK_FALSE (locked.sampleRate.isEnabled());
     CHECK (locked.rateNote.getText() == "Fixed once there's audio.");
+}
+
+TEST_CASE ("AT-REC-21 Ctrl+. discards the recording in progress and goes back to where it started", "[UI][record][AT-REC-21]")
+{
+    Ui ui;
+    auto& device = static_cast<engine::NullDevice&> (ui.studio.device());
+    device.setInputGenerator ([] (int, std::int64_t frame, float* dest, int n) {
+        for (int i = 0; i < n; ++i)
+            dest[i] = 0.25f * static_cast<float> (std::sin (static_cast<double> (frame + i) * 0.05));
+    });
+    auto settings = ui.studio.engine().settings();
+    settings.countInBars = 0;
+    settings.metronomeOn = false;
+    ui.studio.engine().setSettings (settings);
+    ui.studio.engine().setRecordWriterThread (false);
+    ui.studio.toggleArm (ui.m().trackOrder.front());
+
+    CHECK_FALSE (ui.studio.perform (Cmd::discardRecording)); // not recording
+    ui.studio.locate (3840);
+    ui.renderAudio();
+    REQUIRE (ui.studio.perform (Cmd::record));
+    ui.renderAudio (48000);
+    REQUIRE (ui.studio.recording());
+    REQUIRE (ui.studio.perform (Cmd::discardRecording));
+    ui.renderAudio (2048);
+    for (int i = 0; i < 50 && ui.studio.engine().recordingPending(); ++i)
+    {
+        ui.studio.tick();
+        ui.renderAudio (512);
+    }
+    ui.studio.tick();
+    ui.renderAudio (512);
+    CHECK_FALSE (ui.studio.playing());
+    CHECK_FALSE (ui.studio.recording());
+    CHECK (ui.m().regions.empty());
+    CHECK (ui.studio.playhead() == 3840);
+    CHECK (ui.studio.status == "Discarded the recording.");
+    // Redo brings the take back.
+    REQUIRE (ui.studio.perform (Cmd::redo));
+    CHECK (ui.m().regions.size() == 1);
 }
 
 TEST_CASE ("New and Open ask to save unsaved changes: Cancel stays, Don't Save drops them, Save keeps them", "[UI][project]")
@@ -666,4 +745,31 @@ TEST_CASE ("Share in a Synced Folder moves the project there; it saves itself an
         drums = drums || ui.m().track (id)->name == "Drums";
     CHECK (drums);
     CHECK (ui.m().track (track)->name == "Vox");
+}
+
+TEST_CASE ("AT-PRJ-15 the key shows in the control bar, is typed there and set in Project Settings", "[UI][project][AT-PRJ-15]")
+{
+    Ui ui;
+    auto& key = ui.main->controlBar().keyDisplay();
+    ui.settle();
+    CHECK (key.getText() == keyText ({}));
+    key.setText ("f#m", juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().info.key == model::KeySignature { 6, true });
+    CHECK (ui.studio.session().undoName() == "Set Key");
+    CHECK (key.getText() == juce::String::fromUTF8 ("F\xE2\x99\xAF minor"));
+    key.setText ("nonsense", juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().info.key == model::KeySignature { 6, true });
+
+    {
+        ProjectSettingsDialog dialog (ui.studio);
+        CHECK (dialog.key.getSelectedId() == 6 + 1 + 12);
+        CHECK (dialog.key.getNumItems() == 24);
+        dialog.key.setSelectedId (10 + 1); // B flat major
+        REQUIRE (dialog.apply());
+    }
+    ui.settle();
+    CHECK (ui.m().info.key == model::KeySignature { 10, false });
+    CHECK (key.getText() == juce::String::fromUTF8 ("B\xE2\x99\xAD major"));
 }

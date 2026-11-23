@@ -52,6 +52,10 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-13** [U][UI] · F-PRJ-9 · Project Settings changes name and record bit depth; the next recording uses the new bit depth. Sample rate is editable while the project has no media and disabled afterwards.
 
+**AT-PRJ-15** [U][UI] · F-TMP-10 · The project key starts at C major; typing "f#m" in the control bar's key display sets F♯ minor as one undo step "Set Key" and nonsense changes nothing; Project Settings offers the 24 keys and sets B♭ major; names and sharps/flats follow D-DM-20; an exported MIDI file carries the key signature event, and importing a MIDI file into an empty project takes the file's key (as it takes the tempo, D-AT-1).
+
+**AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
+
 ## 2. Transport (TRN)
 
 **AT-TRN-1** [E] · F-TRN-1 · *Given* P0 with a region at bar 2, playhead at bar 1, *when* Play, *then* the first non-silent output sample is at sample 96,000 (bar 2) relative to play start, ± output latency accounted for in the capture.
@@ -136,6 +140,10 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-20** [E][UI] · F-REC-17 · With keyboard MIDI mode on (Ctrl+K) and an instrument track selected, pressing A sends note-on C3 (60) and releasing sends note-off; K sends C4 (72); X then A sends C4; C lowers velocity by 20 (clamped 1–127); notes are recorded when recording. With the mode off, letter keys run their normal commands and number keys jump to markers. Holding a key does not retrigger the note (key repeat ignored).
 
+**AT-REC-21** [UI] · F-REC-18, L-REC-7 · Ctrl+. while recording stops, removes the take (its Record step is undone, so Redo brings it back) and returns the playhead to where recording started; when not recording it does nothing and says so.
+
+**AT-REC-22** [E] · L-MREC-6, D-W2-4 · With MIDI Recording › Replace on, a one-bar pass from bar 1 deletes the existing notes on its track inside that bar, deletes a region left empty inside it, keeps notes after it, and adds the new region (even with Merge on); one undo restores it all.
+
 ## 4. Tracks (TRK)
 
 **AT-TRK-1** [E] · F-TRK-1 · A mono audio track's region is output equally to L and R at center pan (−3 dB each per pan law); a stereo track preserves channel separation.
@@ -163,6 +171,12 @@ Notation: *Given* / *When* / *Then*.
 **AT-TRK-12** [U][S] · F-TRK-16, F-COL-11 · See AT-COL-20 to AT-COL-23.
 
 **AT-TRK-13** [E] · F-TRK-17, F-MIX-12 · Setting an audio track's input to channel 2 records input 2; setting output to Bus 1 routes it to Bus 1 instead of Master; an instrument track with MIDI filter channel 2 ignores channel-1 notes.
+
+**AT-TRK-14** [UI] · L-TRH-3 · A track at the default height shows a volume slider and a pan knob on the header's second line; moving them sets the channel's volume and pan (one undo step per drag), the slider's bottom is −inf, and changes made in the mixer move them.
+
+**AT-TRK-16** [U][UI] · L-TRH-10, D-W3-7 · Hide Track removes the track's header and lane while it stays in the track order; a region dragged down one row from the track above lands on the track below the hidden one, and a marquee skips it; the master can't be hidden; View › Show Hidden Tracks brings the row back with Unhide Track in its menu; hiding is one undo step and saved with the track.
+
+**AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
 ## 5. Arrange (ARR)
 
@@ -214,7 +228,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-24** [U] · F-ARR-23 · Alt+Right with grid 1/16 moves selected regions +240 ticks; Alt+Left at tick 100 clamps to 0.
 
-**AT-ARR-25** [E] · F-ARR-26 (D-DM-4) · Dropping a 44.1 kHz stereo MP3 at bar 3 on an audio track creates a region at bar 3 whose media is a 48 kHz WAV (converted), hashed, in `Media/`; dropping 3 files below the last track creates 3 new tracks; unsupported files are rejected with a message naming them.
+**AT-ARR-25** [E] · F-ARR-26 (D-DM-4, D-ARR-7) · Dropping a 44.1 kHz stereo MP3 at bar 3 on an audio track creates a region at bar 3 whose media is a 48 kHz WAV (converted), hashed, in `Media/`; dropping 3 files below the last track creates 3 new tracks; unsupported files are rejected with a message naming them; a 6-channel file becomes 6 mono tracks; a WAV cut to a third of its length imports that third and the message says it's shorter than its header.
 
 **AT-ARR-26** [E] · F-ARR-27 · Dropping a type-1 SMF with 3 tracks and a tempo of 100 BPM creates 3 instrument tracks with Weft Keys and the notes at correct tick positions (converting the file's PPQN to 960); the project tempo is unchanged unless the project is empty, in which case it adopts the file's tempo map. **Decision D-AT-1** recorded here.
 
@@ -222,9 +236,15 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-28** [U] · F-ARR-29 · Ctrl+R with a 2-bar region at bar 3 selected creates a copy at bar 5 with a new ID and the same content; repeating ×3 in the dialog creates copies at bars 5, 7, 9; a multi-region selection repeats as a block after its last end; one undo step.
 
+**AT-ARR-29** [E] · L-RGN-12 · Reverse Regions (Edit menu, audio region menu) writes the region's part of its file backwards into `Media/` and plays it from the start: the first sample is the old last one; position, length, gain and fades stay; one undo step "Reverse"; reversing again plays forwards; MIDI regions are refused.
+
+**AT-ARR-30** [E] · L-RGN-6, D-W3-5 · Region Delay +100 ms plays a MIDI region's notes 4,800 samples later at 48 kHz (−10 ms: 480 earlier) and an audio region's first sample 10 ms late; the region doesn't move; values outside −500…+500 ms are refused.
+
 ## 6. Audio editor (EDA)
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
+
+**AT-EDA-2** [UI] · L-ATE-3, D-W3-6 · With View › Snap Edits to Zero Crossings on, dragging a region edge in the audio editor lands on the nearest sample, within 10 ms, where the summed signal crosses zero (or the file's start or end); with none in reach the edge goes where it was dragged.
 
 ## 7. Piano roll (PRL)
 
@@ -258,6 +278,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRL-15** [U][E] · F-PRL-15 · Ctrl+M mutes selected notes; muted notes are not sent at playback or bounce; Ctrl+M again unmutes.
 
+**AT-PRL-16** [E] · D-W4-9 · A MIDI region with Transpose +12 and Velocity +20 plays C3 at 100 as C4 at 120 without changing the stored note; −96 and +99 clamp the played note to pitch 0 and velocity 127; 97 and −100 are refused; each change is one undo step; audio regions refuse both.
+
 ## 8. Quantize (QNT)
 
 **AT-QNT-1** [U][E] · F-QNT-1 · Setting region quantize 1/8 at 100% plays notes at quantized positions while stored positions are unchanged; setting Off restores original timing in playback; Apply Quantize bakes positions (stored positions equal quantized) and sets region quantize Off, in one undo step.
@@ -270,7 +292,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-1** [UI] · F-MIX-1 · The mixer shows one strip per track in track order, then buses, then Master pinned on the right; selecting a strip selects its track.
 
-**AT-MIX-2** [E] · F-MIX-2 · Fader at −6.02 dB halves amplitude; −inf silences; max +6 dB; Alt+click resets to 0 dB; volume changes during playback ramp over ≤ 1 buffer with no step discontinuity (max delta check).
+**AT-MIX-2** [E] · F-MIX-2 · Fader at −6.02 dB halves amplitude; −inf silences; max +6 dB (higher values are refused, AT-MIX-14); Alt+click resets to 0 dB; volume changes during playback ramp over ≤ 1 buffer with no step discontinuity (max delta check).
 
 **AT-MIX-3** [E] · F-MIX-3 · Mono source, pan center: L and R each at −3.01 dB; hard left: L at 0 dB, R silent; hard right: inverse. Stereo source with balance −100 silences R and leaves L at 0 dB.
 
@@ -293,6 +315,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-MIX-12** [E] · F-MIX-13 · Track A with `TestLatency` (1,000 samples) and track B with none, both playing an impulse at bar 2: the two impulses arrive at the master at the same sample. Removing `TestLatency` keeps them aligned. A send from A to a bus is also aligned with B.
 
 **AT-MIX-13** [E] · F-MIX-13 · Changing compensation during playback produces no discontinuity larger than the 10 ms crossfade allows.
+
+**AT-MIX-14** [U] · F-MIX-1 · Volume above +6 dB, pan beyond ±1 and region gain above +24 dB are refused with a message, not clamped; values below −inf dB store as −inf.
 
 ## 10. Plugins (PLG)
 
@@ -346,6 +370,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-AUT-12** [E] · F-AUT-11 · Master volume automation affects the bounce; bus pan automation affects the bus output.
 
+**AT-AUT-13** [E] · F-AUT-11, D-W8-6 · A project with steep volume, pan, send and master volume automation (a 0 dB to −inf fade over 5 ms) bounces identically at block sizes 64, 512 and 2048, and the bounce matches live playback at a 240-sample device buffer to within 1e-6.
+
 ## 12. Tempo and signature (TMP)
 
 **AT-TMP-1** [U] · F-TMP-1 · Tempo map 120 BPM at tick 0, 60 BPM at tick 3,840: `sample(3,840)` = 96,000; `sample(4,800)` = 96,000 + 960 × 50 = 144,000; the inverse maps back exactly.
@@ -361,6 +387,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-TMP-6** [UI] · F-TMP-4 · G toggles the global tracks; marker, tempo, and signature lanes share the timeline zoom/scroll with the tracks area.
 
 **AT-TMP-7** [S] · F-TMP-1 · Two clients concurrently add tempo points at the same tick with different BPM: both converge to the point with the greater Id, and a conflict badge is shown on both.
+
+**AT-TMP-8** [UI] · F-TMP-1, L-TMP-3 · Alt-dragging a tempo change at bar 5 to bar 7 leaves bar 5 as it was and adds a change at bar 7 with the same BPM; a plain click without moving sideways adds nothing; undo removes the copy in one step.
+
+**AT-TMP-9** [UI] · L-TMP-9, D-W11-1 · Five Tap Tempo presses 500 ms apart set 120 BPM, then four 400 ms apart set 150 BPM as one more run; each run is one undo step; a single tap changes nothing.
 
 ## 13. Bounce and export (EXP)
 
@@ -387,6 +417,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-EXP-10** [E] · F-EXP-1 · A mix peaking at +2 dBFS reports "Bounce clipped (peak +2.0 dBFS)"; 32-float WAV keeps samples > 1.0; 24-bit clips at full scale.
 
 **AT-EXP-11** [UI] · F-EXP-1 · Bouncing to an existing filename asks Replace / Keep both; Keep both writes "name (2).wav".
+
+**AT-EXP-12** [E][UI] · L-EXP-2 · Export Regions as Files (File menu and the region menu) writes a selected audio region to `<region name>.wav` in the chosen folder, at the project rate and record bit depth, as it plays with its gain and fades but without the track strip; characters not allowed in file names become `_`; an existing name gets " (2)"; nothing selected says "Select regions to export."
+
+**AT-EXP-13** [E][U] · L-EXP-3 · A MIDI region exports to `<region name>.mid`, type 1 at 960 PPQN, starting at the region start: notes as they play (transpose and velocity offset applied, muted notes left out, cut at the region end), controllers, and the tempo and meter at the region start plus tempo changes inside it. Files Weft writes read back identically.
 
 ## 14. Library (LIB)
 
@@ -530,6 +564,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-REC-16 | AT-REC-19 | | F-TMP-1 | AT-TMP-1, 2, 3, 7 |
 | F-TRK-1 | AT-TRK-1 | | F-TMP-3 | AT-TMP-4, 5 |
 | F-TRK-2 | AT-TRK-2 | | F-TMP-4 | AT-TMP-3, 6 |
+| | | | F-TMP-10 | AT-PRJ-15 |
 | F-TRK-4 | AT-TRK-3 | | F-EXP-1 | AT-EXP-1, 2, 10, 11 |
 | F-TRK-6 | AT-TRK-4 | | F-EXP-2 | AT-EXP-3, 4 |
 | F-TRK-7 | AT-TRK-5 | | F-EXP-3 | AT-EXP-5, 6 |

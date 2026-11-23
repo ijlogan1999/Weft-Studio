@@ -21,11 +21,15 @@ public:
     juce::Label regionName;
     juce::ToggleButton regionMute { "Mute" }, regionLoop { "Loop" };
     juce::Slider regionGain, fadeIn, fadeOut;
+    /** Playback delay for any region (L-RGN-6). */
+    juce::Slider regionDelay;
     juce::ComboBox fadeInCurve, fadeOutCurve;
     // MIDI region quantize (F-QNT-1).
     juce::ComboBox regionQuantize;
     juce::Slider quantizeStrength, quantizeSwing;
     juce::TextButton applyQuantize { "Apply Quantize" };
+    // MIDI region playback parameters (L-RPR-2).
+    juce::Slider regionTranspose, regionVelocity;
     // Note section (piano roll focus with notes selected).
     juce::Label notePitch, noteVelocity, noteLength, notePosition, noteChannel;
     // Track section.

@@ -43,6 +43,40 @@ bool same (double a, double b) noexcept { return ! (a < b) && ! (b < a); }
 
 bool nearly (float a, float b) noexcept { return std::abs (a - b) < 1.0e-9f; }
 
+/** Automated volume, pan and sends follow their lane on a grid fixed to the timeline (D-W8-6):
+    the gain at each grid point comes from the lane and samples between two points interpolate.
+    The result doesn't depend on how the device splits the timeline into blocks, so a bounce at
+    any block size matches playback sample for sample. */
+constexpr std::int64_t automationGrid = 32;
+
+std::int64_t gridFloor (std::int64_t t) noexcept
+{
+    auto r = t % automationGrid;
+    if (r < 0)
+        r += automationGrid;
+    return t - r;
+}
+
+/** Fills outL/outR[0, frames) for timeline positions from, from + 1, ...; `at` gives the
+    left and right gains at a timeline position. */
+template <typename At>
+void gridGains (std::int64_t from, int frames, float* outL, float* outR, At&& at) noexcept
+{
+    int k = 0;
+    while (k < frames)
+    {
+        const auto g0 = gridFloor (from + k);
+        const auto a = at (g0), b = at (g0 + automationGrid);
+        const auto end = static_cast<int> (std::min<std::int64_t> (frames, g0 + automationGrid - from));
+        for (; k < end; ++k)
+        {
+            const auto x = static_cast<float> (from + k - g0) / static_cast<float> (automationGrid);
+            outL[k] = a.first + (b.first - a.first) * x;
+            outR[k] = a.second + (b.second - a.second) * x;
+        }
+    }
+}
+
 ClickDuring duringFromString (const std::string& s)
 {
     if (s == "play")
@@ -654,7 +688,8 @@ std::optional<RecordingOutcome> Engine::finishRecording (commands::Session& sess
     }
     for (const auto& lane : p.midi)
     {
-        auto m = layoutMidi (p, *lane, tempo, signatures, currentSettings.midiMergeLinear, currentSettings.midiMergeCycle);
+        auto m = layoutMidi (p, *lane, tempo, signatures, currentSettings.midiMergeLinear, currentSettings.midiMergeCycle,
+                             currentSettings.midiReplace);
         if (! m.notes.empty() || ! m.controllers.empty())
             midi.push_back (std::move (m));
     }
@@ -752,6 +787,9 @@ void Engine::prepare (const DeviceConfig& config)
     events.reserve (1024);
     scratchLeft.assign (block, 0.0f);
     scratchRight.assign (block, 0.0f);
+    rampLeft.assign (block, 0.0f);
+    rampRight.assign (block, 0.0f);
+    rampSend.assign (block, 0.0f);
     metronome.prepare (rate);
     rack.prepare (rate, maxBlock);
     effects.prepare (rate, maxBlock);
@@ -882,6 +920,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         for (auto& m : mix)
             std::fill_n (m.data(), numFrames, 0.0f);
         const auto blockStart = position;
+        numRolledSpans = 0;
 
         int offset = 0;
         while (offset < numFrames)
@@ -921,6 +960,8 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
                     if (cycling)
                         end = std::min (end, snap->cycleEnd);
                     const auto n = static_cast<int> (end - position);
+                    if (numRolledSpans < rolledSpans.size())
+                        rolledSpans[numRolledSpans++] = { offset, n, position };
                     renderSpan (*snap, inputs, position, offset, n, true);
                     const bool audible = clickOn && (transport == TransportState::recording ? clickInRecord : clickInPlay);
                     renderClicks (*snap, position, offset, n, audible);
@@ -948,14 +989,20 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         float masterGain = snap->masterGain, masterLeft = snap->masterPanLeft, masterRight = snap->masterPanRight;
         bool masterAudible = snap->masterAudible;
         bool masterAutomatesInserts = false;
+        const AutomationPlan* masterVolumeLane = nullptr;
+        const AutomationPlan* masterPanLane = nullptr;
         for (const auto& a : snap->masterAutomation)
             switch (a.kind)
             {
                 case AutomationKind::volume:
                     masterGain = dbToGain (automation::toDb (a.valueAt (masterTo, numFrames)));
+                    if (rolling && a.followsLane())
+                        masterVolumeLane = &a;
                     break;
                 case AutomationKind::pan:
                     std::tie (masterLeft, masterRight) = balanceGains (automation::toPan (a.valueAt (masterTo, numFrames)));
+                    if (rolling && a.followsLane())
+                        masterPanLane = &a;
                     break;
                 case AutomationKind::mute:
                     masterAudible = ! automation::toMute (a.valueAt (masterFrom, numFrames));
@@ -970,8 +1017,28 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
             runAutomatedInserts (snap->masterInserts, snap->masterAutomation, masterFrom, mix[0].data(), mix[1].data(), numFrames);
         else
             runInserts (snap->masterInserts, mix[0].data(), mix[1].data(), numFrames);
-        const float targetL = masterAudible ? masterGain * masterLeft : 0.0f, targetR = masterAudible ? masterGain * masterRight : 0.0f;
+        float targetL = masterAudible ? masterGain * masterLeft : 0.0f, targetR = masterAudible ? masterGain * masterRight : 0.0f;
         const float startL = masterGainSet ? masterGainLeft : targetL, startR = masterGainSet ? masterGainRight : targetR;
+        const bool masterGrid = masterAudible && (masterVolumeLane != nullptr || masterPanLane != nullptr) && numRolledSpans > 0;
+        if (masterGrid)
+        {
+            // Lane-following volume or pan: the timeline grid, span by span (cycle wraps split spans).
+            const auto at = [&] (std::int64_t t) noexcept {
+                const float g = masterVolumeLane != nullptr ? dbToGain (automation::toDb (masterVolumeLane->laneValue (t))) : masterGain;
+                auto [l, r] = masterPanLane != nullptr ? balanceGains (automation::toPan (masterPanLane->laneValue (t))) : std::pair { masterLeft, masterRight };
+                return std::pair { g * l, g * r };
+            };
+            // Frames outside a rolling span (a count-in ending mid-block) keep the static gain.
+            std::fill_n (rampLeft.data(), numFrames, targetL);
+            std::fill_n (rampRight.data(), numFrames, targetR);
+            for (std::size_t sp = 0; sp < numRolledSpans; ++sp)
+            {
+                const auto& span = rolledSpans[sp];
+                gridGains (span.position, span.frames, rampLeft.data() + span.offset, rampRight.data() + span.offset, at);
+            }
+            targetL = rampLeft[static_cast<std::size_t> (numFrames - 1)];
+            targetR = rampRight[static_cast<std::size_t> (numFrames - 1)];
+        }
         masterGainLeft = targetL;
         masterGainRight = targetR;
         masterGainSet = true;
@@ -979,10 +1046,18 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         double masterPower = 0;
         for (int i = 0; i < numFrames; ++i)
         {
-            const float x = static_cast<float> (i + 1) / static_cast<float> (numFrames);
             const auto k = static_cast<std::size_t> (i);
-            mix[0][k] *= startL + (targetL - startL) * x;
-            mix[1][k] *= startR + (targetR - startR) * x;
+            if (masterGrid)
+            {
+                mix[0][k] *= rampLeft[k];
+                mix[1][k] *= rampRight[k];
+            }
+            else
+            {
+                const float x = static_cast<float> (i + 1) / static_cast<float> (numFrames);
+                mix[0][k] *= startL + (targetL - startL) * x;
+                mix[1][k] *= startR + (targetR - startR) * x;
+            }
             masterPeak = std::max ({ masterPeak, std::abs (mix[0][k]), std::abs (mix[1][k]) });
             masterPower += static_cast<double> (mix[0][k]) * mix[0][k] + static_cast<double> (mix[1][k]) * mix[1][k];
         }
@@ -1249,6 +1324,9 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         float gain = ch.gain, panLeft = ch.panLeft, panRight = ch.panRight;
         bool audible = ch.audible;
         std::array<float, 8> sendGains {};
+        std::array<const AutomationPlan*, 8> sendLanes {};
+        const AutomationPlan* volumeLane = nullptr;
+        const AutomationPlan* panLane = nullptr;
         for (std::size_t s = 0; s < ch.sends.size() && s < sendGains.size(); ++s)
             sendGains[s] = ch.sends[s].gain;
         for (const auto& a : ch.automation)
@@ -1256,11 +1334,15 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
             {
                 case AutomationKind::volume:
                     gain = dbToGain (automation::toDb (a.valueAt (rampTo, frames)));
+                    if (timeline && a.followsLane())
+                        volumeLane = &a;
                     break;
                 case AutomationKind::pan:
                 {
                     const auto pan = automation::toPan (a.valueAt (rampTo, frames));
                     std::tie (panLeft, panRight) = mono ? panGains (pan) : balanceGains (pan);
+                    if (timeline && a.followsLane())
+                        panLane = &a;
                     break;
                 }
                 case AutomationKind::mute:
@@ -1268,7 +1350,11 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                     break;
                 case AutomationKind::send:
                     if (a.index >= 0 && static_cast<std::size_t> (a.index) < sendGains.size())
+                    {
                         sendGains[static_cast<std::size_t> (a.index)] = dbToGain (automation::toDb (a.valueAt (rampTo, frames)));
+                        if (timeline && a.followsLane())
+                            sendLanes[static_cast<std::size_t> (a.index)] = &a;
+                    }
                     break;
                 case AutomationKind::param:
                     if (a.index < 0 && ch.instrument)
@@ -1325,16 +1411,31 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
             std::fill_n (right, frames, 0.0f);
             state.gainLeft = state.gainRight = 0;
             state.gainSet = true;
+            state.silenced = true;
         }
 
-        const auto sendTo = [&] (const SendPlan& send, float sendGain, bool stereo) noexcept {
+        const auto sendTo = [&] (const SendPlan& send, float sendGain, const AutomationPlan* lane, bool stereo) noexcept {
             float* sl = scratchLeft.data();
             float* sr = scratchRight.data();
-            for (int k = 0; k < frames; ++k)
+            if (lane != nullptr)
             {
-                sl[k] = left[k] * sendGain;
-                sr[k] = (stereo ? right[k] : left[k]) * sendGain;
+                float* g = rampSend.data();
+                gridGains (from, frames, g, sr, [lane] (std::int64_t t) noexcept {
+                    const float v = dbToGain (automation::toDb (lane->laneValue (t)));
+                    return std::pair { v, v };
+                });
+                for (int k = 0; k < frames; ++k)
+                {
+                    sl[k] = left[k] * g[k];
+                    sr[k] = (stereo ? right[k] : left[k]) * g[k];
+                }
             }
+            else
+                for (int k = 0; k < frames; ++k)
+                {
+                    sl[k] = left[k] * sendGain;
+                    sr[k] = (stereo ? right[k] : left[k]) * sendGain;
+                }
             if (send.delayLine)
                 send.delayLine->process (sl, sr, frames, send.delay, snap.fadeFrames);
             float* tl = snap.buffers[2 * static_cast<std::size_t> (send.target)].data();
@@ -1346,13 +1447,40 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
             }
         };
         const auto sendGain = [&] (std::size_t s) { return s < sendGains.size() ? sendGains[s] : ch.sends[s].gain; };
+        const auto sendLane = [&] (std::size_t s) { return s < sendLanes.size() ? sendLanes[s] : nullptr; };
         for (std::size_t s = 0; s < ch.sends.size(); ++s)
             if (ch.sends[s].pre)
-                sendTo (ch.sends[s], sendGain (s), ! mono);
+                sendTo (ch.sends[s], sendGain (s), sendLane (s), ! mono);
 
         // Fader and pan: the channel becomes stereo here. Gain changes ramp across the span (AT-MIX-2).
-        const float targetL = audible ? gain * panLeft : 0.0f, targetR = audible ? gain * panRight : 0.0f;
+        float targetL = audible ? gain * panLeft : 0.0f, targetR = audible ? gain * panRight : 0.0f;
         const float startL = state.gainSet ? state.gainLeft : targetL, startR = state.gainSet ? state.gainRight : targetR;
+        const bool grid = audible && (volumeLane != nullptr || panLane != nullptr);
+        if (grid)
+        {
+            // Lane-following volume or pan: gains on the timeline grid (D-W8-6).
+            gridGains (from, frames, rampLeft.data(), rampRight.data(), [&] (std::int64_t t) noexcept {
+                const float g = volumeLane != nullptr ? dbToGain (automation::toDb (volumeLane->laneValue (t))) : gain;
+                auto lr = std::pair { panLeft, panRight };
+                if (panLane != nullptr)
+                {
+                    const auto pan = automation::toPan (panLane->laneValue (t));
+                    lr = mono ? panGains (pan) : balanceGains (pan);
+                }
+                return std::pair { g * lr.first, g * lr.second };
+            });
+            targetL = rampLeft[static_cast<std::size_t> (frames - 1)];
+            targetR = rampRight[static_cast<std::size_t> (frames - 1)];
+            if (state.silenced) // coming back from mute: fade in over the span, no click
+                for (int k = 0; k < frames; ++k)
+                {
+                    const float x = static_cast<float> (k + 1) / static_cast<float> (frames);
+                    rampLeft[static_cast<std::size_t> (k)] *= x;
+                    rampRight[static_cast<std::size_t> (k)] *= x;
+                }
+        }
+        if (audible)
+            state.silenced = false;
         state.gainLeft = targetL;
         state.gainRight = targetR;
         state.gainSet = true;
@@ -1360,7 +1488,12 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         for (int k = 0; k < frames; ++k)
         {
             float gl = targetL, gr = targetR;
-            if (ramp)
+            if (grid)
+            {
+                gl = rampLeft[static_cast<std::size_t> (k)];
+                gr = rampRight[static_cast<std::size_t> (k)];
+            }
+            else if (ramp)
             {
                 const float x = static_cast<float> (k + 1) / static_cast<float> (frames);
                 gl = startL + (targetL - startL) * x;
@@ -1372,7 +1505,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         }
         for (std::size_t s = 0; s < ch.sends.size(); ++s)
             if (! ch.sends[s].pre)
-                sendTo (ch.sends[s], sendGain (s), true);
+                sendTo (ch.sends[s], sendGain (s), sendLane (s), true);
 
         float p = 0;
         double power = 0;

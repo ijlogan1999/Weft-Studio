@@ -165,6 +165,43 @@ EditResult Session::commitRecording (const std::vector<RecordedAudio>& audio, co
                 continue;
             const auto trackId = targetTrack (rec.trackId, rec.trackName, TrackKind::instrument, 2);
 
+            if (rec.replace && trackId == rec.trackId)
+            {
+                // Replace: clear what the pass covered on this track (D-W2-4).
+                for (const auto* r : projection.regionsOnTrack (trackId))
+                {
+                    const auto* seq = r->isMidi ? projection.sequence (r->midi.sequenceId) : nullptr;
+                    if (seq == nullptr || ! r->takeFolderId.empty())
+                        continue;
+                    const auto base = r->start - r->midi.sequenceOffset;
+                    const auto inRange = [&] (Ticks seqPos) {
+                        const auto at = base + seqPos;
+                        return seqPos >= r->midi.sequenceOffset && seqPos < r->midi.sequenceOffset + r->length && at >= rec.replaceFrom
+                            && at < rec.replaceTo;
+                    };
+                    std::size_t kept = 0;
+                    for (const auto& [id, n] : seq->notes)
+                        if (inRange (n.pos))
+                            good = good && w.remove (sequencePath (seq->id) / "notes" / id);
+                        else
+                            ++kept;
+                    for (const auto& [id, c] : seq->controllers)
+                        if (inRange (c.pos))
+                            good = good && w.remove (sequencePath (seq->id) / "controllers" / id);
+                        else
+                            ++kept;
+                    if (kept == 0 && r->start >= rec.replaceFrom && r->start + r->length <= rec.replaceTo)
+                    {
+                        good = good && w.remove (regionPath (r->id));
+                        bool shared = false;
+                        for (const auto& [otherId, other] : projection.regions)
+                            shared = shared || (otherId != r->id && other->isMidi && other->midi.sequenceId == seq->id);
+                        if (! shared)
+                            good = good && w.remove (sequencePath (seq->id));
+                    }
+                }
+            }
+
             // Merge target: the topmost unlooped MIDI region overlapping the span.
             const Region* into = nullptr;
             if (rec.merge && trackId == rec.trackId)

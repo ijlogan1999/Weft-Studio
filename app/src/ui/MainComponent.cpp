@@ -401,6 +401,21 @@ void MainComponent::handleUiCommand (Cmd command)
         deleteSelectedTrack();
     else if (command == Cmd::bounce)
         BounceDialog::show (studio, this);
+    else if (command == Cmd::exportRegions)
+    {
+        if (! desktopWindows())
+            return;
+        // A folder, starting at the project's Bounces folder; the files are named after the regions.
+        const auto start = studio.projectRoot() / "Bounces";
+        std::error_code ec;
+        std::filesystem::create_directories (start, ec);
+        importChooser = std::make_unique<juce::FileChooser> ("Export Regions to Folder", juce::File (pathText (start)));
+        importChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                    [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                        if (safe != nullptr && fc.getResult() != juce::File())
+                                            safe->studio.exportSelectedRegions (textPath (fc.getResult().getFullPathName()));
+                                    });
+    }
     else if (command == Cmd::newProject)
         whenSaved ([this] {
             if (desktopWindows())
@@ -643,6 +658,24 @@ void MainComponent::openRecent (int index)
     openProject (root);
 }
 
+void MainComponent::deleteRecentProject (int index)
+{
+    const auto& items = studio.recentProjects().items();
+    if (index < 0 || index >= static_cast<int> (items.size()))
+        return;
+    const auto root = items[static_cast<std::size_t> (index)];
+    const auto name = pathText (root.filename()).upToLastOccurrenceOf (".weft", false, false);
+    ask ("Delete Project", "Move \"" + name + "\" and its media to the Trash? You can restore it from there.", "Move to Trash", {},
+         [this, root] (int answer) {
+             if (answer != 1)
+                 return;
+             std::string error;
+             if (! studio.deleteProject (root, &error))
+                 studio.setStatus (juce::String::fromUTF8 (error.c_str()));
+             studio.sendChangeMessage();
+         });
+}
+
 void MainComponent::showWelcome()
 {
     if (! desktopWindows())
@@ -729,6 +762,16 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 recentMenu.addItem (recentMenuBase + static_cast<int> (i) + 1, label);
             }
             menu.addSubMenu ("Open Recent", recentMenu, ! items.empty());
+            // Delete Project: any recent project but the open one, moved to the Trash after asking.
+            juce::PopupMenu deleteMenu;
+            for (std::size_t i = 0; i < items.size(); ++i)
+            {
+                std::error_code ec;
+                if (project::RecentProjects::available (items[i]) && ! std::filesystem::equivalent (items[i], studio.projectRoot(), ec))
+                    deleteMenu.addItem (deleteProjectMenuBase + static_cast<int> (i) + 1,
+                                        pathText (items[i].filename()).upToLastOccurrenceOf (".weft", false, false));
+            }
+            menu.addSubMenu ("Delete Project", deleteMenu, deleteMenu.getNumItems() > 0);
             menu.addSeparator();
             add (Cmd::save);
             add (Cmd::saveAs);
@@ -736,6 +779,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::bounce);
             add (Cmd::importAudio);
+            add (Cmd::exportRegions);
             menu.addSeparator();
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);
@@ -750,7 +794,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll })
                 add (c);
             menu.addSeparator();
-            for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::nudgeLeft, Cmd::nudgeRight,
+            for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
                             Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
                 add (c);
             menu.addSeparator();
@@ -782,8 +826,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         case 4:
         {
-            for (auto c : { Cmd::playStop, Cmd::pause, Cmd::record, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
-                            Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch })
+            for (auto c : { Cmd::playStop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
+                            Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
             const auto settings = studio.engine().settings();
             menu.addSeparator();
@@ -796,6 +840,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             juce::PopupMenu midi;
             midi.addItem (mergeLinear, "Merge into Existing Region", true, settings.midiMergeLinear);
             midi.addItem (mergeCycle, "Merge Cycle Passes", true, settings.midiMergeCycle);
+            midi.addSeparator();
+            midi.addItem (replaceMidi, "Replace", true, settings.midiReplace);
             menu.addSubMenu ("MIDI Recording", midi);
             break;
         }
@@ -804,7 +850,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             menu.addSeparator();
-            for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::keyboardMidi, Cmd::toggleTheme })
+            for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::snapZeroCrossings, Cmd::showHiddenTracks, Cmd::keyboardMidi,
+                            Cmd::toggleTheme })
                 add (c);
             break;
         case 6:
@@ -845,7 +892,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > clickDuringRecord - 1 && itemId <= mergeCycle)
+    if (itemId > clickDuringRecord - 1 && itemId <= replaceMidi)
     {
         auto settings = studio.engine().settings();
         switch (itemId)
@@ -856,11 +903,14 @@ void MainComponent::menuItemSelected (int itemId, int)
             case returnToStart: settings.returnToStartOnStop = ! settings.returnToStartOnStop; break;
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
+            case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;
             default: return;
         }
         studio.engine().setSettings (settings);
         studio.sendChangeMessage();
     }
+    else if (itemId > deleteProjectMenuBase)
+        deleteRecentProject (itemId - deleteProjectMenuBase - 1);
     else if (itemId > colourMenuBase)
         studio.check (studio.session().setTrackColor (studio.selectedTrack(), model::Color { itemId - colourMenuBase - 1, {} }));
     else if (itemId > recentMenuBase)

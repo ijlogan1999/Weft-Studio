@@ -95,7 +95,7 @@ AudioLayout layoutAudio (const RecordPass& pass, std::int64_t frames, const Temp
 }
 
 commands::RecordedMidi layoutMidi (const RecordPass& pass, const RecordPass::MidiLane& lane, const TempoMap& tempo, const SignatureMap& signatures,
-                                   bool mergeLinear, bool mergeCycle)
+                                   bool mergeLinear, bool mergeCycle, bool replace)
 {
     commands::RecordedMidi out;
     out.trackId = lane.trackId;
@@ -197,6 +197,15 @@ commands::RecordedMidi layoutMidi (const RecordPass& pass, const RecordPass::Mid
         out.regionEnd = std::max (out.regionEnd, tickAt (tempo, pass.cycleEnd));
     }
     out.merge = cycle ? mergeCycle : mergeLinear;
+    if (replace)
+    {
+        // What the pass covered: the cycle for a cycle pass, else from the first recorded frame to stop.
+        out.merge = false;
+        out.replace = true;
+        const auto first = pass.firstSample.load();
+        out.replaceFrom = cycle ? tickAt (tempo, pass.cycleStart) : tickAt (tempo, first == LLONG_MIN ? 0 : first);
+        out.replaceTo = cycle ? tickAt (tempo, pass.cycleEnd) : tickAt (tempo, stop);
+    }
     return out;
 }
 } // namespace weft::engine

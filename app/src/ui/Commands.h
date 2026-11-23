@@ -36,7 +36,19 @@ enum class Cmd
     // File and Track menus (04 §2), track header menu and reordering (F-TRK-6, F-TRK-7)
     importAudio, quit, duplicateTrack, duplicateTrackWithRegions, moveTrackUp, moveTrackDown,
     // Pause (F-TRN-3)
-    pause
+    pause,
+    // Export Regions as Files (L-EXP-2, L-EXP-3)
+    exportRegions,
+    // Discard Recording (L-REC-7, F-REC-18)
+    discardRecording,
+    // Reverse audio regions (L-RGN-12)
+    reverseRegions,
+    // Audio editor (L-ATE-3)
+    snapZeroCrossings,
+    // Tap Tempo (L-TMP-9)
+    tapTempo,
+    // Hide tracks (L-TRH-10)
+    showHiddenTracks
 };
 
 struct CommandInfo

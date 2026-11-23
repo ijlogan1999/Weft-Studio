@@ -143,7 +143,10 @@ TEST_CASE ("AT-ARR-15: region gain", "[E][arrange][AT-ARR-15]")
     REQUIRE (rig.session.setRegionGain (r, minusInfinityDb));
     CHECK (firstNonSilent (play (rig, 48000)) == -1);
 
-    REQUIRE (rig.session.setRegionGain (r, 40.0));
+    // Above +24 dB is refused, not clamped (R0 parity fix); +24 itself is the top.
+    CHECK_FALSE (rig.session.setRegionGain (r, 40.0));
+    CHECK (rig.session.model().region (r)->audio.gainDb == minusInfinityDb);
+    REQUIRE (rig.session.setRegionGain (r, 24.0));
     CHECK (rig.session.model().region (r)->audio.gainDb == 24.0);
     out = play (rig, 48000);
     CHECK (out[10] == Catch::Approx (rampValue (10) * std::pow (10.0, 24.0 / 20.0)).epsilon (1e-5));
@@ -320,4 +323,44 @@ TEST_CASE ("AT-LIB-1 (engine part): a file preview plays once on the outputs, at
     rig.engine.stopPreview();
     out = rig.run (512);
     CHECK (firstNonSilent (out) == -1);
+}
+
+TEST_CASE ("AT-ARR-29: Reverse plays a region's audio backwards; undo and a second reverse restore it", "[E][arrange][AT-ARR-29]")
+{
+    Rig rig;
+    const auto track = rig.audioTrack();
+    rig.media.add ("b3:ramp", rampMedia (20000));
+    model::MediaRef m;
+    m.hash = "b3:ramp";
+    m.originalName = "ramp.wav";
+    m.lengthSamples = 20000;
+    REQUIRE (rig.session.addMedia (m));
+    const auto r = rig.session.createAudioRegion (track, 0, "b3:ramp", 100, 4800).value();
+    const auto mediaDir = rig.folder.path / "Media";
+
+    REQUIRE (engine::reverseRegions (rig.session, { r }, rig.media, mediaDir));
+    CHECK (rig.session.undoName() == "Reverse");
+    const auto& reversed = *rig.session.model().region (r);
+    CHECK (reversed.audio.sourceOffset == 0);
+    CHECK (reversed.audio.media != "b3:ramp");
+    CHECK (reversed.start == 0);
+    CHECK (reversed.length == 4800);
+    auto audio = engine::renderRegion (rig.session.model(), r, rig.media);
+    REQUIRE (audio);
+    CHECK (audio->channels[0][0] == rampValue (100 + 4799));
+    CHECK (audio->channels[0][4799] == rampValue (100));
+
+    // Reversing again plays forwards (from a file of its own).
+    REQUIRE (engine::reverseRegions (rig.session, { r }, rig.media, mediaDir));
+    audio = engine::renderRegion (rig.session.model(), r, rig.media);
+    CHECK (audio->channels[0][0] == rampValue (100));
+    rig.session.undo();
+    rig.session.undo();
+    CHECK (rig.session.model().region (r)->audio.media == "b3:ramp");
+    CHECK (rig.session.model().region (r)->audio.sourceOffset == 100);
+
+    // MIDI regions are left alone.
+    const auto keys = rig.session.createTrack (TrackKind::instrument, "Keys").value();
+    const auto midi = rig.session.createMidiRegion (keys, 0, barTicks).value();
+    CHECK_FALSE (engine::reverseRegions (rig.session, { midi }, rig.media, mediaDir));
 }

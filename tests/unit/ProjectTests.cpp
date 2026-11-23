@@ -2,6 +2,7 @@
 // list and the recovery log format.
 
 #include "Fixtures.h"
+#include "weft/media/MidiFile.h"
 #include "weft/project/ProjectFiles.h"
 #include "weft/project/ProjectFolder.h"
 
@@ -60,6 +61,7 @@ TEST_CASE ("AT-PRJ-1: a new project has exactly the default contents", "[U][proj
     CHECK (m.storedLanes.empty());
     CHECK (m.takeFolders.empty());
     CHECK (m.info.metronomeDefaults.countInBars == 1);
+    CHECK (m.info.metronomeDefaults.during == "both"); // D-W1-10: K clicks in playback too
     CHECK (audio->automationMode == "read");
     CHECK_FALSE (s.canUndo()); // creating the project is not an undo step
 }
@@ -222,6 +224,63 @@ TEST_CASE ("AT-PRJ-13 project settings: record bit depth, metronome defaults, sa
     REQUIRE (s.undo().done); // media
     REQUIRE (s.undo().done); // sample rate
     CHECK (s.model().info.sampleRate == 48000);
+}
+
+TEST_CASE ("AT-PRJ-15 the project key: names, typing, Set Key with undo, MIDI key signature", "[U][project][AT-PRJ-15]")
+{
+    using model::KeySignature;
+    CHECK (KeySignature {}.name() == "C major");
+    CHECK (KeySignature { 6, true }.name() == "F# minor");
+    CHECK (KeySignature { 10, false }.name() == "Bb major");
+    CHECK (KeySignature { 1, false }.name() == "Db major");
+    CHECK (KeySignature { 1, true }.name() == "C# minor");
+    CHECK (KeySignature { 7, false }.fifths() == 1);
+    CHECK (KeySignature { 5, false }.fifths() == -1);
+    CHECK (KeySignature { 9, true }.fifths() == 0);
+    CHECK (KeySignature { 0, true }.fifths() == -3);
+    CHECK (KeySignature { 4, true }.fifths() == 1);
+    for (int minor = 0; minor < 2; ++minor)
+        for (int tonic = 0; tonic < 12; ++tonic)
+        {
+            const KeySignature k { tonic, minor == 1 };
+            CHECK (KeySignature::fromFifths (k.fifths(), k.minor) == k);
+        }
+
+    CHECK (KeySignature::parse ("F# minor") == KeySignature { 6, true });
+    CHECK (KeySignature::parse ("f#m") == KeySignature { 6, true });
+    CHECK (KeySignature::parse ("Bb") == KeySignature { 10, false });
+    CHECK (KeySignature::parse ("bb min") == KeySignature { 10, true });
+    CHECK (KeySignature::parse ("Eb Major") == KeySignature { 3, false });
+    CHECK (KeySignature::parse ("CM") == KeySignature { 0, false });
+    CHECK (KeySignature::parse ("Cb") == KeySignature { 11, false });
+    CHECK (KeySignature::parse ("A\xE2\x99\xAD") == KeySignature { 8, false }); // A flat sign
+    CHECK_FALSE (KeySignature::parse ("H"));
+    CHECK_FALSE (KeySignature::parse ("C dorian"));
+    CHECK_FALSE (KeySignature::parse (""));
+
+    auto s = commands::Session::createNew ({}, "userA").value();
+    CHECK (s.model().info.key == KeySignature {});
+    REQUIRE (s.setKey ({ 2, true }));
+    CHECK (s.undoName() == "Set Key");
+    CHECK (s.model().info.key.name() == "D minor");
+    CHECK_FALSE (s.setKey ({ 2, true }));  // already in it
+    CHECK_FALSE (s.setKey ({ 12, false })); // no such tonic
+    REQUIRE (s.undo().done);
+    CHECK (s.model().info.key == KeySignature {});
+    REQUIRE (s.redo().done);
+    CHECK (s.model().info.key == KeySignature { 2, true });
+    CHECK (KeySignature::fromValue (KeySignature { 11, true }.toValue()) == KeySignature { 11, true });
+    CHECK (KeySignature::fromValue (Value()) == KeySignature {}); // projects from before the key
+
+    // MIDI files carry it as a key signature event.
+    media::MidiFileData file;
+    file.tracks.emplace_back();
+    file.keys.push_back ({ 0, -3, true });
+    const auto parsed = media::parseMidiFile (media::encodeMidiFile (file));
+    REQUIRE (parsed);
+    REQUIRE (parsed->keys.size() == 1);
+    CHECK (parsed->keys[0].fifths == -3);
+    CHECK (parsed->keys[0].minor);
 }
 
 TEST_CASE ("Recent projects keep the ten newest, newest first, and survive a restart", "[U][project][AT-PRJ-10]")

@@ -84,8 +84,8 @@ RegionClipboard RegionClipboard::of (const model::ProjectModel& m, const std::ve
 
 int trackRow (const model::ProjectModel& m, const Id& trackId)
 {
-    const auto it = std::find (m.trackOrder.begin(), m.trackOrder.end(), trackId);
-    return it == m.trackOrder.end() ? -1 : static_cast<int> (it - m.trackOrder.begin());
+    const auto it = std::find (m.rows.begin(), m.rows.end(), trackId);
+    return it == m.rows.end() ? -1 : static_cast<int> (it - m.rows.begin());
 }
 
 MovePlan planMove (const model::ProjectModel& m, const RegionClipboard& clip, Ticks deltaTicks, int deltaTracks, int fallbackRow)
@@ -94,7 +94,7 @@ MovePlan planMove (const model::ProjectModel& m, const RegionClipboard& clip, Ti
     if (clip.empty())
         return plan;
     plan.deltaTicks = std::max (deltaTicks, -clip.earliestStart());
-    const auto rows = static_cast<int> (m.trackOrder.size());
+    const auto rows = static_cast<int> (m.rows.size());
     std::map<std::pair<int, TrackKind>, int> newTrackIndex;
 
     // Take folders move as one: every take follows the row of the folder's first take.
@@ -118,7 +118,7 @@ MovePlan planMove (const model::ProjectModel& m, const RegionClipboard& clip, Ti
         }
         else if (target < rows)
         {
-            const auto* t = m.track (m.trackOrder[static_cast<std::size_t> (target)]);
+            const auto* t = m.track (m.rows[static_cast<std::size_t> (target)]);
             if (t != nullptr && canHold (*t, r.isMidi))
                 p.trackId = t->id;
         }
@@ -567,6 +567,37 @@ EditResult Session::joinRegionsAs (const std::vector<Id>& regionIds, const model
         for (const auto* r : rs)
             good = good && w.remove (regionPath (r->id));
         good = good && w.put (regionPath (joined.id), joined.toValue());
+        return wrote (good);
+    });
+}
+
+EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed)
+{
+    if (reversed.empty())
+        return reject ("Select audio regions to reverse.");
+    for (const auto& [id, media] : reversed)
+    {
+        const auto* r = projection.region (id);
+        if (r == nullptr)
+            return reject ("That region no longer exists.");
+        if (r->isMidi)
+            return reject ("Reverse applies to audio regions.");
+        if (media.lengthSamples < r->length)
+            return reject ("The reversed audio is shorter than the region.");
+    }
+    return run ("Reverse", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& [id, rendered] : reversed)
+        {
+            auto media = rendered;
+            media.addedBy = userId;
+            media.addedAt = clock();
+            if (projection.mediaRef (media.hash) == nullptr)
+                good = good && w.put (doc::path ({ keys::media, media.hash }), media.toValue());
+            good = good && w.put (regionPath (id) / "audio" / "media", Value (media.hash))
+                   && w.put (regionPath (id) / "audio" / "sourceOffset", Value (static_cast<std::int64_t> (0)));
+            stamp (w, id);
+        }
         return wrote (good);
     });
 }

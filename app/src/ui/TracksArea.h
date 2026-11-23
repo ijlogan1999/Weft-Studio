@@ -3,6 +3,7 @@
 // D · Global tracks and E · Tracks area (spec 04 §5, §6): the ruler with the cycle strip,
 // the marker lane, track headers and the timeline where regions are edited.
 
+#include "Mixer.h"
 #include "Studio.h"
 #include "Widgets.h"
 
@@ -59,6 +60,7 @@ private:
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
+    bool copyTempo = false; // Alt-drag: the drag moves a copy, made once it moves sideways (L-TMP-3)
     juce::Point<float> dragStart;
     std::pair<double, double> dragRange;
 };
@@ -67,6 +69,7 @@ class TrackHeader final : public juce::Component, public juce::SettableTooltipCl
 {
 public:
     TrackHeader (Studio& studio, const Id& trackId, int number);
+    ~TrackHeader() override { pan.setLookAndFeel (nullptr); }
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -78,6 +81,8 @@ public:
     const Id trackId;
     juce::Label name;
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    /** Volume and pan on the header's second line (L-TRH-3), shown when the track is tall enough. */
+    juce::Slider volume, pan;
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
     juce::ShapeButton lock { "Lock", {}, {}, {} };
     /** Right-click menu: Rename, Duplicate, Color, Move, Delete, Lock/Unlock, Break Lock (the Owner), Add Comment. */
@@ -94,6 +99,8 @@ public:
         itemMoveUp,
         itemMoveDown,
         itemDelete,
+        itemTrackOff,
+        itemHide,
         itemColour = 100 // + 1 .. paletteSize
     };
     /** The header the pointer is over while this one is dragged to reorder; nullptr when not dragging. */
@@ -112,6 +119,8 @@ private:
     void rebuildAutomation();
     void lockClicked();
     Studio& studio;
+    juce::SharedResourcePointer<KnobLook> knobs;
+    bool liveVolume = false, livePan = false;
     std::map<juce::Component*, juce::String> tipsBeforeLock;
     std::vector<std::string> shownChoices; // what the parameter selectors were built from
     int number;

@@ -37,9 +37,9 @@ void Selection::rubberBand (const model::ProjectModel& m, int firstRow, int last
         std::swap (firstRow, lastRow);
     if (from > to)
         std::swap (from, to);
-    const auto rows = static_cast<int> (m.trackOrder.size());
+    const auto rows = static_cast<int> (m.rows.size());
     for (int row = std::max (firstRow, 0); row <= std::min (lastRow, rows - 1); ++row)
-        for (const auto* r : m.regionsOnTrack (m.trackOrder[static_cast<std::size_t> (row)]))
+        for (const auto* r : m.regionsOnTrack (m.rows[static_cast<std::size_t> (row)]))
             if (static_cast<double> (r->start) < to && m.regionEndTick (*r) > from)
                 selected.insert (r->id);
 }
