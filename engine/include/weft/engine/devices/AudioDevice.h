@@ -6,6 +6,9 @@ namespace weft::engine
 {
 struct DeviceConfig
 {
+    /** Ask for every channel the device has; a device opens at most what it reports (D-ARCH-55). */
+    static constexpr int allChannels = 64;
+
     double sampleRate = 48000.0;
     int maxBlockSize = 256;
     int numInputChannels = 2;

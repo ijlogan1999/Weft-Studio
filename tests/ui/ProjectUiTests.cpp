@@ -549,6 +549,10 @@ TEST_CASE ("AT-UI-8 first launch shows Audio Setup; Test plays 1 kHz at -18 dBFS
     REQUIRE (&ui.studio.device() == devices.last);
     CHECK (ui.studio.audioRunning());
     CHECK (dialog.latency.getText().startsWith ("Round-trip latency: "));
+    // Every hardware input is opened, not just the first pair (D-ARCH-55); output stays the master pair.
+    CHECK (ui.studio.device().config().numInputChannels == engine::DeviceConfig::allChannels);
+    CHECK (ui.studio.device().config().numOutputChannels == 2);
+    CHECK (dialog.latency.getText().endsWith ("64 inputs, 2 outputs."));
     devices.last->setCaptureCapacity (2 * 48000);
     devices.last->render (60000, 480);
     const auto out = devices.last->capturedOutput (0);
