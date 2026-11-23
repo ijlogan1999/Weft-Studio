@@ -363,7 +363,8 @@ TEST_CASE ("AT-TRK-5 dragging track 3 above track 1 makes the order 3, 1, 2; Mov
     third.mouseUp (mouse (third, onto, {}, 1, from));
     ui.settle();
     CHECK (order() == std::vector<Id> { start[2], start[0], start[1] });
-    CHECK (first.dropMark == 0);
+    // The reorder can rebuild the headers, so look the first one up again rather than reading a freed one.
+    CHECK (headerOf (start[0]).dropMark == 0);
 
     // One undo step puts it back.
     CHECK (ui.studio.perform (Cmd::undo));
