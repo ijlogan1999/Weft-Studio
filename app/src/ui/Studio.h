@@ -290,6 +290,11 @@ public:
     bool replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice);
     bool setInstrument (const Id& trackId, const PluginChoice& choice);
     std::shared_ptr<engine::Processor> processor (const Id& pluginId) const { return eng->processor (pluginId); }
+    /** A channel's meter for one reader (a mixer strip, an inspector strip): the engine's peaks
+        are taken once and kept for every reader, so two views of one channel both see them. */
+    engine::Engine::Meter takeMeter (const Id& trackId, const void* reader);
+    /** A reader is gone (its strip was destroyed). */
+    void forgetMeterReader (const void* reader);
     /** The model's instance of a plug-in, and the track it's on. */
     const model::PluginInstance* pluginInstance (const Id& pluginId, Id* trackId = nullptr) const;
     /** Parameters changed in a plug-in window: written to `params` now (one undo step per gesture),
@@ -505,6 +510,8 @@ public:
     bool deleteTrack (const Id& trackId);
 
 private:
+    /** Peaks taken from the engine but not yet read, per channel and reader (takeMeter). */
+    std::map<Id, std::map<const void*, engine::Engine::Meter>> unreadMeters;
     void startSync();
     void remoteChanged();
     void saveAccount();

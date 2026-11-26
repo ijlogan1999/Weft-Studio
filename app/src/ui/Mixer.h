@@ -118,6 +118,10 @@ public:
     bool isMaster() const;
     const model::Track* track() const;
     static constexpr int width = 104; // 13 grid units: room for an insert's name beside its bypass dot
+    /** Clicking the strip selects its track (the mixer); the inspector's output strip doesn't. */
+    bool selectsOnClick = true;
+    /** The selected track's strip is drawn highlighted (the mixer; the inspector shows only it). */
+    bool highlightSelection = true;
     /** Slot rows to lay out (the mixer gives every strip the same, so faders line up). */
     int insertRows = 1, sendRows = 1;
     int shownInsertRows() const;

@@ -38,6 +38,8 @@ struct Biquad
         return static_cast<float> (y);
     }
     void reset() noexcept { z1 = {}, z2 = {}; }
+    /** The section's gain at `freq` in dB (for drawing a response curve). */
+    double magnitudeDb (double freq, double rate) const noexcept;
 };
 
 /** Channel EQ: high-pass, low shelf, two peaks, high shelf, low-pass (12 dB/oct filters). */
@@ -48,9 +50,14 @@ public:
     WeftEq();
     void prepare (double sampleRate, int maxBlockSize) override;
     void process (std::span<const MidiEvent>, float* const* io, int numChannels, int numFrames) noexcept override;
+    /** The EQ's response at `freq` in dB, from its current parameters (message thread: it designs
+        its own sections, so it never reads the audio thread's). */
+    double responseDb (double freq, double sampleRate = 48000.0) const noexcept;
 
 private:
     void design() noexcept;
+    /** Designs the six sections from the parameters; `on` says which ones run. */
+    void designInto (std::array<Biquad, 6>& out, std::array<bool, 6>& on, double sampleRate) const noexcept;
     double rate = 48000;
     std::array<Biquad, 6> bands {};
     std::array<bool, 6> active {};
