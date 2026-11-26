@@ -266,7 +266,7 @@ input (hardware input / instrument output / bus input)
 ### Steps: adding an insert
 1. User hovers an empty insert slot on a channel strip; clicking opens the plugin menu (built-in effects first, then VST3 grouped by vendor).
 2. Choosing a plugin instantiates it, places it in the slot, and opens its editor window.
-3. Clicking a filled slot's left edge toggles bypass; dragging moves it to another slot or (with Ctrl) copies it to another channel; the slot menu offers Remove and Replace.
+3. Clicking a filled slot's left edge toggles bypass; dragging moves it to another slot or (with Ctrl) copies it to another channel; the slot menu offers Remove and Replace. **Decision D-W6-9:** dropped on a slot of another channel without Ctrl, the plug-in moves there: it keeps its identity, settings and bypass, and its window stays open. With Ctrl the original stays and the target gets a copy with the same settings (also within one strip). The slot it's dropped on sets the position; the empty slot means the end. A channel that already holds 15 refuses. Automation lanes of the plug-in's parameters stay on the channel it left, as when a plug-in is removed. Alt+click on a filled slot removes the plug-in. Each of these is one undo step.
 4. Adding a plugin that reports latency triggers delay compensation (F-MIX-13): every path to the master is delayed so all paths have equal total latency. Delay compensation updates within one buffer of the change, with a short crossfade (10 ms) to avoid clicks. **Decision D-W6-3:** compensation applies to all channels, including live-monitored inputs, in MVP; low-latency monitoring mode (F-REC-10) is v2. **Decision D-W6-6:** a bypassed insert adds no latency, so bypassing a latent plug-in re-aligns the paths like removing it. Latency of master inserts isn't compensated: everything has already been summed, so there is nothing left to align (the offline render still drops that delay from the start of the file).
 5. **Decision D-W6-4:** a mono channel runs its inserts in stereo (the signal copied to both sides) and averages the result back to mono before the fader, so stereo-only plug-ins work on mono tracks.
 6. **Decision D-W6-5:** a parameter changed outside automation (a plug-in window, the generic editor, undo, a collaborator) takes effect from the start of the next audio block; only automation is sample-accurate (D-W8-3).
@@ -477,6 +477,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W6-6 | Bypassed inserts add no latency; master insert latency isn't compensated. |
 | D-W6-7 | Mute cuts at once; unmute ramps in over one block. |
 | D-W6-8 | Disabled routing menu items show the reason in their text. |
+| D-W6-9 | Dragging an insert to another channel moves it (same instance); Ctrl+drag copies it; Alt+click removes it. |
 | D-W7-1 | Buses appear in the tracks area. |
 | D-W7-2 | New sends start at 0 dB. |
 | D-W7-3 | New buses go at the end of the track order, lowest free "Bus N", one undo step. |

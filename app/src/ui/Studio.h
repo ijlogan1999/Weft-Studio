@@ -288,6 +288,9 @@ public:
     /** Adds an insert and opens its editor (W-6 step 2). */
     std::optional<Id> addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index = {});
     bool replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice);
+    /** Moves an insert to a slot of another channel, or copies it there (W-6 step 3, D-W6-9). What its editor
+        changed since the last save goes with it. */
+    bool movePlugin (Id fromTrackId, Id pluginId, Id toTrackId, std::size_t index, bool copy);
     bool setInstrument (const Id& trackId, const PluginChoice& choice);
     std::shared_ptr<engine::Processor> processor (const Id& pluginId) const { return eng->processor (pluginId); }
     /** The model's instance of a plug-in, and the track it's on. */

@@ -1209,6 +1209,54 @@ EditResult Session::moveInsert (const Id& trackId, const Id& pluginId, std::size
     });
 }
 
+EditResult Session::moveInsertToTrack (const Id& fromTrackId, const Id& pluginId, const Id& toTrackId, std::size_t index)
+{
+    if (fromTrackId == toTrackId)
+        return moveInsert (fromTrackId, pluginId, index);
+    const auto* from = projection.track (fromTrackId);
+    const auto* to = projection.track (toTrackId);
+    if (from == nullptr || to == nullptr)
+        return reject ("That track no longer exists.");
+    const auto it = std::find_if (from->strip.inserts.begin(), from->strip.inserts.end(), [&] (const auto& p) { return p.id == pluginId; });
+    if (it == from->strip.inserts.end())
+        return reject ("That plug-in no longer exists.");
+    if (to->strip.inserts.size() >= static_cast<std::size_t> (model::maxInserts))
+        return reject ("A channel strip holds up to " + std::to_string (model::maxInserts) + " plug-ins.");
+    // It keeps its id, so its open window and its settings go with it.
+    const auto plugin = *it;
+    const auto at = std::min (index, to->strip.inserts.size());
+    return run ("Move Plug-in", [&] (TxnWriter& w) {
+        return wrote (w.listRemove (insertsPath (fromTrackId), pluginId) && w.listInsert (insertsPath (toTrackId), at, plugin.toValue(), plugin.id));
+    });
+}
+
+std::optional<Id> Session::copyInsertToTrack (const Id& fromTrackId, const Id& pluginId, const Id& toTrackId, std::size_t index)
+{
+    const auto* from = projection.track (fromTrackId);
+    const auto* to = projection.track (toTrackId);
+    if (from == nullptr || to == nullptr)
+    {
+        error = "That track no longer exists.";
+        return std::nullopt;
+    }
+    const auto it = std::find_if (from->strip.inserts.begin(), from->strip.inserts.end(), [&] (const auto& p) { return p.id == pluginId; });
+    if (it == from->strip.inserts.end())
+    {
+        error = "That plug-in no longer exists.";
+        return std::nullopt;
+    }
+    if (to->strip.inserts.size() >= static_cast<std::size_t> (model::maxInserts))
+    {
+        error = "A channel strip holds up to " + std::to_string (model::maxInserts) + " plug-ins.";
+        return std::nullopt;
+    }
+    auto copy = *it;
+    copy.id = newId();
+    copy.addedBy = userId;
+    const auto at = std::min (index, to->strip.inserts.size());
+    return runCreate ("Copy Plug-in", copy.id, [&] (TxnWriter& w) { return wrote (w.listInsert (insertsPath (toTrackId), at, copy.toValue(), copy.id)); });
+}
+
 std::optional<Id> Session::replaceInsert (const Id& trackId, const Id& pluginId, model::PluginInstance plugin)
 {
     const auto* t = projection.track (trackId);

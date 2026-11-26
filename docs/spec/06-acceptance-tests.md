@@ -340,6 +340,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-14** [U] · F-MIX-1 · Volume above +6 dB, pan beyond ±1 and region gain above +24 dB are refused with a message, not clamped; values below −inf dB store as −inf.
 
+**AT-MIX-15** [E][UI] · F-MIX-6, D-W6-9 · An insert with a parameter set and bypass on, moved to another channel's first slot, leaves its channel and arrives with the same id, parameter and bypass ahead of the insert already there (undo step "Move Plug-in", one undo puts it back). Copied instead, the original stays and the target gets a new instance with the same settings at the end when the slot index is past it (step "Copy Plug-in"); a copy within one strip works. A channel with 15 inserts refuses both. In the mixer, dragging a slot onto another strip's slot moves the plug-in and its window stays open; Ctrl+drag copies; Alt+click removes without opening the editor.
+
 ## 10. Plugins (PLG)
 
 **AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error. **Decision D-AT-4** fixes the list.

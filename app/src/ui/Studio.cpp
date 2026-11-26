@@ -1878,6 +1878,22 @@ bool Studio::replacePlugin (const Id& trackId, const Id& pluginId, const PluginC
     return id.has_value();
 }
 
+bool Studio::movePlugin (Id fromTrackId, Id pluginId, Id toTrackId, std::size_t index, bool copy)
+{
+    // The ids are copies: saving the state below rebuilds the model a caller's references point into.
+    endPluginGesture();
+    writePluginState (pluginId);
+    bool done = false;
+    if (copy)
+        done = sess->copyInsertToTrack (fromTrackId, pluginId, toTrackId, index).has_value();
+    else
+        done = static_cast<bool> (sess->moveInsertToTrack (fromTrackId, pluginId, toTrackId, index));
+    if (! done)
+        setStatus (juce::String (sess->lastError()));
+    edited();
+    return done;
+}
+
 bool Studio::setInstrument (const Id& trackId, const PluginChoice& choice)
 {
     endPluginGesture();

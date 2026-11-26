@@ -171,7 +171,9 @@ InsertSlot::InsertSlot (ChannelStrip& strip, std::size_t i, const model::PluginI
 {
     const auto title = plugin == nullptr ? juce::String ("Empty insert slot") : "Insert " + juce::String (i + 1) + ": " + label;
     setTitle (title);
-    setTooltip (placeholder ? label + ": Not installed on this computer" : plugin == nullptr ? juce::String ("Add an effect") : label + " (click to open; right-click for more)");
+    setTooltip (placeholder ? label + ": Not installed on this computer"
+                            : plugin == nullptr ? juce::String ("Add an effect")
+                                                : label + " (click to open; drag to another slot or channel, Ctrl+drag to copy; Alt+click removes; right-click for more)");
 }
 
 void InsertSlot::paint (juce::Graphics& g)
@@ -219,13 +221,18 @@ void InsertSlot::mouseDown (const juce::MouseEvent& e)
     }
     if (e.mods.isPopupMenu())
         owner.showMenu (owner.insertMenu (index), [s = &owner, i = index] (int item) { s->pickInsert (i, item); });
+    else if (e.mods.isAltDown())
+    {
+        removed = true; // the quick way to take a plug-in out (D-W6-9); the mouse-up that follows does nothing
+        owner.pickInsert (index, ChannelStrip::itemRemove);
+    }
     else if (e.x < bypassWidth)
         owner.pickInsert (index, ChannelStrip::itemBypass);
 }
 
 void InsertSlot::mouseDrag (const juce::MouseEvent& e)
 {
-    if (! pluginId.empty() && ! e.mods.isPopupMenu() && e.getDistanceFromDragStart() > 4)
+    if (! pluginId.empty() && ! removed && ! e.mods.isPopupMenu() && e.getDistanceFromDragStart() > 4)
     {
         dragging = true;
         setMouseCursor (juce::MouseCursor::DraggingHandCursor);
@@ -235,18 +242,18 @@ void InsertSlot::mouseDrag (const juce::MouseEvent& e)
 void InsertSlot::mouseUp (const juce::MouseEvent& e)
 {
     setMouseCursor (juce::MouseCursor::NormalCursor);
-    if (pluginId.empty() || e.mods.isPopupMenu())
+    if (pluginId.empty() || e.mods.isPopupMenu() || std::exchange (removed, false))
         return;
     if (dragging)
     {
         dragging = false;
-        const auto p = e.getEventRelativeTo (&owner).getPosition();
-        for (const auto& slot : owner.inserts)
-            if (slot->getBounds().contains (p))
-            {
-                owner.moveInsert (index, std::min (slot->index, owner.inserts.size() - 1));
-                return;
-            }
+        // The slot under the pointer, in this strip or any other one on screen.
+        auto* top = getTopLevelComponent();
+        InsertSlot* target = nullptr;
+        for (auto* c = top->getComponentAt (top->getLocalPoint (this, e.getPosition())); c != nullptr && target == nullptr; c = c->getParentComponent())
+            target = dynamic_cast<InsertSlot*> (c);
+        if (target != nullptr)
+            owner.dropInsert (index, target->strip(), target->index, e.mods.isCommandDown());
         return;
     }
     if (e.mouseDownPosition.x >= bypassWidth)
@@ -925,6 +932,17 @@ void ChannelStrip::moveInsert (std::size_t from, std::size_t to)
         return;
     studio.check (studio.session().moveInsert (id, t->strip.inserts[from].id, std::min (to, t->strip.inserts.size() - 1)));
     studio.edited();
+}
+
+void ChannelStrip::dropInsert (std::size_t from, ChannelStrip& target, std::size_t to, bool copy)
+{
+    const auto* t = track();
+    if (t == nullptr || from >= t->strip.inserts.size())
+        return;
+    if (target.trackId() == id && ! copy)
+        moveInsert (from, std::min (to, t->strip.inserts.size() - 1));
+    else
+        studio.movePlugin (id, t->strip.inserts[from].id, target.trackId(), to, copy);
 }
 
 juce::PopupMenu ChannelStrip::instrumentMenu() const

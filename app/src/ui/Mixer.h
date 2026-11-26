@@ -74,9 +74,11 @@ public:
     const bool bypassed, placeholder;
     static constexpr int bypassWidth = 14;
 
+    ChannelStrip& strip() noexcept { return owner; }
+
 private:
     ChannelStrip& owner;
-    bool dragging = false;
+    bool dragging = false, removed = false;
 };
 
 /** A send slot: target bus, level knob, Pre/Post, mute (W-7). Empty slot: the bus menu. */
@@ -168,6 +170,9 @@ public:
     std::vector<const model::Track*> buses() const;
     /** Moves an insert to another slot (drag). */
     void moveInsert (std::size_t from, std::size_t to);
+    /** A slot dragged onto a slot of `target` (W-6 step 3, D-W6-9): reorders within a strip, moves to another
+        channel, or with `copy` (Ctrl) leaves the original and makes a copy there. */
+    void dropInsert (std::size_t from, ChannelStrip& target, std::size_t to, bool copy);
     void openEditor (const Id& pluginId);
     void showMenu (juce::PopupMenu menu, std::function<void (int)> picked);
     Studio& studio;

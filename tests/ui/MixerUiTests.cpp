@@ -364,6 +364,61 @@ TEST_CASE ("Insert slots: add opens the editor, bypass, reorder, remove, placeho
     CHECK (ui.m().track (id)->strip.inserts[1].state == doc::Value (std::vector<std::uint8_t> { 1, 2, 3 }));
 }
 
+TEST_CASE ("AT-MIX-15 a slot dragged to another strip moves the plug-in, Ctrl copies it, Alt+click removes it", "[UI][AT-MIX-15]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    const auto second = ui.studio.session().createTrack (model::TrackKind::audio, "Second").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    auto* strip = mixer.stripFor (first);
+    const auto eq = entry (strip->insertMenu (0), "Weft EQ");
+    REQUIRE (eq);
+    strip->pickInsert (0, eq->id);
+    ui.settle();
+    REQUIRE (ui.m().track (first)->strip.inserts.size() == 1);
+    const auto pluginId = ui.m().track (first)->strip.inserts[0].id;
+    REQUIRE (ui.main->pluginWindows().find (pluginId) != nullptr);
+
+    // Drags a slot of one strip onto a slot of another, as the mouse would.
+    const auto dragSlot = [&] (const Id& from, std::size_t slot, const Id& to, std::size_t toSlot, juce::ModifierKeys mods) {
+        auto& source = *mixer.stripFor (from)->inserts[slot];
+        auto& target = *mixer.stripFor (to)->inserts[toSlot];
+        const auto start = juce::Point<float> (40.0f, 8.0f);
+        const auto end = source.getLocalPoint (&target, target.getLocalBounds().getCentre()).toFloat();
+        source.mouseDown (mouse (source, start));
+        source.mouseDrag (mouse (source, end, mods.withFlags (juce::ModifierKeys::leftButtonModifier), 1, start));
+        source.mouseUp (mouse (source, end, mods, 1, start));
+        ui.settle();
+    };
+
+    dragSlot (first, 0, second, 0, {});
+    CHECK (ui.m().track (first)->strip.inserts.empty());
+    REQUIRE (ui.m().track (second)->strip.inserts.size() == 1);
+    CHECK (ui.m().track (second)->strip.inserts[0].id == pluginId); // the same instance: its window stays open
+    CHECK (ui.main->pluginWindows().find (pluginId) != nullptr);
+    CHECK (ui.studio.session().undoName() == "Move Plug-in");
+
+    // Ctrl+drag back: the original stays and the first strip gets a copy.
+    dragSlot (second, 0, first, 0, juce::ModifierKeys::commandModifier);
+    REQUIRE (ui.m().track (second)->strip.inserts.size() == 1);
+    REQUIRE (ui.m().track (first)->strip.inserts.size() == 1);
+    CHECK (ui.m().track (first)->strip.inserts[0].id != pluginId);
+    CHECK (ui.m().track (first)->strip.inserts[0].pluginUid == "weft.eq");
+    CHECK (ui.studio.session().undoName() == "Copy Plug-in");
+
+    // Alt+click takes a plug-in out; the click doesn't open its editor.
+    const auto copyId = ui.m().track (first)->strip.inserts[0].id;
+    ui.main->pluginWindows().close (copyId);
+    auto& slot = *mixer.stripFor (first)->inserts[0];
+    slot.mouseDown (mouse (slot, { 40.0f, 8.0f }, juce::ModifierKeys (juce::ModifierKeys::altModifier | juce::ModifierKeys::leftButtonModifier)));
+    slot.mouseUp (mouse (slot, { 40.0f, 8.0f }, juce::ModifierKeys::altModifier));
+    ui.settle();
+    CHECK (ui.m().track (first)->strip.inserts.empty());
+    CHECK (ui.main->pluginWindows().find (copyId) == nullptr);
+    CHECK (ui.studio.session().undoName() == "Remove Plug-in");
+}
+
 TEST_CASE ("AT-PLG-5 a plug-in without an editor gets sliders that change its parameters", "[UI]")
 {
     forgetPlugins();
