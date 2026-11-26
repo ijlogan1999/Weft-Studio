@@ -1020,3 +1020,65 @@ TEST_CASE ("AT-MIX-18 peak number, Mute Off for All, Clear/Recall Solo, solo by 
     CHECK (ui.m().track (third)->strip.inserts.empty());
     CHECK (ui.m().track (third)->strip.volumeDb == Catch::Approx (0.0));
 }
+
+TEST_CASE ("AT-MIX-19 mixer views Single, Tracks and All, and the strip filters", "[UI][AT-MIX-19]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto audio = ui.m().trackOrder.front();
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto verb = s.createTrack (model::TrackKind::bus, "Verb").value();
+    const auto drums = s.createTrack (model::TrackKind::bus, "Drums").value();
+    const auto hidden = s.createTrack (model::TrackKind::audio, "Hidden").value();
+    REQUIRE (s.setTrackOutput (keys, drums));
+    REQUIRE (s.addSend (drums, verb));
+    REQUIRE (s.setTrackHidden (hidden, true));
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    const auto shown = [&] {
+        std::vector<Id> ids;
+        for (const auto& strip : mixer.strips())
+            ids.push_back (strip->trackId());
+        return ids;
+    };
+
+    // Tracks (the default): as the track list shows them, buses last; the hidden track isn't there.
+    CHECK (mixer.tracksView.getToggleState());
+    CHECK (shown() == std::vector<Id> { audio, keys, verb, drums });
+
+    // All: hidden tracks too.
+    mixer.allView.onClick();
+    CHECK (shown() == std::vector<Id> { audio, keys, hidden, verb, drums });
+
+    // Filters: Bus off hides the buses; Alt+click on Inst shows only instruments; clicking the others brings them back.
+    mixer.clickFilter (mixer.showBus, {});
+    CHECK (shown() == std::vector<Id> { audio, keys, hidden });
+    CHECK_FALSE (mixer.showBus.getToggleState());
+    mixer.clickFilter (mixer.showInstrument, juce::ModifierKeys (juce::ModifierKeys::altModifier));
+    CHECK (shown() == std::vector<Id> { keys });
+    mixer.clickFilter (mixer.showAudio, {});
+    mixer.clickFilter (mixer.showBus, {});
+    CHECK (shown() == std::vector<Id> { audio, keys, hidden, verb, drums });
+
+    // Single: the selected channel and every bus its signal reaches (Keys -> Drums -> send to Verb).
+    ui.studio.selectTrack (keys);
+    mixer.singleView.onClick();
+    CHECK (shown() == std::vector<Id> { keys, verb, drums });
+    CHECK (mixer.singleView.getToggleState());
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    CHECK (shown() == std::vector<Id> { audio });
+    CHECK (mixer.masterStrip().isVisible());
+
+    // Cycle Through Mixer Views (Mix menu): Single -> Tracks -> All -> Single.
+    REQUIRE (ui.studio.perform (Cmd::cycleMixerMode));
+    ui.settle();
+    CHECK (ui.studio.mixerMode == Studio::MixerMode::tracks);
+    REQUIRE (ui.studio.perform (Cmd::cycleMixerMode));
+    REQUIRE (ui.studio.perform (Cmd::cycleMixerMode));
+    ui.settle();
+    CHECK (ui.studio.mixerMode == Studio::MixerMode::single);
+    // The buttons sit above the strips.
+    CHECK (mixer.singleView.getBottom() <= MixerView::barHeight);
+    CHECK (mixer.masterStrip().getY() >= MixerView::barHeight);
+}

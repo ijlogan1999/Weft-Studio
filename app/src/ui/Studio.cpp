@@ -412,6 +412,55 @@ bool Studio::setAllTracksOff (bool off)
     return true;
 }
 
+std::vector<Id> Studio::mixerOrder() const
+{
+    const auto& m = model();
+    const auto kindShown = [&] (const model::Track& t) {
+        switch (t.kind)
+        {
+            case model::TrackKind::audio: return mixerAudio;
+            case model::TrackKind::instrument: return mixerInstrument;
+            case model::TrackKind::bus: return mixerBus;
+            case model::TrackKind::master: return false;
+        }
+        return false;
+    };
+    std::set<Id> wanted;
+    if (mixerMode == MixerMode::single)
+    {
+        // The selected channel, then every bus its signal reaches through outputs and sends.
+        std::vector<Id> todo;
+        if (const auto* t = m.track (local.selectedTrack); t != nullptr && t->kind != model::TrackKind::master)
+            todo.push_back (t->id);
+        while (! todo.empty())
+        {
+            const auto id = todo.back();
+            todo.pop_back();
+            if (! wanted.insert (id).second)
+                continue;
+            if (const auto* t = m.track (id))
+            {
+                if (! t->output.toMaster())
+                    todo.push_back (t->output.busId);
+                for (const auto& send : t->strip.sends)
+                    todo.push_back (send.targetBusId);
+            }
+        }
+    }
+    std::vector<Id> order;
+    for (const bool buses : { false, true })
+        for (const auto& tid : m.trackOrder)
+        {
+            const auto* t = m.track (tid);
+            if (t == nullptr || t->kind == model::TrackKind::master || (t->kind == model::TrackKind::bus) != buses)
+                continue;
+            if (mixerMode == MixerMode::single ? wanted.contains (tid)
+                                               : kindShown (*t) && (mixerMode == MixerMode::all || ! t->hidden || m.info.showHiddenTracks))
+                order.push_back (tid);
+        }
+    return order;
+}
+
 bool Studio::copyChannelStrip (const Id& trackId)
 {
     const auto* t = model().track (trackId);
@@ -1246,7 +1295,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::nudgeByGrid: case Cmd::nudgeByBar: case Cmd::nudgeByBeat: case Cmd::nudgeByDivision: case Cmd::nudgeByTick: case Cmd::slipLeft: case Cmd::slipRight: case Cmd::shuffleLeft: case Cmd::shuffleRight: case Cmd::gridLines:
         case Cmd::nextTool: case Cmd::previousTool:
         case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff: case Cmd::togglePluginWindows:
-        case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip:
+        case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip: case Cmd::cycleMixerMode:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1927,6 +1976,9 @@ bool Studio::perform (Cmd command)
             setTrackSwitch (TrackSwitch::monitor, t->id, t->monitor != "on");
             return true;
         }
+        case Cmd::cycleMixerMode:
+            mixerMode = mixerMode == MixerMode::single ? MixerMode::tracks : mixerMode == MixerMode::tracks ? MixerMode::all : MixerMode::single;
+            break;
         case Cmd::copyChannelStrip: return copyChannelStrip (local.selectedTrack);
         case Cmd::pasteChannelStrip: return pasteChannelStrip (local.selectedTrack);
         case Cmd::lengthenNotes:

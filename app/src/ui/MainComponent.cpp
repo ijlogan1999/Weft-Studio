@@ -916,6 +916,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         case 3:
             add (Cmd::newBus);
             add (Cmd::toggleMixer);
+            add (Cmd::cycleMixerMode);
             menu.addSeparator();
             add (Cmd::searchPlugins);
             add (Cmd::pluginManager);

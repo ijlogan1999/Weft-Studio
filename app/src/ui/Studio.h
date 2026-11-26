@@ -180,6 +180,13 @@ public:
     Ticks nudgeDelta (Ticks from, int direction) const;
     /** View › Grid Lines (D-W3-11): the arrange grid shows. */
     bool gridLines = true;
+    /** Mixer views (D-W6-14): Single (the selected channel and where its signal goes), Tracks (as the track
+        list shows them) or All (hidden tracks too), and which kinds of strip show. Local, not saved. */
+    enum class MixerMode { single, tracks, all };
+    MixerMode mixerMode = MixerMode::tracks;
+    bool mixerAudio = true, mixerInstrument = true, mixerBus = true;
+    /** The channels the mixer shows, left to right (the master is pinned apart and not listed). */
+    std::vector<Id> mixerOrder() const;
     /** Configure Track Header (D-UI-37): which parts the track headers show, and the column's width. Local, not saved. */
     struct HeaderOptions
     {

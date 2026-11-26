@@ -1236,9 +1236,53 @@ MixerView::MixerView (Studio& s) : studio (s)
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (true, true);
     addAndMakeVisible (viewport);
+    // View buttons (one group) and filters (D-W6-14).
+    const std::pair<juce::TextButton*, Studio::MixerMode> views[] = { { &singleView, Studio::MixerMode::single },
+                                                                       { &tracksView, Studio::MixerMode::tracks },
+                                                                       { &allView, Studio::MixerMode::all } };
+    describe (singleView, "Single view", "The selected channel and the buses its signal goes to");
+    describe (tracksView, "Tracks view", "The channels of the tracks as the track list shows them");
+    describe (allView, "All view", "Every channel, hidden tracks too");
+    for (const auto& [b, mode] : views)
+    {
+        b->setClickingTogglesState (false);
+        b->onClick = [this, m = mode] {
+            studio.mixerMode = m;
+            refresh();
+        };
+        addAndMakeVisible (*b);
+    }
+    singleView.setConnectedEdges (juce::Button::ConnectedOnRight);
+    tracksView.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    allView.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    describe (showAudio, "Audio channels", "Show audio channels (Alt+click: only these)");
+    describe (showInstrument, "Instrument channels", "Show instrument channels (Alt+click: only these)");
+    describe (showBus, "Bus channels", "Show bus channels (Alt+click: only these)");
+    for (auto* b : { &showAudio, &showInstrument, &showBus })
+    {
+        b->setClickingTogglesState (false);
+        b->onClick = [this, b] { clickFilter (*b, juce::ModifierKeys::currentModifiers); };
+        addAndMakeVisible (*b);
+    }
     studio.addChangeListener (this);
     refresh();
     startTimerHz (30);
+}
+
+void MixerView::clickFilter (juce::TextButton& filter, juce::ModifierKeys mods)
+{
+    bool* shown[] = { &studio.mixerAudio, &studio.mixerInstrument, &studio.mixerBus };
+    juce::TextButton* buttons[] = { &showAudio, &showInstrument, &showBus };
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        if (mods.isAltDown())
+            *shown[i] = buttons[i] == &filter;
+        else if (buttons[i] == &filter)
+            *shown[i] = ! *shown[i];
+    }
+    if (studio.mixerMode == Studio::MixerMode::single)
+        studio.mixerMode = Studio::MixerMode::tracks; // the filters apply to the lists, not to one channel
+    refresh();
 }
 
 MixerView::~MixerView() { studio.removeChangeListener (this); }
@@ -1256,15 +1300,9 @@ ChannelStrip* MixerView::stripFor (const Id& trackId)
 void MixerView::refresh()
 {
     const auto& m = studio.model();
-    std::vector<Id> order;
-    // A hidden track's strip goes with its row (D-W3-7) and comes back with Show Hidden Tracks.
-    const auto shown = [&] (const model::Track& t) { return ! t.hidden || m.info.showHiddenTracks; };
-    for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind != model::TrackKind::bus && t->kind != model::TrackKind::master && shown (*t))
-            order.push_back (tid);
-    for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind == model::TrackKind::bus && shown (*t))
-            order.push_back (tid);
+    // A hidden track's strip goes with its row (D-W3-7) and comes back with Show Hidden Tracks; the view
+    // buttons and filters choose the rest (D-W6-14).
+    const auto order = studio.mixerOrder();
     if (order != shownOrder)
     {
         std::vector<std::unique_ptr<ChannelStrip>> next;
@@ -1290,6 +1328,13 @@ void MixerView::refresh()
     for (auto& s : channelStrips)
         s->refresh();
     master->refresh();
+    singleView.setToggleState (studio.mixerMode == Studio::MixerMode::single, juce::dontSendNotification);
+    tracksView.setToggleState (studio.mixerMode == Studio::MixerMode::tracks, juce::dontSendNotification);
+    allView.setToggleState (studio.mixerMode == Studio::MixerMode::all, juce::dontSendNotification);
+    const bool lists = studio.mixerMode != Studio::MixerMode::single;
+    showAudio.setToggleState (lists && studio.mixerAudio, juce::dontSendNotification);
+    showInstrument.setToggleState (lists && studio.mixerInstrument, juce::dontSendNotification);
+    showBus.setToggleState (lists && studio.mixerBus, juce::dontSendNotification);
     layoutStrips();
 }
 
@@ -1317,6 +1362,15 @@ void MixerView::layoutStrips()
 void MixerView::resized()
 {
     auto r = getLocalBounds();
+    auto bar = r.removeFromTop (barHeight).reduced (space::s1, (barHeight - size::control) / 2);
+    for (auto* b : { &singleView, &tracksView, &allView })
+        b->setBounds (bar.removeFromLeft (64));
+    bar.removeFromLeft (space::s2);
+    for (auto* b : { &showAudio, &showInstrument, &showBus })
+    {
+        b->setBounds (bar.removeFromLeft (56));
+        bar.removeFromLeft (space::half);
+    }
     if (master != nullptr)
         master->setBounds (r.removeFromRight (ChannelStrip::width + space::s1).withTrimmedLeft (space::s1).withHeight (std::max (r.getHeight(), master->preferredHeight())));
     viewport.setBounds (r);

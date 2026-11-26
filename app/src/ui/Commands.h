@@ -73,7 +73,9 @@ enum class Cmd
     // D-W6-12
     togglePluginWindows,
     // D-W6-13: mixer commands
-    unmuteAll, clearRecallSolo, soloSelectedRegions, monitorTrack, copyChannelStrip, pasteChannelStrip
+    unmuteAll, clearRecallSolo, soloSelectedRegions, monitorTrack, copyChannelStrip, pasteChannelStrip,
+    // D-W6-14
+    cycleMixerMode
 };
 
 struct CommandInfo

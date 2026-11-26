@@ -234,6 +234,12 @@ public:
     ChannelStrip* stripFor (const Id& trackId);
     void refresh();
 
+    /** The view buttons and the strip filters above the strips (D-W6-14). Alt+click on a filter shows only that kind. */
+    juce::TextButton singleView { "Single" }, tracksView { "Tracks" }, allView { "All" };
+    juce::TextButton showAudio { "Audio" }, showInstrument { "Inst" }, showBus { "Bus" };
+    void clickFilter (juce::TextButton& filter, juce::ModifierKeys mods);
+    static constexpr int barHeight = 32;
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
     void timerCallback() override;

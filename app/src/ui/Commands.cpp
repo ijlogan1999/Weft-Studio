@@ -166,6 +166,7 @@ std::vector<CommandInfo> build()
         { Cmd::monitorTrack, "Input Monitoring Track", "Shift+I", { key ('I', shift) } },
         { Cmd::copyChannelStrip, "Copy Channel Strip Setting", "", {} },
         { Cmd::pasteChannelStrip, "Paste Channel Strip Setting", "", {} },
+        { Cmd::cycleMixerMode, "Cycle Through Mixer Views", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),
