@@ -65,7 +65,9 @@ enum class Cmd
     // Transport go-to and play-from commands (D-UI-35)
     goToCycleStart, goToCycleEnd, goToSelectionStart, goToSelectionEnd, goToLastLocate, goToPosition, playFromStart, playFromCycleStart, playFromSelection, playFromWindowEdge, playFromPreviousBar, playFromLastLocate, stopGoToStart, stopGoToCycleStart, stopGoToLastLocate, cycleForward, cycleBack, doubleCycle, halveCycle,
     // D-UI-36
-    nextTool, previousTool
+    nextTool, previousTool,
+    // D-W3-11: nudge value, slip, shuffle, grid lines
+    nudgeByGrid, nudgeByBar, nudgeByBeat, nudgeByDivision, nudgeByTick, slipLeft, slipRight, shuffleLeft, shuffleRight, gridLines
 };
 
 struct CommandInfo

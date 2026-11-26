@@ -364,3 +364,77 @@ TEST_CASE ("AT-ARR-39 Text, Zoom, Fade, Gain and Quantize tools; Next and Previo
     CHECK (names == juce::StringArray { "Pointer", "Pencil", "Scissors", "Glue", "Eraser", "Mute", "Text", "Zoom", "Fade", "Gain", "Quantize" });
     CHECK (keys == juce::StringArray { "T", "P", "I", "J", "E", "M", "N", "Z", "A", "G", "Q" });
 }
+
+TEST_CASE ("AT-ARR-40 nudge value, lengthen and shorten, slip, shuffle, grid lines", "[UI][AT-ARR-40]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    auto& studio = ui.studio;
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto a = *s.createMidiRegion (keys, 0, bar);
+    const auto b = *s.createMidiRegion (keys, 3 * bar, bar);
+    studio.edited();
+    ui.settle();
+
+    // Nudge by a beat, then by a tick.
+    studio.selection.set ({ b });
+    ui.main->menuItemSelected (static_cast<int> (Cmd::nudgeByBeat) + 1, 1);
+    CHECK (studio.nudgeValue == Studio::NudgeValue::beat);
+    REQUIRE (studio.perform (Cmd::nudgeRight));
+    CHECK (ui.region (b).start == 3 * bar + bar / 4);
+    REQUIRE (studio.perform (Cmd::nudgeByTick));
+    REQUIRE (studio.perform (Cmd::nudgeLeft));
+    CHECK (ui.region (b).start == 3 * bar + bar / 4 - 1);
+
+    // Lengthen and shorten by the nudge value (a bar).
+    REQUIRE (studio.perform (Cmd::nudgeByBar));
+    studio.selection.set ({ a });
+    REQUIRE (studio.perform (Cmd::lengthenNotes));
+    CHECK (ui.region (a).length == 2 * bar);
+    CHECK (s.undoName() == "Region Length");
+    REQUIRE (studio.perform (Cmd::shortenNotes));
+    CHECK (ui.region (a).length == bar);
+
+    // Shuffle: b moves left to meet a's end; a moves right to meet b's start.
+    studio.selection.set ({ b });
+    REQUIRE (studio.perform (Cmd::shuffleLeft));
+    CHECK (ui.region (b).start == bar);
+    CHECK (s.undoName() == "Shuffle");
+    CHECK_FALSE (studio.perform (Cmd::shuffleLeft)); // touching already
+    REQUIRE (studio.perform (Cmd::undo));
+    studio.selection.set ({ a });
+    REQUIRE (studio.perform (Cmd::shuffleRight));
+    CHECK (ui.region (a).start + ui.region (a).length == ui.region (b).start);
+    REQUIRE (studio.perform (Cmd::undo));
+    REQUIRE (s.moveRegion (a, bar / 2));
+    studio.edited();
+    REQUIRE (studio.perform (Cmd::shuffleLeft)); // with nothing before it, to the project start
+    CHECK (ui.region (a).start == 0);
+
+    // Slip: the region stays, what plays inside moves (MIDI: sequence offset; audio: source offset).
+    REQUIRE (studio.perform (Cmd::nudgeByBeat));
+    studio.selection.set ({ a });
+    const auto offset = ui.region (a).midi.sequenceOffset;
+    REQUIRE (ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::altModifier));
+    CHECK (ui.region (a).midi.sequenceOffset == offset + bar / 4);
+    CHECK (ui.region (a).start == 0);
+    CHECK (s.undoName() == "Slip Region");
+    const auto audio = importSine (ui, bar);
+    studio.selection.set ({ audio });
+    REQUIRE (studio.perform (Cmd::slipLeft));
+    CHECK (ui.region (audio).audio.sourceOffset == 24000); // a beat at 120 BPM
+    REQUIRE (studio.perform (Cmd::slipRight));
+    CHECK (ui.region (audio).audio.sourceOffset == 0);
+    CHECK_FALSE (studio.perform (Cmd::slipRight)); // the start of the file
+
+    // View › Grid Lines.
+    CHECK (studio.gridLines);
+    REQUIRE (studio.perform (Cmd::gridLines));
+    CHECK_FALSE (studio.gridLines);
+    const auto view = ui.main->getMenuForIndex (5, "View");
+    bool listed = false;
+    for (juce::PopupMenu::MenuItemIterator it (view); it.next();)
+        if (it.getItem().text == "Grid Lines")
+            listed = ! it.getItem().isTicked;
+    CHECK (listed);
+}

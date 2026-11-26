@@ -1091,6 +1091,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
+        case Cmd::nudgeByGrid: case Cmd::nudgeByBar: case Cmd::nudgeByBeat: case Cmd::nudgeByDivision: case Cmd::nudgeByTick: case Cmd::slipLeft: case Cmd::slipRight: case Cmd::shuffleLeft: case Cmd::shuffleRight: case Cmd::gridLines:
         case Cmd::nextTool: case Cmd::previousTool:
         case Cmd::newTrackNextInput: case Cmd::searchTracks:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
@@ -1113,7 +1114,6 @@ bool Studio::perform (Cmd command)
     auto& s = *sess;
     const auto& m = model();
     const auto ids = selection.ids();
-    const auto grid = activeSnap().kind == arrange::Snap::Kind::off ? arrange::Snap::ticks (240) : activeSnap();
     switch (command)
     {
         case Cmd::playStop:
@@ -1438,8 +1438,7 @@ bool Studio::perform (Cmd command)
                 return false;
             const auto anchor = selection.span (m)->first;
             const auto from = static_cast<Ticks> (anchor);
-            const auto delta = arrange::gridStep (from, command == Cmd::nudgeRight ? 1 : -1, grid, m.signatures, view.pixelsPerTick) - from;
-            return check (s.nudgeRegions (ids, delta));
+            return check (s.nudgeRegions (ids, nudgeDelta (from, command == Cmd::nudgeRight ? 1 : -1)));
         }
         case Cmd::repeat:
         {
@@ -1698,11 +1697,139 @@ bool Studio::perform (Cmd command)
         case Cmd::removeOverlaps:
         case Cmd::noteStartToPlayhead:
         case Cmd::noteEndToPlayhead:
-        case Cmd::lengthenNotes:
-        case Cmd::shortenNotes:
         case Cmd::scaleQuantize:
             setStatus ("Click in the piano roll to edit notes.");
             return false;
+        case Cmd::nudgeByGrid: nudgeValue = NudgeValue::grid; break;
+        case Cmd::nudgeByBar: nudgeValue = NudgeValue::bar; break;
+        case Cmd::nudgeByBeat: nudgeValue = NudgeValue::beat; break;
+        case Cmd::nudgeByDivision: nudgeValue = NudgeValue::division; break;
+        case Cmd::nudgeByTick: nudgeValue = NudgeValue::tick; break;
+        case Cmd::gridLines: gridLines = ! gridLines; break;
+        case Cmd::lengthenNotes:
+        case Cmd::shortenNotes:
+        case Cmd::slipLeft:
+        case Cmd::slipRight:
+        {
+            // D-W3-11: the selected regions' length, or what plays inside them, by the nudge value.
+            if (ids.empty())
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            const int dir = command == Cmd::lengthenNotes || command == Cmd::slipRight ? 1 : -1;
+            const bool slip = command == Cmd::slipLeft || command == Cmd::slipRight;
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture (slip ? "Slip Region" : "Region Length");
+            bool ok = true;
+            for (const auto& id : ids)
+            {
+                const auto* r = m.region (id);
+                if (r == nullptr)
+                    continue;
+                const auto end = static_cast<Ticks> (std::llround (m.regionEndTick (*r)));
+                const auto stepFrom = slip ? r->start : end;
+                const auto delta = nudgeDelta (stepFrom, dir);
+                // Ticks to samples at the region (audio lengths and offsets are samples).
+                const auto samples = [&] (Ticks from, Ticks by) {
+                    return static_cast<std::int64_t> (std::llround (m.tempo.tickToSample (static_cast<double> (from + by)) - m.tempo.tickToSample (static_cast<double> (from))));
+                };
+                commands::EditResult result;
+                if (slip)
+                    // Slip right: the content moves later, so it starts earlier in the source.
+                    result = r->isMidi ? s.slipRegion (id, r->midi.sequenceOffset - delta)
+                                       : s.slipRegion (id, r->audio.sourceOffset - samples (r->start, delta));
+                else if (r->isMidi)
+                    result = s.trimRegionLength (id, std::max<Ticks> (1, r->length + delta));
+                else
+                    result = s.trimRegionLength (id, std::max<std::int64_t> (model::minAudioRegionLength, r->length + samples (end, delta)));
+                if (! result)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (own)
+            {
+                if (ok)
+                    s.endGesture();
+                else
+                    s.cancelGesture();
+            }
+            if (! ok)
+                setStatus (juce::String (s.lastError()));
+            edited();
+            return ok;
+        }
+        case Cmd::shuffleLeft:
+        case Cmd::shuffleRight:
+        {
+            // D-W3-11: each selected region moves until it meets the region before it on its track (left; the project
+            // start with none) or after it (right; with none it stays). One undo step "Shuffle".
+            if (ids.empty())
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            std::vector<const model::Region*> chosen;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id))
+                    chosen.push_back (r);
+            const bool left = command == Cmd::shuffleLeft;
+            std::sort (chosen.begin(), chosen.end(), [left] (const auto* a, const auto* b) { return left ? a->start < b->start : a->start > b->start; });
+            std::vector<std::pair<Id, Ticks>> moves;
+            for (const auto* r : chosen)
+                moves.emplace_back (r->id, 0);
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture ("Shuffle");
+            bool any = false, ok = true;
+            for (auto& [id, unused] : moves)
+            {
+                const auto& now = model();
+                const auto* r = now.region (id);
+                if (r == nullptr)
+                    continue;
+                const auto trackId = now.effectiveTrackId (*r);
+                const auto lengthOf = [&] (const model::Region& x) { return static_cast<Ticks> (std::llround (now.regionEndTick (x))) - x.start; };
+                const auto end = r->start + lengthOf (*r);
+                std::optional<Ticks> to;
+                for (const auto& other : now.regionsOnTrack (trackId))
+                {
+                    if (other->id == id)
+                        continue;
+                    const auto oEnd = other->start + lengthOf (*other);
+                    if (left && oEnd <= r->start && (! to || oEnd > *to))
+                        to = oEnd;
+                    if (! left && other->start >= end && (! to || other->start - lengthOf (*r) < *to))
+                        to = other->start - lengthOf (*r);
+                }
+                if (left && ! to)
+                    to = 0;
+                if (! to || *to == r->start)
+                    continue;
+                if (! s.moveRegion (id, *to))
+                {
+                    ok = false;
+                    break;
+                }
+                any = true;
+            }
+            if (own)
+            {
+                if (ok && any)
+                    s.endGesture();
+                else
+                    s.cancelGesture();
+            }
+            if (! ok)
+                setStatus (juce::String (s.lastError()));
+            else if (! any)
+                setStatus ("Nothing to shuffle.");
+            edited();
+            return ok && any;
+        }
         case Cmd::transposeUp:
         case Cmd::transposeDown:
         case Cmd::octaveUp:
@@ -1801,6 +1928,24 @@ bool Studio::previewFile (const fs::path& file)
     }
     eng->preview (std::make_shared<const media::AudioData> (std::move (*audio)));
     return true;
+}
+
+Ticks Studio::nudgeDelta (Ticks from, int direction) const
+{
+    // D-W3-11: the nudge value at `from`; Grid is the arrange grid as before (a sixteenth with snap off).
+    const auto& m = model();
+    const auto& sig = m.signatures.signatureAtBar (m.signatures.barAt (from).bar);
+    const Ticks beat = 4 * ticksPerQuarter / sig.denominator;
+    switch (nudgeValue)
+    {
+        case NudgeValue::bar: return direction * sig.barLength();
+        case NudgeValue::beat: return direction * beat;
+        case NudgeValue::division: return direction * std::max<Ticks> (1, beat / 4);
+        case NudgeValue::tick: return direction;
+        case NudgeValue::grid: break;
+    }
+    const auto grid = activeSnap().kind == arrange::Snap::Kind::off ? arrange::Snap::ticks (240) : activeSnap();
+    return arrange::gridStep (from, direction, grid, m.signatures, view.pixelsPerTick) - from;
 }
 
 std::optional<Ticks> Studio::selectionEdge (bool end) const
@@ -3142,7 +3287,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
         Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
-        Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle,
+        Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

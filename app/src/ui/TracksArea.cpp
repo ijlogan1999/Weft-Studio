@@ -1772,7 +1772,8 @@ void Timeline::paint (juce::Graphics& g)
             g.fillRect (lane);
         }
     }
-    paintGrid (g, getLocalBounds().toFloat());
+    if (studio.gridLines) // View › Grid Lines (D-W3-11)
+        paintGrid (g, getLocalBounds().toFloat());
     // Lane separators over the grid.
     g.setColour (colour (Token::background).withAlpha (0.8f));
     for (int row = 0; row < rows(); ++row)

@@ -169,6 +169,13 @@ public:
     std::optional<Id> newTrackNextInput();
     /** The start (or end) of the selected notes while the piano roll has the keys, else of the selected regions (D-UI-35). */
     std::optional<Ticks> selectionEdge (bool end) const;
+    /** Edit › Nudge Value (D-W3-11): what Nudge, Lengthen/Shorten and Slip move regions by. Local, not saved. */
+    enum class NudgeValue { grid, bar, beat, division, tick };
+    NudgeValue nudgeValue = NudgeValue::grid;
+    /** One nudge step from `from`, signed by direction. */
+    Ticks nudgeDelta (Ticks from, int direction) const;
+    /** View › Grid Lines (D-W3-11): the arrange grid shows. */
+    bool gridLines = true;
     Ticks lastLocatePosition() const noexcept { return lastLocate; }
     /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
     bool moveTrackTo (const Id& trackId, std::size_t index);

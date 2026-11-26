@@ -675,8 +675,7 @@ TEST_CASE ("AT-PRL-20 note functions: legato, overlaps, playhead edges, length, 
         if (it.getItem().text == "Note Functions")
             for (juce::PopupMenu::MenuItemIterator sub (*it.getItem().subMenu); sub.next();)
                 names.add (sub.getItem().text);
-    for (auto name : { "Select All Following", "Legato", "Remove Overlaps", "Note Start to Playhead", "Note End to Playhead", "Lengthen Notes", "Shorten Notes",
-                       "Scale Quantize" })
+    for (auto name : { "Select All Following", "Legato", "Remove Overlaps", "Note Start to Playhead", "Note End to Playhead", "Scale Quantize" })
         CHECK (names.contains (name));
 }
 

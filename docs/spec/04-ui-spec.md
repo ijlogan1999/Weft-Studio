@@ -224,10 +224,10 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Move notes left / right (piano roll) | Alt+Left / Alt+Right | | Tools, while the Tool menu is open | T P I J E M |
 | Search and Add Plug-in | Ctrl+Shift+P | | New Track with Next Input | Ctrl+Shift+N |
 | Search and Select Track | Ctrl+Alt+F | | Select All Following (piano roll) | Shift+F |
-| Legato (piano roll) | Ctrl+Shift+L | | Lengthen / Shorten Notes | Alt+Shift+Right / Left |
+| Legato (piano roll) | Ctrl+Shift+L | | Lengthen / Shorten | Alt+Shift+Right / Left |
 | Go to Position | Ctrl+G | | Go to Cycle Start / End | Ctrl+Home / Ctrl+End |
 | Go to Selection Start / End | Shift+Home / Shift+End | | Play from Selection | Shift+Space |
-| Move Cycle Forward / Back | Ctrl+Shift+Right / Left | | | |
+| Move Cycle Forward / Back | Ctrl+Shift+Right / Left | | Slip Left / Right | Ctrl+Alt+Left / Right |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 

@@ -847,13 +847,25 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 add (c);
             menu.addSeparator();
             for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
-                            Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
+                            Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight })
+                add (c);
+            {
+                // D-W3-11: what Nudge, Lengthen/Shorten and Slip move regions by.
+                juce::PopupMenu nudge;
+                const std::pair<Cmd, Studio::NudgeValue> values[] = { { Cmd::nudgeByGrid, Studio::NudgeValue::grid }, { Cmd::nudgeByBar, Studio::NudgeValue::bar },
+                                                                       { Cmd::nudgeByBeat, Studio::NudgeValue::beat }, { Cmd::nudgeByDivision, Studio::NudgeValue::division },
+                                                                       { Cmd::nudgeByTick, Studio::NudgeValue::tick } };
+                for (const auto& [c, v] : values)
+                    nudge.addItem (static_cast<int> (c) + 1, commandInfo (c).name, true, studio.nudgeValue == v);
+                menu.addSubMenu ("Nudge Value", nudge);
+            }
+            for (auto c : { Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
                 add (c);
             {
                 // Piano roll note functions (D-W4-14, D-W4-15).
                 juce::PopupMenu noteMenu;
                 for (auto c : { Cmd::selectAllFollowing, Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead,
-                                Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize })
+                                Cmd::scaleQuantize })
                 {
                     const auto& info = commandInfo (c);
                     juce::PopupMenu::Item item (info.name);
@@ -975,6 +987,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::snapZeroCrossings, Cmd::showHiddenTracks, Cmd::keyboardMidi,
                             Cmd::toggleTheme })
                 add (c);
+            menu.addItem (static_cast<int> (Cmd::gridLines) + 1, commandInfo (Cmd::gridLines).name, true, studio.gridLines);
             break;
         case 6:
         {

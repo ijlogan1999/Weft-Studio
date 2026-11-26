@@ -526,6 +526,21 @@ EditResult Session::trimAudioStartSamples (const Id& regionId, Samples newOffset
     });
 }
 
+EditResult Session::slipRegion (const Id& regionId, std::int64_t newOffset)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (! r->isMidi && newOffset < 0)
+        return reject ("The region is at the start of its file.");
+    const auto base = regionPath (regionId);
+    return run ("Slip Region", [&] (TxnWriter& w) {
+        bool good = r->isMidi ? w.put (base / "midi" / "sequenceOffset", Value (newOffset)) : w.put (base / "audio" / "sourceOffset", Value (newOffset));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
 EditResult Session::trimRegionLength (const Id& regionId, std::int64_t newLength)
 {
     const auto* r = projection.region (regionId);
