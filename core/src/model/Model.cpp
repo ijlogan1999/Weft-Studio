@@ -231,6 +231,54 @@ Value ChannelStrip::toValue() const
         .set ("sends", Value (std::move (sendList)));
 }
 
+// TrackPlayback --------------------------------------------------------------
+
+bool TrackPlayback::isDefault() const noexcept { return *this == TrackPlayback {}; }
+
+std::optional<std::pair<int, int>> TrackPlayback::play (int pitch, int velocity, int regionTranspose) const noexcept
+{
+    const int p = std::clamp (pitch + transpose + (noTranspose ? 0 : regionTranspose), 0, 127);
+    const int vel = std::clamp (velocity + velocityOffset, 1, 127);
+    if (p < keyLow || p > keyHigh || vel < velocityLow || vel > velocityHigh)
+        return std::nullopt;
+    return std::pair { p, vel };
+}
+
+TrackPlayback TrackPlayback::fromValue (const Value& v)
+{
+    TrackPlayback p;
+    if (! v.isMap())
+        return p;
+    p.transpose = clampInt<int> (v["transpose"], 0, -96, 96);
+    p.velocityOffset = clampInt<int> (v["velocityOffset"], 0, -99, 99);
+    p.keyLow = clampInt<int> (v["keyLow"], 0, 0, 127);
+    p.keyHigh = clampInt<int> (v["keyHigh"], 127, 0, 127);
+    p.velocityLow = clampInt<int> (v["velocityLow"], 1, 1, 127);
+    p.velocityHigh = clampInt<int> (v["velocityHigh"], 127, 1, 127);
+    p.delayInTicks = v["delayInTicks"].asBool();
+    p.delay = p.delayInTicks ? clampDouble (v["delay"], 0.0, -maxDelayTicks, maxDelayTicks) : clampDouble (v["delay"], 0.0, -maxDelayMs, maxDelayMs);
+    p.noTranspose = v["noTranspose"].asBool();
+    p.outChannel = clampInt<int> (v["outChannel"], 0, 0, 16);
+    return p;
+}
+
+Value TrackPlayback::toValue() const
+{
+    return Value::map()
+        .set ("transpose", transpose)
+        .set ("velocityOffset", velocityOffset)
+        .set ("keyLow", keyLow)
+        .set ("keyHigh", keyHigh)
+        .set ("velocityLow", velocityLow)
+        .set ("velocityHigh", velocityHigh)
+        .set ("delay", delay)
+        .set ("delayInTicks", delayInTicks)
+        .set ("noTranspose", noTranspose)
+        .set ("outChannel", outChannel);
+}
+
+// Track ----------------------------------------------------------------------
+
 Track Track::fromValue (const Id& id, const Value& v)
 {
     Track t;
@@ -253,6 +301,8 @@ Track Track::fromValue (const Id& id, const Value& v)
     if (t.kind != TrackKind::instrument)
         t.strip.instrument.reset();
     t.automationMode = oneOf (v["automationMode"], { "off", "read", "touch", "latch", "write" }, "read");
+    if (t.kind == TrackKind::instrument)
+        t.playback = TrackPlayback::fromValue (v["playback"]);
     return t;
 }
 
@@ -275,7 +325,8 @@ Value Track::toValue() const
         .set ("monitor", monitor)
         .set ("locked", lock)
         .set ("strip", strip.toValue())
-        .set ("automationMode", automationMode);
+        .set ("automationMode", automationMode)
+        .set ("playback", playback.isDefault() ? Value() : playback.toValue());
 }
 
 // Region --------------------------------------------------------------------

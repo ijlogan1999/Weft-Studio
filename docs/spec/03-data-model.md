@@ -97,7 +97,19 @@ Track {
   locked: LockInfo?             // §9.3
   strip: ChannelStrip           // §5
   automationMode: 'off'|'read'|'touch'|'latch'|'write'
+  playback: TrackPlayback?      // instrument tracks; absent = defaults (D-W3-13)
   visibleLaneIds: List<Id>      // LOCAL ONLY
+}
+
+TrackPlayback {                 // edited field by field, so concurrent changes to different fields merge
+  transpose: int = 0            // -96..96
+  velocityOffset: int = 0       // -99..99
+  keyLow: int = 0, keyHigh: int = 127
+  velocityLow: int = 1, velocityHigh: int = 127
+  delay: float = 0              // ms (-500..500) or, with delayInTicks, ticks (-960..960)
+  delayInTicks: bool = false
+  noTranspose: bool = false     // regions' transpose ignored
+  outChannel: int = 0           // 0 = each event's own channel, else 1-16
 }
 
 InputAssignment =

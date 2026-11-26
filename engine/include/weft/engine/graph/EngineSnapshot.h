@@ -163,7 +163,9 @@ struct ChannelPlan
     bool armed = false;
     MonitorMode monitor = MonitorMode::autoMode;
     int midiChannel = 0;       // instrument tracks: live MIDI filter, 0 = all
+    std::uint32_t midiSource = 0; // live MIDI device filter (midiSourceId), 0 = every device (P-TRI-9)
     bool liveMidi = false;     // receives live MIDI (selected or armed, D-W2-1)
+    model::TrackPlayback playback; // transpose, velocity, limits and out channel for live MIDI (D-W3-13)
 };
 
 struct EngineSnapshot

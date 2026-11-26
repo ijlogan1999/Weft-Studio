@@ -296,6 +296,35 @@ EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
     return run ("Input Monitoring", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "monitor", Value (mode))); });
 }
 
+EditResult Session::setTrackPlayback (const Id& trackId, const model::TrackPlayback& p)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (t->kind != TrackKind::instrument)
+        return reject ("Track parameters apply to instrument tracks.");
+    const double maxDelay = p.delayInTicks ? model::TrackPlayback::maxDelayTicks : model::TrackPlayback::maxDelayMs;
+    if (p.transpose < -96 || p.transpose > 96 || p.velocityOffset < -99 || p.velocityOffset > 99 || p.keyLow < 0 || p.keyHigh > 127
+        || p.keyLow > p.keyHigh || p.velocityLow < 1 || p.velocityHigh > 127 || p.velocityLow > p.velocityHigh || std::isnan (p.delay)
+        || std::abs (p.delay) > maxDelay || p.outChannel < 0 || p.outChannel > 16)
+        return reject ("Those track parameters are out of range.");
+    return run ("Track Parameters", [&] (TxnWriter& w) {
+        const auto path = trackPath (trackId) / "playback";
+        const auto existing = w.doc().get (path);
+        if (! existing || ! existing->isMap())
+            return wrote (w.put (path, p.toValue()));
+        // Field by field, so two people changing different parameters both keep theirs.
+        const auto now = p.toValue();
+        const auto before = t->playback.toValue();
+        bool good = true;
+        for (const auto* key : { "transpose", "velocityOffset", "keyLow", "keyHigh", "velocityLow", "velocityHigh", "delay", "delayInTicks", "noTranspose",
+                                 "outChannel" })
+            if (! (now[key] == before[key]))
+                good = good && w.put (path / key, now[key]);
+        return wrote (good);
+    });
+}
+
 EditResult Session::setTrackAutomationMode (const Id& trackId, const std::string& mode)
 {
     if (projection.track (trackId) == nullptr || ! projection.tracks.contains (trackId))

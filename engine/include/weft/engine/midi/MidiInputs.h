@@ -9,10 +9,23 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace weft::engine
 {
 class Engine;
+
+/** A device's number for a track's MIDI input filter (P-TRI-9): a stable hash of its name, never 0
+    (0 means the computer keyboard when sending, and every device when filtering). */
+constexpr std::uint32_t midiSourceId (std::string_view deviceName) noexcept
+{
+    if (deviceName.empty() || deviceName == "all")
+        return 0;
+    std::uint32_t h = 2166136261u;
+    for (const char c : deviceName)
+        h = (h ^ static_cast<std::uint8_t> (c)) * 16777619u;
+    return h == 0 ? 1 : h;
+}
 
 class MidiInputRouter
 {

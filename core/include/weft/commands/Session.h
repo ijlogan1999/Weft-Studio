@@ -184,6 +184,8 @@ public:
     EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
     /** Input monitoring: "auto", "on" or "off" (F-REC-4). */
     EditResult setTrackMonitor (const Id& trackId, const std::string& mode);
+    /** An instrument track's playback parameters (P-TRI-12..19, D-W3-13); only changed fields are written. */
+    EditResult setTrackPlayback (const Id& trackId, const model::TrackPlayback& playback);
     /** off, read, touch, latch or write (F-AUT-5; the strip's selector, spec 04 §8). */
     EditResult setTrackAutomationMode (const Id& trackId, const std::string& mode);
     /** Audio input channel(s) or MIDI filter (F-TRK-17). */

@@ -70,6 +70,12 @@ public:
     // Track section.
     juce::Label trackName;
     juce::ComboBox trackColour, monitor;
+    // Track parameters, instrument tracks only (P-TRI-9..19, D-W3-13).
+    juce::ComboBox midiIn, midiInChannel, midiOutChannel, delayUnit;
+    juce::Slider trackDelay, trackTranspose, trackVelocity, keyLow, keyHigh, velocityLow, velocityHigh;
+    juce::ToggleButton noTranspose { "No Transpose" };
+    /** MIDI input names offered in the MIDI In menu (tests replace it). */
+    std::function<std::vector<std::string>()> midiDeviceNames;
 
 private:
     /** Holds the controls; its height is what the sections need, at least the panel's. */
@@ -96,10 +102,17 @@ private:
     /** Sets a field on every selected note, as one undo step. */
     void editNotes (std::string_view name, const std::function<void (model::Note&)>& change);
     void setRegionQuantize();
+    /** Changes the selected instrument track's playback parameters (one undo step, or part of a drag). */
+    void setPlayback (const std::function<void (model::TrackPlayback&)>& change);
+    void setMidiInput();
+    void refreshTrackParameters (const model::Track& t);
+    std::vector<juce::Component*> trackParameters();
 
     Studio& studio;
     bool refreshing = false;
     std::set<const juce::Slider*> mixed; // sliders whose regions differ: they read as a dash
     int regionTop = 0, trackTop = 0, noteTop = 0, channelTop = -1;
+    std::vector<std::string> midiDevices; // the MIDI In menu's devices, after "All"
+    Id devicesFor;                        // the track they were listed for
 };
 } // namespace weft::ui

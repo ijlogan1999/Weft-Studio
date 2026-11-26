@@ -3,11 +3,13 @@
 #include "EngineFixtures.h"
 
 #include "weft/engine/arrange/OfflineRender.h"
+#include "weft/engine/midi/MidiInputs.h"
 
 #include <catch2/catch_approx.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
 using namespace weft;
 using namespace weft::test;
@@ -246,4 +248,102 @@ TEST_CASE ("AT-ARR-30: region delay shifts MIDI and audio playback without movin
     const auto out = engine::renderOffline (k.rig.session.model(), k.rig.media, options);
     CHECK (out.channels[0][479] == 0.0f);
     CHECK (out.channels[0][480] != 0.0f);
+}
+
+TEST_CASE ("AT-TRK-23: track parameters change what an instrument track plays, from regions and live input", "[E][tracks][AT-TRK-23]")
+{
+    KeysRig k;
+    auto& s = k.rig.session;
+    // Played with transpose 12 + 2 and velocity +10: 74 and 54 play; 44, 84 and velocity 30 fall outside the limits.
+    for (const auto& [pos, pitch, velocity] : { std::tuple { 0, 60, 100 }, { 960, 40, 100 }, { 1920, 30, 100 }, { 2400, 70, 100 }, { 2880, 60, 20 } })
+    {
+        model::Note n;
+        n.pos = pos;
+        n.length = 480;
+        n.pitch = pitch;
+        n.velocity = velocity;
+        n.channel = 3;
+        REQUIRE (s.addNote (k.region, n));
+    }
+    REQUIRE (s.setRegionTranspose (k.region, 2));
+
+    model::TrackPlayback p;
+    p.transpose = 12;
+    p.velocityOffset = 10;
+    p.keyLow = 48;
+    p.keyHigh = 76;
+    p.velocityLow = 50;
+    p.outChannel = 5;
+    p.delay = 100.0; // ms
+    REQUIRE (s.setTrackPlayback (k.keys, p));
+    CHECK (s.undoName() == "Track Parameters");
+    k.play (barSamples);
+    const auto ticksToSamples = [] (Ticks t) { return t * barSamples / barTicks; };
+    auto ons = k.seen (0x90);
+    REQUIRE (ons.size() == 2);
+    CHECK (ons[0].event.data1 == 74); // 60 + 12 + 2
+    CHECK (ons[0].event.data2 == 110);
+    CHECK ((ons[0].event.status & 0x0f) == 4); // channel 5
+    CHECK (ons[0].frame == 4800);              // 100 ms at 48 kHz
+    CHECK (ons[1].event.data1 == 54);
+    CHECK (ons[1].frame == ticksToSamples (960) + 4800);
+    // The stored notes are unchanged.
+    const auto& seq = *s.model().sequence (s.model().region (k.region)->midi.sequenceId);
+    CHECK (seq.sortedNotes()[0]->pitch == 60);
+    CHECK (seq.sortedNotes()[0]->channel == 3);
+
+    // No Transpose ignores the region's transpose; the delay in ticks follows the tempo.
+    p.noTranspose = true;
+    p.delayInTicks = true;
+    p.delay = 480;
+    REQUIRE (s.setTrackPlayback (k.keys, p));
+    k.play (barSamples);
+    ons = k.seen (0x90);
+    REQUIRE (ons.size() == 2);
+    CHECK (ons[0].event.data1 == 72);
+    CHECK (ons[0].frame == ticksToSamples (480));
+
+    // Out of range, crossed limits and audio tracks are refused; undo is one step per change.
+    auto bad = p;
+    bad.keyLow = 80;
+    CHECK_FALSE (s.setTrackPlayback (k.keys, bad));
+    bad = p;
+    bad.delay = 961;
+    CHECK_FALSE (s.setTrackPlayback (k.keys, bad));
+    bad = p;
+    bad.outChannel = 17;
+    CHECK_FALSE (s.setTrackPlayback (k.keys, bad));
+    s.undo();
+    CHECK (s.model().track (k.keys)->playback.transpose == 12);
+    CHECK_FALSE (s.model().track (k.keys)->playback.noTranspose);
+    CHECK (s.model().track (k.keys)->playback.delay == 100.0);
+    CHECK_FALSE (s.setTrackPlayback (k.rig.audioTrack(), model::TrackPlayback {}));
+
+    // The parameters survive a save and load.
+    const auto again = model::Track::fromValue (k.keys, s.model().track (k.keys)->toValue());
+    CHECK (again.playback == s.model().track (k.keys)->playback);
+
+    // Live input: transpose, velocity, limits and out channel apply; the MIDI input device filters.
+    model::InputAssignment in;
+    in.kind = model::InputAssignment::Kind::midi;
+    in.device = "USB Keys";
+    REQUIRE (s.setTrackInput (k.keys, in));
+    k.rig.sync();
+    k.rig.engine.stop();
+    k.rig.engine.setArmedTracks ({ k.keys });
+    k.rig.device.render (512);
+    k.probe->seen.clear();
+    engine::MidiInputRouter router (k.rig.engine);
+    CHECK (router.deliver ("USB Keys", 0x90, 50, 100)); // plays as 62 at 110 on channel 5
+    CHECK (router.deliver ("Other Port", 0x90, 52, 100)); // another device: not this track
+    CHECK (router.deliver ({}, 0x90, 53, 100));           // the computer keyboard reaches it
+    CHECK (router.deliver ("USB Keys", 0x90, 70, 100));   // 82 is above the key limit
+    CHECK (router.deliver ("USB Keys", 0x90, 51, 30));    // 40 is below the velocity limit
+    k.rig.device.render (512);
+    ons = k.seen (0x90);
+    REQUIRE (ons.size() == 2);
+    CHECK (ons[0].event.data1 == 62);
+    CHECK (ons[0].event.data2 == 110);
+    CHECK ((ons[0].event.status & 0x0f) == 4);
+    CHECK (ons[1].event.data1 == 65);
 }

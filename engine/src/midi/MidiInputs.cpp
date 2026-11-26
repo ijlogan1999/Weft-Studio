@@ -27,6 +27,6 @@ bool MidiInputRouter::deliver (const std::string& deviceName, std::uint8_t statu
     const std::scoped_lock l (lock);
     if (! deviceName.empty() && off.contains (deviceName))
         return false;
-    return eng.sendMidi (status, data1, data2);
+    return eng.sendMidi (status, data1, data2, -1, midiSourceId (deviceName));
 }
 } // namespace weft::engine

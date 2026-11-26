@@ -118,6 +118,28 @@ struct LockInfo
     std::string note;
 };
 
+/** Track playback parameters (P-TRI-12..19, D-W3-13). They change what an instrument track's
+    MIDI plays, from its regions and from live input, without changing the notes. */
+struct TrackPlayback
+{
+    static constexpr double maxDelayMs = 500, maxDelayTicks = 960;
+    int transpose = 0;      // semitones, -96..+96
+    int velocityOffset = 0; // -99..+99
+    int keyLow = 0, keyHigh = 127;        // notes outside are not played
+    int velocityLow = 1, velocityHigh = 127;
+    double delay = 0;       // in milliseconds, or ticks when delayInTicks; negative plays early
+    bool delayInTicks = false;
+    bool noTranspose = false; // the regions' own transpose doesn't apply (drum kits)
+    int outChannel = 0;       // 0: each event keeps its channel; 1-16: every event is sent on this one
+
+    bool isDefault() const noexcept;
+    /** The pitch and velocity played, or nullopt when the limits drop the note. */
+    std::optional<std::pair<int, int>> play (int pitch, int velocity, int regionTranspose) const noexcept;
+    static TrackPlayback fromValue (const Value& v);
+    Value toValue() const;
+    bool operator== (const TrackPlayback&) const = default;
+};
+
 struct Track
 {
     Id id;
@@ -136,6 +158,7 @@ struct Track
     std::optional<LockInfo> locked;
     ChannelStrip strip;
     std::string automationMode = "read"; // off | read | touch | latch | write (F-AUT-5: read is default)
+    TrackPlayback playback; // instrument tracks
 
     static Track fromValue (const Id& id, const Value& v);
     Value toValue() const;

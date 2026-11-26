@@ -3,6 +3,7 @@
 #include "PianoRoll.h"
 
 #include "weft/engine/dsp/BuiltinEffects.h"
+#include "weft/engine/midi/JuceMidiInputs.h"
 #include "weft/time/Position.h"
 
 namespace weft::ui
@@ -397,10 +398,116 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             studio.check (studio.session().setTrackMonitor (studio.selectedTrack(), modes[monitor.getSelectedItemIndex()]));
     };
 
+    // Track parameters (P-TRI-9..19, D-W3-13).
+    describe (midiIn, "MIDI input", "The MIDI input this track plays and records from; the computer keyboard always reaches it");
+    midiIn.onChange = [this] { setMidiInput(); };
+    midiInChannel.addItem ("All", 1);
+    for (int c = 1; c <= 16; ++c)
+        midiInChannel.addItem (juce::String (c), c + 1);
+    describe (midiInChannel, "MIDI input channel", "The MIDI channel this track listens to, or All");
+    midiInChannel.onChange = [this] { setMidiInput(); };
+    midiOutChannel.addItem ("As played", 1);
+    for (int c = 1; c <= 16; ++c)
+        midiOutChannel.addItem (juce::String (c), c + 1);
+    describe (midiOutChannel, "MIDI output channel", "Sends every note and controller to the instrument on this channel, or on each one's own");
+    midiOutChannel.onChange = [this] {
+        if (! refreshing && midiOutChannel.getSelectedId() > 0)
+            setPlayback ([this] (model::TrackPlayback& p) { p.outChannel = midiOutChannel.getSelectedId() - 1; });
+    };
+    delayUnit.addItem ("ms", 1);
+    delayUnit.addItem ("ticks", 2);
+    describe (delayUnit, "Track delay unit", "Delay in milliseconds or in ticks (960 to a quarter note)");
+    delayUnit.onChange = [this] {
+        if (refreshing || delayUnit.getSelectedId() == 0)
+            return;
+        // Changing the unit keeps the delay at zero rather than reading milliseconds as ticks.
+        setPlayback ([this] (model::TrackPlayback& p) {
+            p.delayInTicks = delayUnit.getSelectedId() == 2;
+            p.delay = 0;
+        });
+    };
+    setupSlider (trackDelay, -model::TrackPlayback::maxDelayMs, model::TrackPlayback::maxDelayMs, 0.1, "");
+    trackDelay.textFromValueFunction = [this] (double v) {
+        return delayUnit.getSelectedId() == 2 ? juce::String (juce::roundToInt (v)) : juce::String (v, 1);
+    };
+    describe (trackDelay, "Track delay", "Plays this track's MIDI later, or earlier when negative (double-click resets)");
+    setupSlider (trackTranspose, -96.0, 96.0, 1.0, " st");
+    describe (trackTranspose, "Track transpose", "Plays the track's notes this many semitones up or down (double-click resets)");
+    setupSlider (trackVelocity, -99.0, 99.0, 1.0, "");
+    describe (trackVelocity, "Track velocity", "Adds to every note's velocity on this track (double-click resets)");
+    for (auto* sl : { &keyLow, &keyHigh })
+    {
+        setupSlider (*sl, 0.0, 127.0, 1.0, "");
+        sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 44, size::control);
+        sl->textFromValueFunction = [] (double v) { return juce::String (commands::noteName (juce::roundToInt (v))); };
+        sl->valueFromTextFunction = [] (const juce::String& t) {
+            if (t.trim().containsOnly ("0123456789"))
+                return t.getDoubleValue();
+            for (int p = 0; p < 128; ++p)
+                if (t.trim().equalsIgnoreCase (juce::String (commands::noteName (p))))
+                    return static_cast<double> (p);
+            return 0.0;
+        };
+    }
+    describe (keyLow, "Key limit low", "Notes below this one don't play");
+    describe (keyHigh, "Key limit high", "Notes above this one don't play");
+    for (auto* sl : { &velocityLow, &velocityHigh })
+    {
+        setupSlider (*sl, 1.0, 127.0, 1.0, "");
+        sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 36, size::control);
+    }
+    describe (velocityLow, "Velocity limit low", "Notes played softer than this don't play");
+    describe (velocityHigh, "Velocity limit high", "Notes played harder than this don't play");
+    trackDelay.setDoubleClickReturnValue (true, 0.0);
+    trackTranspose.setDoubleClickReturnValue (true, 0.0);
+    trackVelocity.setDoubleClickReturnValue (true, 0.0);
+    keyLow.setDoubleClickReturnValue (true, 0.0);
+    keyHigh.setDoubleClickReturnValue (true, 127.0);
+    velocityLow.setDoubleClickReturnValue (true, 1.0);
+    velocityHigh.setDoubleClickReturnValue (true, 127.0);
+    for (auto* sl : { &trackDelay, &trackTranspose, &trackVelocity, &keyLow, &keyHigh, &velocityLow, &velocityHigh })
+    {
+        sl->onDragStart = [this] { studio.session().beginGesture ("Track Parameters"); };
+        sl->onDragEnd = [this] {
+            studio.session().endGesture();
+            studio.edited();
+        };
+        sl->onValueChange = [this, sl] {
+            if (refreshing)
+                return;
+            const auto v = sl->getValue();
+            const auto i = static_cast<int> (std::lround (v));
+            setPlayback ([&] (model::TrackPlayback& p) {
+                if (sl == &trackDelay)
+                    p.delay = p.delayInTicks ? std::round (v) : v;
+                else if (sl == &trackTranspose)
+                    p.transpose = i;
+                else if (sl == &trackVelocity)
+                    p.velocityOffset = i;
+                // A limit pushed past its partner takes the partner along.
+                else if (sl == &keyLow)
+                    p.keyHigh = std::max (p.keyHigh, p.keyLow = i);
+                else if (sl == &keyHigh)
+                    p.keyLow = std::min (p.keyLow, p.keyHigh = i);
+                else if (sl == &velocityLow)
+                    p.velocityHigh = std::max (p.velocityHigh, p.velocityLow = i);
+                else
+                    p.velocityLow = std::min (p.velocityLow, p.velocityHigh = i);
+            });
+        };
+    }
+    describe (noTranspose, "No Transpose", "The regions' own transpose doesn't apply to this track (for drum kits)");
+    noTranspose.onClick = [this] {
+        const bool on = noTranspose.getToggleState();
+        setPlayback ([on] (model::TrackPlayback& p) { p.noTranspose = on; });
+    };
+
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &regionDelay, &fadeIn, &fadeOut,
                                                                           &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
                                                                           &applyQuantize, &regionTranspose, &regionVelocity, &notePitch, &noteVelocity, &noteLength, &notePosition,
-                                                                          &noteChannel, &trackName, &trackColour, &monitor })
+                                                                          &noteChannel, &trackName, &trackColour, &monitor, &midiIn, &midiInChannel, &midiOutChannel,
+                                                                          &delayUnit, &trackDelay, &trackTranspose, &trackVelocity, &keyLow, &keyHigh,
+                                                                          &velocityLow, &velocityHigh, &noTranspose })
     {
         // Every control is reachable with Tab; a click doesn't take focus from the arrange window.
         c->setWantsKeyboardFocus (true);
@@ -667,9 +774,84 @@ void Inspector::refresh()
         monitor.setSelectedItemIndex (t->monitor == "on" ? 1 : t->monitor == "off" ? 2 : 0, juce::dontSendNotification);
         monitor.setVisible (commands::LocalView::canArm (*t));
     }
+    const bool instrument = t != nullptr && t->kind == model::TrackKind::instrument;
+    for (auto* c : trackParameters())
+        c->setVisible (instrument);
+    if (instrument)
+        refreshTrackParameters (*t);
     refreshStrips();
     resized();
     body.repaint();
+}
+
+std::vector<juce::Component*> Inspector::trackParameters()
+{
+    return { &midiIn, &midiInChannel, &midiOutChannel, &delayUnit, &trackDelay, &trackTranspose, &trackVelocity,
+             &keyLow, &keyHigh, &velocityLow, &velocityHigh, &noTranspose };
+}
+
+void Inspector::refreshTrackParameters (const model::Track& t)
+{
+    const juce::ScopedValueSetter<bool> busy (refreshing, true);
+    // The device list is read when another track is selected, not on every edit.
+    const auto device = t.input.kind == model::InputAssignment::Kind::midi ? t.input.device : std::string ("all");
+    if (devicesFor != t.id || (device != "all" && std::find (midiDevices.begin(), midiDevices.end(), device) == midiDevices.end()))
+    {
+        devicesFor = t.id;
+        midiDevices = midiDeviceNames ? midiDeviceNames() : engine::JuceMidiInputs::deviceNames();
+        // A device that isn't connected now stays in the menu while a track uses it.
+        if (device != "all" && std::find (midiDevices.begin(), midiDevices.end(), device) == midiDevices.end())
+            midiDevices.push_back (device);
+        midiIn.clear (juce::dontSendNotification);
+        midiIn.addItem ("All", 1);
+        for (std::size_t i = 0; i < midiDevices.size(); ++i)
+            midiIn.addItem (juce::String (midiDevices[i]), static_cast<int> (i) + 2);
+    }
+    const auto at = std::find (midiDevices.begin(), midiDevices.end(), device);
+    midiIn.setSelectedId (at == midiDevices.end() ? 1 : static_cast<int> (at - midiDevices.begin()) + 2, juce::dontSendNotification);
+    midiInChannel.setSelectedId (t.input.kind == model::InputAssignment::Kind::midi ? t.input.channel + 1 : 1, juce::dontSendNotification);
+    const auto& p = t.playback;
+    midiOutChannel.setSelectedId (p.outChannel + 1, juce::dontSendNotification);
+    delayUnit.setSelectedId (p.delayInTicks ? 2 : 1, juce::dontSendNotification);
+    if (p.delayInTicks)
+        trackDelay.setRange (-model::TrackPlayback::maxDelayTicks, model::TrackPlayback::maxDelayTicks, 1.0);
+    else
+        trackDelay.setRange (-model::TrackPlayback::maxDelayMs, model::TrackPlayback::maxDelayMs, 0.1);
+    trackDelay.setValue (p.delay, juce::dontSendNotification);
+    trackDelay.updateText();
+    trackTranspose.setValue (p.transpose, juce::dontSendNotification);
+    trackVelocity.setValue (p.velocityOffset, juce::dontSendNotification);
+    keyLow.setValue (p.keyLow, juce::dontSendNotification);
+    keyHigh.setValue (p.keyHigh, juce::dontSendNotification);
+    velocityLow.setValue (p.velocityLow, juce::dontSendNotification);
+    velocityHigh.setValue (p.velocityHigh, juce::dontSendNotification);
+    noTranspose.setToggleState (p.noTranspose, juce::dontSendNotification);
+}
+
+void Inspector::setPlayback (const std::function<void (model::TrackPlayback&)>& change)
+{
+    const auto* t = studio.model().track (studio.selectedTrack());
+    if (t == nullptr || t->kind != model::TrackKind::instrument)
+        return;
+    const auto id = t->id;
+    auto p = t->playback;
+    change (p);
+    if (! (p == t->playback))
+        studio.check (studio.session().setTrackPlayback (id, p));
+}
+
+void Inspector::setMidiInput()
+{
+    const auto* t = studio.model().track (studio.selectedTrack());
+    if (refreshing || t == nullptr || t->kind != model::TrackKind::instrument || midiIn.getSelectedId() == 0)
+        return;
+    model::InputAssignment in;
+    in.kind = model::InputAssignment::Kind::midi;
+    const auto index = midiIn.getSelectedId() - 2;
+    in.device = index >= 0 && index < static_cast<int> (midiDevices.size()) ? midiDevices[static_cast<std::size_t> (index)] : std::string ("all");
+    in.channel = std::max (0, midiInChannel.getSelectedId() - 1);
+    const auto id = t->id;
+    studio.check (studio.session().setTrackInput (id, in));
 }
 
 namespace
@@ -729,6 +911,14 @@ void Inspector::paintBody (juce::Graphics& g)
     label (noteChannel, "Channel");
     label (trackColour, "Colour");
     label (monitor, "Monitor");
+    label (midiIn, "MIDI in");
+    label (midiInChannel, "In channel");
+    label (midiOutChannel, "Out channel");
+    label (trackDelay, "Delay");
+    label (trackTranspose, "Transpose");
+    label (trackVelocity, "Velocity");
+    label (keyLow, "Key limit");
+    label (velocityLow, "Vel. limit");
 }
 
 void Inspector::resized()
@@ -795,6 +985,27 @@ int Inspector::layout (int width, int visibleHeight)
     trackColour.setBounds (withLabel (row()));
     if (monitor.isVisible())
         monitor.setBounds (withLabel (row()));
+    if (midiIn.isVisible())
+    {
+        midiIn.setBounds (withLabel (row()));
+        midiInChannel.setBounds (withLabel (row()));
+        midiOutChannel.setBounds (withLabel (row()));
+        auto delay = withLabel (row());
+        delayUnit.setBounds (delay.removeFromRight (64));
+        trackDelay.setBounds (delay.withTrimmedRight (space::half));
+        trackTranspose.setBounds (withLabel (row()));
+        trackVelocity.setBounds (withLabel (row()));
+        // The low and high limits side by side.
+        const auto pair = [&] (juce::Slider& lo, juce::Slider& hi) {
+            auto b = withLabel (row());
+            const auto half = (b.getWidth() - space::half) / 2;
+            lo.setBounds (b.removeFromLeft (half));
+            hi.setBounds (b.withTrimmedLeft (space::half));
+        };
+        pair (keyLow, keyHigh);
+        pair (velocityLow, velocityHigh);
+        noTranspose.setBounds (withLabel (row()));
+    }
     if (trackStrip == nullptr)
     {
         channelTop = -1;

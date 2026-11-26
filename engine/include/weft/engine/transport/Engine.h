@@ -179,7 +179,8 @@ public:
 
     /** Live MIDI input (keyboard, MIDI devices). `deviceFrame` is the device frame it arrived at,
         or -1 for the next block. Call from one thread only. */
-    bool sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame = -1) noexcept;
+    /** source: the sending device's midiSourceId (0 for the computer keyboard, which every track hears). */
+    bool sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame = -1, std::uint32_t source = 0) noexcept;
     /** Plays one note on a track's instrument outside the timeline (F-PRL-11): note-on now,
         note-off after `seconds` (at most 1 s). False when the track has no instrument. */
     bool audition (const Id& trackId, int channel, int pitch, int velocity, double seconds = 0.5);
@@ -362,6 +363,7 @@ private:
     {
         std::int64_t frame = -1;
         std::uint8_t status = 0, data1 = 0, data2 = 0;
+        std::uint32_t source = 0;
     };
     rt::SpscQueue<LiveMidiIn, 1024> midiIn;
 
@@ -373,6 +375,7 @@ private:
     std::optional<LiveMidiIn> laterMidi; // popped, but for a later block
     static constexpr int maxLiveEvents = 512;
     std::array<MidiEvent, maxLiveEvents> liveEvents {}; // this block's live MIDI, offsets in the block
+    std::array<std::uint32_t, maxLiveEvents> liveSources {}; // the device each came from
     int numLive = 0;
     bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true, clickOnlyCountIn = false;
     float clickGain = 1;

@@ -1,6 +1,7 @@
 #include "weft/engine/graph/EngineSnapshot.h"
 
 #include "weft/model/Automation.h"
+#include "weft/engine/midi/MidiInputs.h"
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
@@ -274,6 +275,16 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
         const auto* seq = model.sequence (r.midi.sequenceId);
         if (seq == nullptr)
             continue;
+        const auto& playback = track.playback;
+        // The track's delay (P-TRI-14): milliseconds, or ticks at the tempo where the event falls.
+        const auto trackDelay = [&] (Ticks at) -> std::int64_t {
+            if (playback.delay == 0)
+                return 0;
+            if (! playback.delayInTicks)
+                return std::llround (playback.delay * deviceRate / 1000.0);
+            const auto moved = std::max<Ticks> (0, at + static_cast<Ticks> (std::llround (playback.delay)));
+            return snap->tickToSample (moved) - snap->tickToSample (at);
+        };
         const auto windowStart = r.midi.sequenceOffset;
         const auto windowEnd = windowStart + r.length;
         for (const auto* note : seq->sortedNotes())
@@ -285,7 +296,10 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
                 onTick = quantizeTick (onTick, q->grid, q->strength, q->swing * 100.0);
             if (onTick < inst.startTick || onTick >= inst.endTick)
                 continue;
-            const auto noteDelay = delaySamples (r, deviceRate);
+            const auto played = playback.play (note->pitch, note->velocity + r.midi.velocityOffset, r.midi.transpose);
+            if (! played)
+                continue; // outside the track's key or velocity limits (D-W3-13)
+            const auto noteDelay = delaySamples (r, deviceRate) + trackDelay (onTick);
             const auto on = snap->tickToSample (onTick) + noteDelay;
             const bool shown = std::any_of (visible.begin(), visible.end(), [on] (const Interval& iv) { return on >= iv.first && on < iv.second; });
             if (! shown)
@@ -293,9 +307,9 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             ScheduledNote n;
             n.on = on;
             n.off = std::max (on + 1, snap->tickToSample (std::min (onTick + std::max<Ticks> (1, note->length), inst.endTick)) + noteDelay);
-            n.channel = static_cast<std::uint8_t> (std::clamp (note->channel, 1, 16));
-            n.pitch = static_cast<std::uint8_t> (std::clamp (note->pitch + r.midi.transpose, 0, 127));
-            n.velocity = static_cast<std::uint8_t> (std::clamp (note->velocity + r.midi.velocityOffset, 1, 127));
+            n.channel = static_cast<std::uint8_t> (playback.outChannel > 0 ? playback.outChannel : std::clamp (note->channel, 1, 16));
+            n.pitch = static_cast<std::uint8_t> (played->first);
+            n.velocity = static_cast<std::uint8_t> (played->second);
             plan.notes.push_back (n);
         }
         for (const auto& [id, e] : seq->controllers)
@@ -305,12 +319,14 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             const auto atTick = inst.startTick + (e.pos - windowStart);
             if (atTick < inst.startTick || atTick >= inst.endTick)
                 continue;
-            const auto at = snap->tickToSample (atTick) + delaySamples (r, deviceRate);
+            const auto at = snap->tickToSample (atTick) + delaySamples (r, deviceRate) + trackDelay (atTick);
             if (! std::any_of (visible.begin(), visible.end(), [at] (const Interval& iv) { return at >= iv.first && at < iv.second; }))
                 continue;
             if (auto out = scheduledEvent (e))
             {
                 out->at = at;
+                if (playback.outChannel > 0 && out->status < 0xf0)
+                    out->status = static_cast<std::uint8_t> ((out->status & 0xf0) | (playback.outChannel - 1));
                 plan.controllers.push_back (*out);
             }
         }
@@ -580,6 +596,9 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         {
             plan.midiChannel = track->input.kind == model::InputAssignment::Kind::midi ? std::clamp (track->input.channel, 0, 16) : 0;
             plan.liveMidi = plan.armed || local.selectedTrack == track->id;
+            if (track->input.kind == model::InputAssignment::Kind::midi)
+                plan.midiSource = midiSourceId (track->input.device);
+            plan.playback = track->playback;
         }
         if (track->kind != model::TrackKind::bus)
             planRegions (plan, model, *track, *snap, mediaPool, projectRate);

@@ -85,6 +85,31 @@ ClickDuring duringFromString (const std::string& s)
         return ClickDuring::both;
     return ClickDuring::record;
 }
+
+/** Live MIDI from a device reaches a track listening to that device or to every device; the computer keyboard (0) reaches any. */
+bool liveFromSource (std::uint32_t filter, std::uint32_t source) noexcept { return filter == 0 || source == 0 || filter == source; }
+
+/** The track's playback parameters on a live event (D-W3-13); false when the key or velocity limits drop a note-on. */
+bool applyLivePlayback (const model::TrackPlayback& p, MidiEvent& e) noexcept
+{
+    const auto type = e.status & 0xf0;
+    if (type == 0x80 || type == 0x90)
+    {
+        if (e.isNoteOn())
+        {
+            const auto played = p.play (e.data1, e.data2, 0);
+            if (! played)
+                return false;
+            e.data1 = static_cast<std::uint8_t> (played->first);
+            e.data2 = static_cast<std::uint8_t> (played->second);
+        }
+        else
+            e.data1 = static_cast<std::uint8_t> (std::clamp (e.data1 + p.transpose, 0, 127));
+    }
+    if (p.outChannel > 0 && e.status < 0xf0)
+        e.status = static_cast<std::uint8_t> ((e.status & 0xf0) | (p.outChannel - 1));
+    return true;
+}
 } // namespace
 
 TransportSettings TransportSettings::fromDefaults (const model::MetronomeSettings& m)
@@ -514,6 +539,7 @@ RecordResult Engine::record (Ticks from)
             lane->trackId = ch.trackId;
             lane->trackName = name;
             lane->midiChannel = ch.midiChannel;
+            lane->midiSource = ch.midiSource;
             lane->events.resize (65536);
             newPass->midi.push_back (std::move (lane));
         }
@@ -589,9 +615,9 @@ RecordResult Engine::record (Ticks from)
 
 void Engine::stopRecording() { send ({ CommandType::stopRecording }); }
 
-bool Engine::sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame) noexcept
+bool Engine::sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame, std::uint32_t source) noexcept
 {
-    return midiIn.push ({ deviceFrame, status, data1, data2 });
+    return midiIn.push ({ deviceFrame, status, data1, data2, source });
 }
 
 bool Engine::audition (const Id& trackId, int channel, int pitch, int velocity, double seconds)
@@ -1638,9 +1664,12 @@ void Engine::renderInstrument (const ChannelPlan& channel, std::int64_t from, in
                 continue;
             if (channel.midiChannel != 0 && (e.status & 0x0f) + 1 != channel.midiChannel)
                 continue;
+            if (! liveFromSource (channel.midiSource, liveSources[static_cast<std::size_t> (i)]))
+                continue;
             auto copy = e;
             copy.offset -= offset;
-            add (copy);
+            if (applyLivePlayback (channel.playback, copy))
+                add (copy);
         }
 
     // Order by offset; at one offset, note-offs before note-ons. Insertion sort:
@@ -1698,6 +1727,7 @@ void Engine::takeLiveMidi (int numFrames) noexcept
         }
         laterMidi.reset();
         const auto at = in.frame < frameCounter ? 0 : static_cast<int> (in.frame - frameCounter);
+        liveSources[static_cast<std::size_t> (numLive)] = in.source;
         liveEvents[static_cast<std::size_t> (numLive++)] = { at, in.status, in.data1, in.data2 };
     }
 }
@@ -1727,6 +1757,8 @@ void Engine::captureSpan (const float* const* inputs, std::int64_t from, int off
             if (ev.offset < offset || ev.offset >= offset + frames || at < ms || at >= me)
                 continue;
             if (lane->midiChannel != 0 && (ev.status & 0x0f) + 1 != lane->midiChannel)
+                continue;
+            if (! liveFromSource (lane->midiSource, liveSources[static_cast<std::size_t> (i)]))
                 continue;
             const auto n = lane->count.load (std::memory_order_relaxed);
             if (n >= lane->events.size())
