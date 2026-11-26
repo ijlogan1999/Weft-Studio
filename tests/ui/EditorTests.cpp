@@ -438,3 +438,121 @@ TEST_CASE ("AT-ARR-40 nudge value, lengthen and shorten, slip, shuffle, grid lin
             listed = ! it.getItem().isTicked;
     CHECK (listed);
 }
+
+TEST_CASE ("AT-LIB-4 project audio: regions per file, preview, add, rename, delete, select unused, add to tracks", "[UI][AT-LIB-4]")
+{
+    Ui ui;
+    ui.main->run (Cmd::toggleSidePanel);
+    ui.settle();
+    ui.main->side().showTab (SidePanel::mediaTab);
+    ui.settle();
+    auto& media = ui.main->side().media();
+    const auto a = writeSine (ui.folder.path / "kick.wav", 0.5);
+    const auto b = writeSine (ui.folder.path / "pad.wav", 1.0);
+
+    // Add Audio File adds the files without regions, as one undo step.
+    media.chooseFiles = [&] (std::function<void (std::vector<std::filesystem::path>)> done) { done ({ a, b }); };
+    media.pick (MediaList::itemAddFile);
+    ui.settle();
+    REQUIRE (media.rows().size() == 2);
+    CHECK (ui.m().regions.empty());
+    CHECK (ui.studio.session().undoName() == "Add Audio File");
+    CHECK (media.selectedFiles().size() == 2);
+    const auto kick = media.rows()[0].hash, pad = media.rows()[1].hash;
+    CHECK (media.rows()[0].name == "kick.wav");
+    CHECK (media.rows()[0].sampleRate == ui.m().info.sampleRate);
+
+    // Add to New Tracks: a track per file with its region at the playhead; Add Region places one on the selected track.
+    media.selectFiles ({ kick });
+    ui.studio.locate (bar);
+    media.pick (MediaList::itemAddToTracks);
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Add to Tracks");
+    REQUIRE (media.rows()[0].regions == 1);
+    const auto kickTrack = ui.region (media.rows()[0].regionIds.front()).trackId;
+    CHECK (ui.m().track (kickTrack)->name == "kick");
+    CHECK (ui.region (media.rows()[0].regionIds.front()).start == bar);
+    ui.studio.selectTrack (kickTrack);
+    media.selectFiles ({ kick, pad });
+    ui.studio.locate (4 * bar);
+    media.pick (MediaList::itemAddRegion);
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Add Region");
+    CHECK (media.rows()[0].regions == 2);
+    REQUIRE (media.rows()[1].regions == 1);
+    const auto padRegion = media.rows()[1].regionIds.front();
+    CHECK (ui.region (padRegion).trackId == kickTrack);
+    CHECK (ui.region (padRegion).start > 4 * bar); // after the kick
+    CHECK (media.shownRows().size() == 2);
+
+    // Show All Regions lists them under their files; a click on a region row selects it; the triangle closes a file.
+    media.pick (MediaList::itemShowAll);
+    ui.settle();
+    REQUIRE (media.shownRows().size() == 5); // kick, its two regions, pad, its region
+    CHECK (media.shownRows()[1].region == media.rows()[0].regionIds[0]);
+    media.list().selectRow (4);
+    media.list().getListBoxModel()->listBoxItemClicked (4, mouse (media.list(), { 60.0f, 4.0f }));
+    CHECK (ui.studio.selection.ids() == std::vector<Id> { padRegion });
+    media.list().getListBoxModel()->listBoxItemClicked (0, mouse (media.list(), { 10.0f, 4.0f }));
+    CHECK_FALSE (media.isOpen (kick));
+    CHECK (media.shownRows().size() == 3);
+
+    // The path line and Play / Loop.
+    media.selectFiles ({ pad });
+    CHECK (media.path.getText().endsWith (".wav"));
+    media.playOrStop();
+    ui.renderAudio();
+    CHECK (ui.studio.engine().previewing());
+    CHECK (media.previewing() == pad);
+    CHECK (media.play.getButtonText() == "Stop");
+    media.playOrStop();
+    CHECK (media.previewing().empty());
+    CHECK (media.play.getButtonText() == "Play");
+
+    // Rename.
+    media.selectFiles ({ kick });
+    media.promptForText = [] (const juce::String&, const juce::String& current, std::function<void (juce::String)> done) {
+        CHECK (current == "kick.wav");
+        done ("Kick 1");
+    };
+    media.pick (MediaList::itemRename);
+    ui.settle();
+    CHECK (ui.m().mediaRef (kick)->originalName == "Kick 1");
+    CHECK (ui.studio.session().undoName() == "Rename Audio File");
+
+    // Select Unused finds files no region plays; Delete removes a file and its regions as one undo step.
+    media.selectFiles ({ pad });
+    media.pick (MediaList::itemDelete);
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Delete File");
+    CHECK (ui.m().mediaRef (pad) == nullptr);
+    CHECK (ui.m().region (padRegion) == nullptr);
+    CHECK (media.rows().size() == 1);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.m().mediaRef (pad) != nullptr);
+    CHECK (ui.m().region (padRegion) != nullptr);
+    media.pick (MediaList::itemSelectUnused);
+    CHECK (media.selectedFiles().empty());
+    CHECK (ui.studio.status == "No unused audio files.");
+    ui.studio.session().deleteRegions ({ padRegion });
+    ui.studio.edited();
+    ui.settle();
+    media.pick (MediaList::itemSelectUnused);
+    CHECK (media.selectedFiles() == std::vector<std::string> { pad });
+    CHECK_FALSE (ui.studio.session().removeMedia ({ kick })); // still played by regions
+    media.pick (MediaList::itemDelete);
+    ui.settle();
+    CHECK (ui.m().mediaRef (pad) == nullptr);
+
+    // The menu.
+    juce::StringArray names;
+    const auto menu = media.fileMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().text.isNotEmpty())
+            names.add (it.getItem().text);
+    for (auto name : { "Add Audio File...", "Add Region to Selected Track", "Add to New Tracks", "Rename...", "Select Unused", "Show All Regions", "Hide All Regions",
+                       "Show in File Manager" })
+        CHECK (names.contains (name));
+}

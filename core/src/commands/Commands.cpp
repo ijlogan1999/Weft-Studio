@@ -992,6 +992,35 @@ EditResult Session::addMedia (const model::MediaRef& media)
     return run ("Add Audio File", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ keys::media, media.hash }), media.toValue())); });
 }
 
+EditResult Session::renameMedia (const std::string& hash, const std::string& name)
+{
+    if (projection.mediaRef (hash) == nullptr)
+        return reject ("That audio file isn't in the project.");
+    if (name.empty())
+        return reject ("Audio files need a name.");
+    return run ("Rename Audio File", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ keys::media, hash, "originalName" }), Value (name))); });
+}
+
+EditResult Session::removeMedia (const std::vector<std::string>& hashes)
+{
+    if (hashes.empty())
+        return reject ("Select audio files.");
+    for (const auto& h : hashes)
+    {
+        if (projection.mediaRef (h) == nullptr)
+            return reject ("That audio file isn't in the project.");
+        for (const auto& [id, r] : projection.regions)
+            if (! r->isMidi && r->audio.media == h)
+                return reject ("A region still plays that file.");
+    }
+    return run (hashes.size() == 1 ? "Delete File" : "Delete Files", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& h : hashes)
+            good = good && w.remove (doc::path ({ keys::media, h }));
+        return wrote (good);
+    });
+}
+
 // Notes --------------------------------------------------------------------------
 
 namespace

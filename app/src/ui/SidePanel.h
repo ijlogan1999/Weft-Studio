@@ -10,6 +10,7 @@
 #include "weft/arrange/MediaBrowser.h"
 
 #include <mutex>
+#include <set>
 
 namespace weft::ui
 {
@@ -85,22 +86,79 @@ private:
     int historyPos = -1;
 };
 
-class MediaList final : public juce::Component, private juce::ListBoxModel, private juce::ChangeListener
+/** Project Audio (D-UI-40): the project's audio files, each with the regions that play it when opened,
+    Play and Loop preview with a volume, and an Audio File menu. */
+class MediaList final : public juce::Component, private juce::ListBoxModel, private juce::ChangeListener, private juce::Timer
 {
 public:
     explicit MediaList (Studio& studio);
     ~MediaList() override;
-    void resized() override { box.setBounds (getLocalBounds()); }
+    void resized() override;
+    void paint (juce::Graphics&) override;
     const std::vector<arrange::MediaUsage>& rows() const noexcept { return items; }
 
+    /** A line of the list: a file, or (with region set) one of its regions. */
+    struct Row
+    {
+        std::size_t file = 0;
+        Id region;
+    };
+    const std::vector<Row>& shownRows() const noexcept { return shown; }
+    juce::ListBox& list() noexcept { return box; }
+    std::vector<std::string> selectedFiles() const;
+    void selectFiles (const std::vector<std::string>& hashes);
+    bool isOpen (const std::string& hash) const { return open.contains (hash); }
+    void setOpen (const std::string& hash, bool show);
+    void showAllRegions (bool show);
+
+    enum MenuItem
+    {
+        itemAddFile = 1,
+        itemAddRegion,
+        itemAddToTracks,
+        itemRename,
+        itemDelete,
+        itemSelectUnused,
+        itemShowAll,
+        itemHideAll,
+        itemReveal
+    };
+    juce::PopupMenu fileMenu() const;
+    void pick (int item);
+    /** Play previews the selected file from its start, or stops the preview. */
+    void playOrStop();
+    /** The file being previewed, empty when none. */
+    const std::string& previewing() const noexcept { return previewHash; }
+
+    juce::TextButton play { "Play" }, loop { "Loop" }, menuButton { "Audio File" };
+    juce::Slider volume { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
+    juce::Label path;
+    /** Rename asks for the new name here (tests answer at once). */
+    std::function<void (const juce::String& title, const juce::String& current, std::function<void (juce::String)>)> promptForText = askForText;
+    /** Add Audio File picks files here (tests answer at once). */
+    std::function<void (std::function<void (std::vector<std::filesystem::path>)>)> chooseFiles;
+
 private:
-    int getNumRows() override { return static_cast<int> (items.size()); }
+    int getNumRows() override { return static_cast<int> (shown.size()); }
     void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
+    void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
+    void selectedRowsChanged (int lastRowSelected) override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void timerCallback() override;
+    void rebuild();
+    std::filesystem::path fileFor (const std::string& hash) const;
+    bool startPreview (const std::string& hash);
+    void addRegions (bool newTracks);
+    void deleteFiles();
 
     Studio& studio;
     juce::ListBox box;
     std::vector<arrange::MediaUsage> items;
+    std::vector<Row> shown;
+    std::set<std::string> open;
+    std::string previewHash;
+    std::unique_ptr<juce::FileChooser> chooser;
 };
 
 class SidePanel final : public juce::Component, private juce::ChangeListener

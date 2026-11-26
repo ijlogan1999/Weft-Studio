@@ -266,6 +266,11 @@ public:
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);
+    /** Project Audio › Rename (D-UI-40): the name the file shows; its content and hash stay. */
+    EditResult renameMedia (const std::string& hash, const std::string& name);
+    /** Removes audio files from the project (D-UI-40). Refused while a region still plays one. The file on
+        disk stays, so undo brings it back. */
+    EditResult removeMedia (const std::vector<std::string>& hashes);
 
     // Recording -------------------------------------------------------------------
     /** Adds the recorded media, regions and take folders as one undo step "Record" (W-1a step 8). */

@@ -63,6 +63,11 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
             missing.push_back (file.filename().string());
             continue;
         }
+        if (isMidiFile (file) && target.mediaOnly)
+        {
+            out.rejected.push_back (file.filename().string());
+            continue;
+        }
         if (isMidiFile (file))
         {
             if (auto data = media::readMidiFile (file, &error))
@@ -166,7 +171,7 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
 
     const bool emptyProject = session.model().regions.empty();
     const auto at = std::max<Ticks> (target.at, 0);
-    session.beginGesture ("Import");
+    session.beginGesture (target.mediaOnly ? "Add Audio File" : "Import");
 
     // Audio ----------------------------------------------------------------------------
     const auto* dropTrack = session.model().track (target.trackId);
@@ -175,6 +180,8 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
     for (const auto& a : audio)
     {
         session.addMedia (a.ref);
+        if (target.mediaOnly)
+            continue;
         Id track = target.trackId;
         Ticks start = at;
         if (ontoTrack && ! a.ownTrack)

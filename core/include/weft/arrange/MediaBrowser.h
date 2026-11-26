@@ -16,6 +16,8 @@ struct MediaUsage
     std::string name;     // original file name, or "(missing)" when only regions refer to it
     double seconds = 0.0; // duration at its sample rate
     int regions = 0;      // regions that play it
+    std::vector<Id> regionIds; // those regions, by position (D-UI-40)
+    int sampleRate = 0, channels = 0, bitDepth = 0; // 0 when missing
 };
 
 /** Sorted by name, then hash. */
