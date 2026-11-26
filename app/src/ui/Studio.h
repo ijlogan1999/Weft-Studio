@@ -235,6 +235,8 @@ public:
     bool silencedBySolo (const Id& trackId) const;
     /** The last marker at or before the playhead: what Rename Marker and Delete Marker act on (D-UI-26). */
     const model::Marker* markerAtPlayhead() const;
+    /** Go to Marker Number (D-UI-39): the n-th marker from the start, 1-based. */
+    bool goToMarkerNumber (int number);
 
     int trackHeight (const Id& trackId) const;
     void setTrackHeight (const Id& trackId, int height);

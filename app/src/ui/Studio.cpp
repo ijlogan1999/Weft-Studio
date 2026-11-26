@@ -1414,6 +1414,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::zoomVerticalIn: case Cmd::zoomVerticalOut: case Cmd::saveZoom1: case Cmd::saveZoom2: case Cmd::saveZoom3: case Cmd::recallZoom1: case Cmd::recallZoom2: case Cmd::recallZoom3: case Cmd::navigateBack: case Cmd::navigateForward: case Cmd::pageUp: case Cmd::pageDown: case Cmd::pageLeft: case Cmd::pageRight: case Cmd::zoomTrack:
         case Cmd::selectPreviousTrack: case Cmd::selectNextTrack: case Cmd::selectInsideCycle: case Cmd::selectMutedRegions: case Cmd::selectSameColor: case Cmd::selectFirst: case Cmd::selectLast: case Cmd::togglePreviousRegion: case Cmd::toggleNextRegion: case Cmd::scrollToSelection: case Cmd::moveToPlayhead: case Cmd::moveToPlayheadSelectNext: case Cmd::regionStartToPlayhead: case Cmd::regionEndToPlayhead: case Cmd::splitAtCycle:
         case Cmd::automationAllOff: case Cmd::automationAllRead: case Cmd::automationAllTouch: case Cmd::automationAllLatch: case Cmd::automationOffRead: case Cmd::automationLatchRead: case Cmd::cycleAutomationParameter:
+        case Cmd::markerForSelection: case Cmd::cycleToMarker: case Cmd::cycleToPreviousMarker: case Cmd::cycleToNextMarker: case Cmd::previousMarkerSetLocators: case Cmd::nextMarkerSetLocators: case Cmd::goToMarkerNumber:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1961,6 +1962,59 @@ bool Studio::perform (Cmd command)
             locate (*to);
             break;
         }
+        case Cmd::markerForSelection:
+        {
+            // D-UI-39: a marker at the selected regions' start, named after the first of them.
+            const auto span = selection.span (m);
+            if (! span)
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            std::string name;
+            Ticks first = 0;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && (name.empty() || r->start < first))
+                    name = r->name, first = r->start;
+            const auto id = s.addMarker (static_cast<Ticks> (span->first), name);
+            edited();
+            return id.has_value();
+        }
+        case Cmd::cycleToMarker:
+        case Cmd::cycleToPreviousMarker:
+        case Cmd::cycleToNextMarker:
+        case Cmd::previousMarkerSetLocators:
+        case Cmd::nextMarkerSetLocators:
+        {
+            // D-UI-39: a marker's range runs to the next marker (the project end after the last).
+            const auto markers = arrange::markersInOrder (m);
+            if (markers.empty())
+            {
+                setStatus ("There are no markers.");
+                return false;
+            }
+            const auto now = playhead();
+            int at = -1; // the marker at or before the playhead
+            for (std::size_t i = 0; i < markers.size(); ++i)
+                if (markers[i]->pos <= now)
+                    at = static_cast<int> (i);
+            int pick = at;
+            if (command == Cmd::cycleToPreviousMarker || command == Cmd::previousMarkerSetLocators)
+                pick = at < 0 ? -1 : (markers[static_cast<std::size_t> (at)]->pos == now || command == Cmd::cycleToPreviousMarker ? at - 1 : at);
+            else if (command == Cmd::cycleToNextMarker || command == Cmd::nextMarkerSetLocators)
+                pick = at + 1;
+            if (pick < 0 || pick >= static_cast<int> (markers.size()))
+                return false;
+            const auto start = markers[static_cast<std::size_t> (pick)]->pos;
+            const auto end = static_cast<std::size_t> (pick) + 1 < markers.size() ? markers[static_cast<std::size_t> (pick) + 1]->pos
+                                                                                  : std::max (commands::projectEndTick (m), start + 3840);
+            const bool enable = command == Cmd::cycleToMarker || command == Cmd::cycleToPreviousMarker || command == Cmd::cycleToNextMarker || m.info.cycle.enabled;
+            if (! check (s.setCycle (enable, start, end)))
+                return false;
+            if (command != Cmd::cycleToMarker)
+                locate (start);
+            break;
+        }
         case Cmd::snapToggle: snapEnabled = ! snapEnabled; break;
         case Cmd::tapTempo: return tapTempo (juce::Time::getMillisecondCounterHiRes());
         case Cmd::showHiddenTracks:
@@ -1992,6 +2046,7 @@ bool Studio::perform (Cmd command)
         case Cmd::configureTrackHeader:
         case Cmd::togglePluginWindows:
         case Cmd::scrollToSelection:
+        case Cmd::goToMarkerNumber:
         case Cmd::goToPosition:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
@@ -2533,6 +2588,19 @@ bool Studio::perform (Cmd command)
             break;
         }
     }
+    sendChangeMessage();
+    return true;
+}
+
+bool Studio::goToMarkerNumber (int number)
+{
+    const auto to = number > 0 ? arrange::markerNumber (model(), number) : std::nullopt;
+    if (! to)
+    {
+        setStatus ("There's no marker " + juce::String (number) + ".");
+        return false;
+    }
+    locate (*to);
     sendChangeMessage();
     return true;
 }
@@ -4041,7 +4109,8 @@ bool Studio::changesDocument (Cmd command)
         Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
         Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip, Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext,
         Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle, Cmd::automationAllOff, Cmd::automationAllRead,
-        Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead, Cmd::automationLatchRead,
+        Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead, Cmd::automationLatchRead, Cmd::markerForSelection,
+        Cmd::cycleToMarker, Cmd::cycleToPreviousMarker, Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

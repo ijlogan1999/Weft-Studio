@@ -427,6 +427,14 @@ void MainComponent::handleUiCommand (Cmd command)
         tracks().showHeaderOptions();
     else if (command == Cmd::togglePluginWindows)
         plugins.toggleAll();
+    else if (command == Cmd::goToMarkerNumber)
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        askForText ("Go to Marker Number", "1", [self] (juce::String text) {
+            if (self != nullptr)
+                self->studio.goToMarkerNumber (text.getIntValue());
+        });
+    }
     else if (command == Cmd::scrollToSelection)
     {
         // D-W3-12: the selection's start comes into view (a tenth in from the left) and its first track's row.
@@ -988,6 +996,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 }
                 return sub;
             };
+            menu.addSubMenu ("Markers", subMenu ({ Cmd::markerForSelection, Cmd::goToMarkerNumber, Cmd::cycleToMarker, Cmd::cycleToPreviousMarker,
+                                                   Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators })); // D-UI-39
             menu.addSubMenu ("Go To", subMenu ({ Cmd::goToPosition, Cmd::goToCycleStart, Cmd::goToCycleEnd, Cmd::goToSelectionStart, Cmd::goToSelectionEnd,
                                                  Cmd::goToLastLocate }));
             menu.addSubMenu ("Play From", subMenu ({ Cmd::playFromStart, Cmd::playFromCycleStart, Cmd::playFromSelection, Cmd::playFromWindowEdge,

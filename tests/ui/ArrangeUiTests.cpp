@@ -2388,3 +2388,62 @@ TEST_CASE ("AT-ARR-42 region selection commands, move and trim to the playhead, 
     CHECK (ui.studio.view.tickToX (200.0 * bar) >= 0.0);
     CHECK (ui.studio.view.tickToX (200.0 * bar) < ui.studio.timelineWidth);
 }
+
+TEST_CASE ("AT-ARR-43 marker for the selection, cycle to a marker's range, markers and locators, go to marker number", "[UI][AT-ARR-43]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const Ticks bar = 3840;
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto region = s.createMidiRegion (keys, 6 * bar, 2 * bar).value();
+    REQUIRE (s.setRegionName (region, "Bridge"));
+    REQUIRE (s.addMarker (0, "Intro"));
+    REQUIRE (s.addMarker (2 * bar, "Verse"));
+    REQUIRE (s.addMarker (4 * bar, "Chorus"));
+    ui.studio.edited();
+    ui.settle();
+    const auto& cycle = [&] { return ui.m().info.cycle; };
+
+    // Shift+; adds a marker at the selected regions' start, named after the first.
+    ui.studio.selection.set ({ region });
+    REQUIRE (ui.key (';', juce::ModifierKeys::shiftModifier, ':'));
+    const auto markers = arrange::markersInOrder (ui.m());
+    REQUIRE (markers.size() == 4);
+    CHECK (markers.back()->pos == 6 * bar);
+    CHECK (markers.back()->name == "Bridge");
+
+    // Set Cycle to Marker: from the marker at or before the playhead to the next one; cycle on.
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::cycleToMarker));
+    CHECK (cycle().enabled);
+    CHECK (cycle().start == 2 * bar);
+    CHECK (cycle().end == 4 * bar);
+    CHECK (ui.studio.playhead() == 3 * bar); // the playhead stays
+    REQUIRE (ui.studio.perform (Cmd::cycleToNextMarker));
+    CHECK ((cycle().start == 4 * bar && cycle().end == 6 * bar));
+    CHECK (ui.studio.playhead() == 4 * bar);
+    REQUIRE (ui.studio.perform (Cmd::cycleToPreviousMarker));
+    CHECK ((cycle().start == 2 * bar && cycle().end == 4 * bar));
+    // The last marker's range runs to the project end.
+    ui.studio.locate (7 * bar);
+    REQUIRE (ui.studio.perform (Cmd::cycleToMarker));
+    CHECK (cycle().start == 6 * bar);
+    CHECK (cycle().end == std::max<Ticks> (commands::projectEndTick (ui.m()), 7 * bar));
+
+    // Previous / Next Marker and Set Locators keep Cycle as it is.
+    REQUIRE (s.setCycle (false, 0, bar));
+    ui.studio.edited();
+    ui.studio.locate (bar);
+    REQUIRE (ui.key ('.', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::altModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.playhead() == 2 * bar);
+    CHECK ((cycle().start == 2 * bar && cycle().end == 4 * bar && ! cycle().enabled));
+    REQUIRE (ui.studio.perform (Cmd::previousMarkerSetLocators));
+    CHECK (ui.studio.playhead() == 0);
+    CHECK ((cycle().start == 0 && cycle().end == 2 * bar));
+
+    // Go to Marker Number.
+    CHECK (commandInfo (Cmd::goToMarkerNumber).shortcut == "Ctrl+/");
+    REQUIRE (ui.studio.goToMarkerNumber (3));
+    CHECK (ui.studio.playhead() == 4 * bar);
+    CHECK_FALSE (ui.studio.goToMarkerNumber (9));
+}
