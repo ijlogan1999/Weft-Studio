@@ -697,6 +697,48 @@ std::optional<double> Studio::automationValue (const Id& trackId, const model::A
     return eng->automationValue (trackId, target);
 }
 
+Studio::ViewSnapshot Studio::viewSnapshot() const
+{
+    ViewSnapshot v;
+    v.originTick = view.originTick;
+    v.pixelsPerTick = view.pixelsPerTick;
+    v.heights = heights;
+    v.scrollY = verticalScroll ? verticalScroll() : 0;
+    return v;
+}
+
+void Studio::restoreView (const ViewSnapshot& v)
+{
+    view.originTick = v.originTick;
+    view.pixelsPerTick = std::clamp (v.pixelsPerTick, arrange::TimelineView::minPixelsPerTick, arrange::TimelineView::maxPixelsPerTick);
+    heights = v.heights;
+    zoomedFrom.clear();
+    if (setVerticalScroll)
+        setVerticalScroll (v.scrollY);
+    sendChangeMessage();
+}
+
+void Studio::rememberView()
+{
+    backViews.push_back (viewSnapshot());
+    if (backViews.size() > 50)
+        backViews.erase (backViews.begin());
+    forwardViews.clear();
+}
+
+void Studio::scaleTrackHeights (double factor)
+{
+    for (const auto& id : model().trackOrder)
+    {
+        const auto h = trackHeight (id);
+        auto next = juce::roundToInt (h * factor);
+        if (next == h)
+            next += factor > 1.0 ? 1 : -1; // always a visible step
+        heights[id] = std::clamp (next, minTrackHeight, maxTrackHeight);
+    }
+    sendChangeMessage();
+}
+
 void Studio::setAllTrackHeights (int height)
 {
     for (const auto& id : model().trackOrder)
@@ -1296,6 +1338,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::nextTool: case Cmd::previousTool:
         case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff: case Cmd::togglePluginWindows:
         case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip: case Cmd::cycleMixerMode:
+        case Cmd::zoomVerticalIn: case Cmd::zoomVerticalOut: case Cmd::saveZoom1: case Cmd::saveZoom2: case Cmd::saveZoom3: case Cmd::recallZoom1: case Cmd::recallZoom2: case Cmd::recallZoom3: case Cmd::navigateBack: case Cmd::navigateForward: case Cmd::pageUp: case Cmd::pageDown: case Cmd::pageLeft: case Cmd::pageRight: case Cmd::zoomTrack:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1676,9 +1719,80 @@ bool Studio::perform (Cmd command)
                 }
             break;
         case Cmd::setCycleToSelection: return check (s.setCycleToRegions (ids));
-        case Cmd::zoomToFit: zoomToFit(); break;
-        case Cmd::zoomIn: view.zoomAround (1.5, view.tickToX (static_cast<double> (playhead()))); break;
-        case Cmd::zoomOut: view.zoomAround (1.0 / 1.5, view.tickToX (static_cast<double> (playhead()))); break;
+        case Cmd::zoomToFit: rememberView(); zoomToFit(); break;
+        case Cmd::zoomIn: rememberView(); view.zoomAround (1.5, view.tickToX (static_cast<double> (playhead()))); break;
+        case Cmd::zoomOut: rememberView(); view.zoomAround (1.0 / 1.5, view.tickToX (static_cast<double> (playhead()))); break;
+        case Cmd::zoomVerticalIn:
+        case Cmd::zoomVerticalOut:
+            rememberView();
+            scaleTrackHeights (command == Cmd::zoomVerticalIn ? 1.25 : 0.8);
+            break;
+        case Cmd::saveZoom1:
+        case Cmd::saveZoom2:
+        case Cmd::saveZoom3:
+        {
+            const auto slot = static_cast<std::size_t> (static_cast<int> (command) - static_cast<int> (Cmd::saveZoom1));
+            savedZooms[slot] = viewSnapshot();
+            setStatus ("Saved as Zoom " + juce::String (static_cast<int> (slot) + 1) + ".");
+            return true;
+        }
+        case Cmd::recallZoom1:
+        case Cmd::recallZoom2:
+        case Cmd::recallZoom3:
+        {
+            const auto slot = static_cast<std::size_t> (static_cast<int> (command) - static_cast<int> (Cmd::recallZoom1));
+            if (! savedZooms[slot])
+            {
+                setStatus ("Zoom " + juce::String (static_cast<int> (slot) + 1) + " isn't saved yet.");
+                return false;
+            }
+            rememberView();
+            restoreView (*savedZooms[slot]);
+            break;
+        }
+        case Cmd::navigateBack:
+        case Cmd::navigateForward:
+        {
+            auto& from = command == Cmd::navigateBack ? backViews : forwardViews;
+            auto& to = command == Cmd::navigateBack ? forwardViews : backViews;
+            if (from.empty())
+                return false;
+            to.push_back (viewSnapshot());
+            const auto v = from.back();
+            from.pop_back();
+            restoreView (v);
+            break;
+        }
+        case Cmd::pageLeft:
+        case Cmd::pageRight:
+            view.originTick = std::max (0.0, view.originTick + (command == Cmd::pageRight ? 1.0 : -1.0) * timelineWidth / view.pixelsPerTick);
+            break;
+        case Cmd::pageUp:
+        case Cmd::pageDown:
+            if (verticalScroll && setVerticalScroll)
+                setVerticalScroll (std::max (0, verticalScroll() + juce::roundToInt ((command == Cmd::pageDown ? 1.0 : -1.0) * timelineHeight)));
+            break;
+        case Cmd::zoomTrack:
+        {
+            // D-UI-38: the selected track grows to fill most of the view; again, back to its height.
+            const auto id = local.selectedTrack;
+            if (model().track (id) == nullptr)
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            if (const auto it = zoomedFrom.find (id); it != zoomedFrom.end())
+            {
+                heights[id] = it->second;
+                zoomedFrom.erase (it);
+            }
+            else
+            {
+                zoomedFrom[id] = trackHeight (id);
+                heights[id] = std::clamp (juce::roundToInt (timelineHeight * 0.75), std::max (trackHeight (id), minTrackHeight), maxTrackHeight);
+            }
+            break;
+        }
         case Cmd::escape: tool = Tool::pointer; break;
         case Cmd::nextTool:
         case Cmd::previousTool:

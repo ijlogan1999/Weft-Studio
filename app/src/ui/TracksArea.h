@@ -312,6 +312,11 @@ public:
     /** The header column's width (Studio::header.width); drag its right edge to resize, double-click for the default. */
     int headerWidth() const noexcept { return studio.header.width; }
     juce::Component& headerResizer() noexcept { return resizer; }
+    /** The zoom sliders in the corner above the headers (D-UI-38). */
+    juce::Slider horizontalZoom, verticalZoom;
+    /** The horizontal slider's 0..1 position for a zoom, and back (a log scale). */
+    static double pixelsPerTickFor (double position);
+    static double positionFor (double pixelsPerTick);
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
@@ -322,6 +327,7 @@ private:
     void timerCallback() override;
     void rebuildHeaders();
     void layoutHeaders();
+    void syncZoomSliders();
 
     Studio& studio;
     Ruler rulerComponent;

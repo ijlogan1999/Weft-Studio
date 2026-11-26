@@ -1191,7 +1191,11 @@ void TrackHeader::mouseDrag (const juce::MouseEvent& e)
 {
     if (resizeFrom > 0)
     {
-        studio.setTrackHeight (trackId, resizeFrom + e.getDistanceFromDragStartY());
+        // Ctrl+drag sets every track's height (D-UI-38).
+        if (e.mods.isCommandDown())
+            studio.setAllTrackHeights (resizeFrom + e.getDistanceFromDragStartY());
+        else
+            studio.setTrackHeight (trackId, resizeFrom + e.getDistanceFromDragStartY());
         return;
     }
     // Dragging a header reorders the tracks (F-TRK-7); the master stays where it is.
@@ -2106,7 +2110,11 @@ std::optional<juce::Point<float>> Timeline::collaboratorPointer (const std::stri
 
 void Timeline::mouseExit (const juce::MouseEvent&) { studio.setPointer (std::nullopt); }
 
-void Timeline::resized() { studio.timelineWidth = getWidth(); }
+void Timeline::resized()
+{
+    studio.timelineWidth = getWidth();
+    studio.timelineHeight = getHeight();
+}
 
 void Timeline::startRegionDrag (const model::Region& r, Zone zone, juce::Point<float> p, juce::ModifierKeys mods)
 {
@@ -2646,12 +2654,63 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
     vertical.setTitle ("Vertical scroll");
     horizontal.setTitle ("Horizontal scroll");
     lanes.onScroll = [this] { resized(); };
+    // Page Up/Down and the saved zooms reach the vertical scroll through these (D-UI-38).
+    studio.verticalScroll = [this] { return lanes.scrollY; };
+    studio.setVerticalScroll = [this] (int y) {
+        lanes.scrollY = std::clamp (y, 0, std::max (0, lanes.contentHeight() + defaultTrackHeight - lanes.getHeight()));
+        resized();
+        repaint();
+    };
+    // The zoom sliders in the corner (D-UI-38): horizontal on a log scale, vertical as every track's height.
+    for (auto* sl : { &horizontalZoom, &verticalZoom })
+    {
+        sl->setSliderStyle (juce::Slider::LinearHorizontal);
+        sl->setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        sl->onDragStart = [this] { studio.rememberView(); };
+        makeFocusable (*sl);
+        addAndMakeVisible (*sl);
+    }
+    describe (horizontalZoom, "Horizontal zoom");
+    describe (verticalZoom, "Vertical zoom", "Every track's height");
+    horizontalZoom.setRange (0.0, 1.0);
+    verticalZoom.setRange (minTrackHeight, maxTrackHeight, 1.0);
+    horizontalZoom.onValueChange = [this] {
+        studio.view.pixelsPerTick = pixelsPerTickFor (horizontalZoom.getValue());
+        resized();
+        repaint();
+    };
+    verticalZoom.onValueChange = [this] { studio.setAllTrackHeights (juce::roundToInt (verticalZoom.getValue())); };
     studio.addChangeListener (this);
     rebuildHeaders();
     startTimerHz (30);
 }
 
-TracksArea::~TracksArea() { studio.removeChangeListener (this); }
+double TracksArea::pixelsPerTickFor (double position)
+{
+    const auto lo = std::log (arrange::TimelineView::minPixelsPerTick), hi = std::log (arrange::TimelineView::maxPixelsPerTick);
+    return std::exp (lo + std::clamp (position, 0.0, 1.0) * (hi - lo));
+}
+
+double TracksArea::positionFor (double pixelsPerTick)
+{
+    const auto lo = std::log (arrange::TimelineView::minPixelsPerTick), hi = std::log (arrange::TimelineView::maxPixelsPerTick);
+    return std::clamp ((std::log (pixelsPerTick) - lo) / (hi - lo), 0.0, 1.0);
+}
+
+void TracksArea::syncZoomSliders()
+{
+    if (! horizontalZoom.isMouseButtonDown())
+        horizontalZoom.setValue (positionFor (studio.view.pixelsPerTick), juce::dontSendNotification);
+    if (! verticalZoom.isMouseButtonDown() && ! studio.model().trackOrder.empty())
+        verticalZoom.setValue (studio.trackHeight (studio.model().trackOrder.front()), juce::dontSendNotification);
+}
+
+TracksArea::~TracksArea()
+{
+    studio.removeChangeListener (this);
+    studio.verticalScroll = nullptr;
+    studio.setVerticalScroll = nullptr;
+}
 
 void TracksArea::rebuildHeaders()
 {
@@ -2680,6 +2739,7 @@ void TracksArea::layoutHeaders()
 
 void TracksArea::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    syncZoomSliders();
     rebuildHeaders();
     resized();
     repaint();
@@ -2780,6 +2840,14 @@ void TracksArea::resized()
     headerColumn.setBounds (r.removeFromLeft (headerWidth()));
     resizer.setBounds (headerWidth() - space::half, headerColumn.getY(), space::s1, headerColumn.getHeight());
     addTrack.setBounds (headerWidth() - space::s1 - size::control, (Ruler::rulerHeight - size::control) / 2, size::control, size::control);
+    // The zoom sliders share the caption row, between "Tracks" and +.
+    {
+        auto zoomRow = juce::Rectangle<int> (64, (Ruler::rulerHeight - 16) / 2, addTrack.getX() - space::half - 64, 16);
+        const auto each = std::max (0, (zoomRow.getWidth() - space::half) / 2);
+        horizontalZoom.setBounds (zoomRow.removeFromLeft (each));
+        zoomRow.removeFromLeft (space::half);
+        verticalZoom.setBounds (zoomRow.removeFromLeft (each));
+    }
     lanes.setBounds (r);
     layoutHeaders();
     vertical.setRangeLimits (0.0, std::max<double> (lanes.contentHeight() + defaultTrackHeight, lanes.getHeight()), juce::dontSendNotification);

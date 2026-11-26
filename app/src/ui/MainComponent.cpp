@@ -1000,6 +1000,22 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                             Cmd::toggleTheme })
                 add (c);
             menu.addItem (static_cast<int> (Cmd::gridLines) + 1, commandInfo (Cmd::gridLines).name, true, studio.gridLines);
+            {
+                // D-UI-38: vertical zoom, saved zooms, navigation and paging.
+                juce::PopupMenu zoom;
+                for (auto c : { Cmd::zoomVerticalIn, Cmd::zoomVerticalOut, Cmd::zoomTrack, Cmd::saveZoom1, Cmd::saveZoom2, Cmd::saveZoom3, Cmd::recallZoom1,
+                                Cmd::recallZoom2, Cmd::recallZoom3, Cmd::navigateBack, Cmd::navigateForward, Cmd::pageUp, Cmd::pageDown, Cmd::pageLeft, Cmd::pageRight })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    if (c == Cmd::saveZoom1 || c == Cmd::recallZoom1 || c == Cmd::navigateBack || c == Cmd::pageUp)
+                        zoom.addSeparator();
+                    zoom.addItem (item);
+                }
+                menu.addSubMenu ("Zoom and Navigation", zoom);
+            }
             break;
         case 6:
         {

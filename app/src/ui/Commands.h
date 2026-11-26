@@ -75,7 +75,10 @@ enum class Cmd
     // D-W6-13: mixer commands
     unmuteAll, clearRecallSolo, soloSelectedRegions, monitorTrack, copyChannelStrip, pasteChannelStrip,
     // D-W6-14
-    cycleMixerMode
+    cycleMixerMode,
+    // D-UI-38: zoom and navigation
+    zoomVerticalIn, zoomVerticalOut, saveZoom1, saveZoom2, saveZoom3, recallZoom1, recallZoom2, recallZoom3, navigateBack, navigateForward,
+    pageUp, pageDown, pageLeft, pageRight, zoomTrack
 };
 
 struct CommandInfo

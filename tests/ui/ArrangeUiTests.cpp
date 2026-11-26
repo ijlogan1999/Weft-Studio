@@ -2193,3 +2193,86 @@ TEST_CASE ("AT-TRK-22 Configure Track Header: optional buttons, hidden parts, co
     ui.settle();
     CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth);
 }
+
+TEST_CASE ("AT-ARR-41 zoom sliders, vertical zoom, saved zooms, navigation back and forward, paging, zoom one track", "[UI][AT-ARR-41]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    for (int i = 0; i < 12; ++i)
+        REQUIRE (s.createTrack (model::TrackKind::audio, "T" + std::to_string (i)));
+    ui.studio.edited();
+    ui.settle();
+    auto& tracks = ui.main->tracks();
+    const auto first = ui.m().trackOrder.front();
+    auto& view = ui.studio.view;
+
+    // The horizontal slider is the zoom, on a log scale; the vertical one sets every track's height.
+    CHECK (tracks.horizontalZoom.getValue() == Catch::Approx (TracksArea::positionFor (view.pixelsPerTick)));
+    CHECK (TracksArea::pixelsPerTickFor (TracksArea::positionFor (0.01)) == Catch::Approx (0.01));
+    tracks.horizontalZoom.setValue (0.75, juce::sendNotificationSync);
+    CHECK (view.pixelsPerTick == Catch::Approx (TracksArea::pixelsPerTickFor (0.75)));
+    tracks.verticalZoom.setValue (80, juce::sendNotificationSync);
+    ui.settle();
+    for (const auto& id : ui.m().trackOrder)
+        CHECK (ui.studio.trackHeight (id) == 80);
+    CHECK (tracks.horizontalZoom.getRight() <= tracks.addTrackButton().getX());
+
+    // Ctrl+Down / Ctrl+Up: every track taller / shorter.
+    REQUIRE (ui.key (juce::KeyPress::downKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (ui.studio.trackHeight (first) == 100);
+    REQUIRE (ui.key (juce::KeyPress::upKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (ui.studio.trackHeight (first) == 80);
+
+    // Save as Zoom 1, change the view, Recall Zoom 1 brings it back; an unsaved slot only says so.
+    view.originTick = 3840 * 4;
+    REQUIRE (ui.studio.perform (Cmd::saveZoom1));
+    const auto saved = view.pixelsPerTick;
+    REQUIRE (ui.studio.perform (Cmd::zoomIn));
+    REQUIRE (ui.studio.perform (Cmd::zoomVerticalIn));
+    view.originTick = 0;
+    REQUIRE (ui.key ('1', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::altModifier));
+    CHECK (view.pixelsPerTick == Catch::Approx (saved));
+    CHECK (view.originTick == Catch::Approx (3840 * 4));
+    CHECK (ui.studio.trackHeight (first) == 80);
+    CHECK_FALSE (ui.studio.perform (Cmd::recallZoom2));
+
+    // Navigation: Back undoes the last zoom change; Forward redoes it.
+    REQUIRE (ui.studio.perform (Cmd::navigateBack));
+    CHECK (ui.studio.trackHeight (first) == 100);
+    REQUIRE (ui.studio.perform (Cmd::navigateBack));
+    CHECK (ui.studio.trackHeight (first) == 80);
+    CHECK (view.pixelsPerTick == Catch::Approx (saved * 1.5));
+    REQUIRE (ui.studio.perform (Cmd::navigateForward));
+    CHECK (ui.studio.trackHeight (first) == 100);
+
+    // Page Left/Right move the view by its width; Page Up/Down scroll the tracks by the view's height.
+    view.originTick = 0;
+    REQUIRE (ui.key (juce::KeyPress::pageDownKey, juce::ModifierKeys::altModifier));
+    CHECK (view.tickToX (0) == Catch::Approx (-ui.studio.timelineWidth));
+    REQUIRE (ui.studio.perform (Cmd::pageLeft));
+    CHECK (view.originTick == Catch::Approx (0.0));
+    REQUIRE (ui.studio.perform (Cmd::pageLeft));
+    CHECK (view.originTick == Catch::Approx (0.0)); // never before the start
+    REQUIRE (ui.key (juce::KeyPress::pageDownKey));
+    CHECK (tracks.timeline().scrollY > 0);
+    REQUIRE (ui.key (juce::KeyPress::pageUpKey));
+    CHECK (tracks.timeline().scrollY == 0);
+
+    // Zoom Selected Track: the selected track grows; again, it goes back.
+    ui.studio.selectTrack (first);
+    const auto before = ui.studio.trackHeight (first);
+    REQUIRE (ui.studio.perform (Cmd::zoomTrack));
+    CHECK (ui.studio.trackHeight (first) > before);
+    CHECK (ui.studio.trackHeight (ui.m().trackOrder[1]) == before);
+    REQUIRE (ui.studio.perform (Cmd::zoomTrack));
+    CHECK (ui.studio.trackHeight (first) == before);
+
+    // Ctrl+drag on a header's lower edge sets every track's height.
+    auto* header = tracks.headers().front().get();
+    const auto edge = juce::Point<float> (40.0f, static_cast<float> (ui.studio.trackHeight (first) - 2));
+    header->mouseDown (mouse (*header, edge, juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::leftButtonModifier)));
+    header->mouseDrag (mouse (*header, edge + juce::Point<float> (0.0f, 20.0f), juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::leftButtonModifier), 1, edge));
+    header->mouseUp (mouse (*header, edge + juce::Point<float> (0.0f, 20.0f), juce::ModifierKeys (juce::ModifierKeys::commandModifier), 1, edge));
+    ui.settle();
+    CHECK (ui.studio.trackHeight (ui.m().trackOrder[5]) == before + 20);
+}

@@ -33,6 +33,7 @@
 
 #include <juce_events/juce_events.h>
 
+#include <array>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -347,6 +348,24 @@ public:
     std::function<void (Cmd)> uiCommand;
     /** Width of the visible timeline in pixels, for zoom to fit. */
     double timelineWidth = 800.0;
+    /** The tracks area's visible lane height and vertical scroll, through the tracks area (Page Up/Down, zooms). */
+    double timelineHeight = 400.0;
+    std::function<int()> verticalScroll;
+    std::function<void (int)> setVerticalScroll;
+    /** Zoom and scroll as a whole (D-UI-38): Save/Recall Zoom 1-3 and Navigation Back/Forward. */
+    struct ViewSnapshot
+    {
+        double originTick = 0, pixelsPerTick = 0;
+        std::map<Id, int> heights;
+        int scrollY = 0;
+    };
+    ViewSnapshot viewSnapshot() const;
+    void restoreView (const ViewSnapshot&);
+    /** Keeps the view for Navigation: Back before a zoom command changes it. */
+    void rememberView();
+    std::array<std::optional<ViewSnapshot>, 3> savedZooms;
+    /** Every track's height times `factor` (Zoom Vertical In/Out, the vertical zoom slider). */
+    void scaleTrackHeights (double factor);
 
     /** Polls the engine (recordings, garbage) and the playhead; the window calls it on a timer. */
     void tick();
@@ -689,6 +708,8 @@ private:
     commands::LocalView local;
     engine::KeyboardMidi keys;
     std::map<Id, int> heights;
+    std::vector<ViewSnapshot> backViews, forwardViews; // Navigation: Back / Forward
+    std::map<Id, int> zoomedFrom; // Zoom Selected Track: the height to go back to
     std::map<Id, std::vector<model::AutomationTarget>> lanesShown;
     std::unique_ptr<engine::LiveAutomation> live;
     std::unique_ptr<engine::MidiInputRouter> midiRouter;
