@@ -128,7 +128,7 @@ TEST_CASE ("AT-PRJ-1 New Project at 48 kHz has the default contents; File menu h
         if (! it.getItem().isSeparator)
             file.add (it.getItem().text);
     CHECK (file == juce::StringArray { "New Project", "Open", "Open Recent", "Delete Project", "Save", "Save As", "Save Version...", "Bounce", "Import Audio...", "Export Regions as Files...", "Project Settings",
-                                  "Audio & MIDI Settings", "Exit" });
+                                  "Audio & MIDI Settings", "Settings...", "Exit" });
 
     NewProjectDialog dialog (ui.studio);
     CHECK (dialog.name.getText() == "Untitled");

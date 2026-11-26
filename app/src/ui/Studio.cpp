@@ -120,6 +120,45 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
     return l;
 }
 
+juce::String Preferences::toString() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("startup", startup == Startup::lastProject ? "lastProject" : "welcome");
+    o->setProperty ("recentItems", recentItems);
+    o->setProperty ("softwareMonitoring", softwareMonitoring);
+    o->setProperty ("monitorSelectedOnly", monitorSelectedOnly);
+    o->setProperty ("overloadMessage", overloadMessage);
+    o->setProperty ("appearance", appearance == Appearance::light ? "light" : appearance == Appearance::system ? "system" : "dark");
+    o->setProperty ("widePlayhead", widePlayhead);
+    o->setProperty ("middleC", middleC);
+    o->setProperty ("helpTags", helpTags);
+    return juce::JSON::toString (juce::var (o), true);
+}
+
+Preferences Preferences::fromString (const juce::String& text)
+{
+    Preferences p;
+    const auto v = juce::JSON::parse (text);
+    if (! v.isObject())
+        return p;
+    auto get = [&] (const char* key, auto fallback) {
+        const auto x = v.getProperty (key, juce::var());
+        return x.isVoid() ? fallback : static_cast<decltype (fallback)> (x);
+    };
+    p.startup = v.getProperty ("startup", "welcome").toString() == "lastProject" ? Startup::lastProject : Startup::welcome;
+    const auto recent = get ("recentItems", p.recentItems);
+    p.recentItems = recent <= 5 ? 5 : recent <= 10 ? 10 : recent <= 20 ? 20 : 50;
+    p.softwareMonitoring = get ("softwareMonitoring", p.softwareMonitoring);
+    p.monitorSelectedOnly = get ("monitorSelectedOnly", p.monitorSelectedOnly);
+    p.overloadMessage = get ("overloadMessage", p.overloadMessage);
+    const auto look = v.getProperty ("appearance", "dark").toString();
+    p.appearance = look == "light" ? Appearance::light : look == "system" ? Appearance::system : Appearance::dark;
+    p.widePlayhead = get ("widePlayhead", p.widePlayhead);
+    p.middleC = get ("middleC", p.middleC) == 4 ? 4 : 3;
+    p.helpTags = get ("helpTags", p.helpTags);
+    return p;
+}
+
 // Studio -------------------------------------------------------------------------------
 
 Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& projectParent_, engine::DeviceConfig config)
@@ -184,6 +223,30 @@ void Studio::edited()
     syncEngine();
     ++editCount;
     mediaDirty = true;
+    sendChangeMessage();
+}
+
+bool Studio::wantsDarkTheme() const
+{
+    if (prefs.appearance == Preferences::Appearance::system)
+        return juce::Desktop::getInstance().isDarkModeActive();
+    return prefs.appearance == Preferences::Appearance::dark;
+}
+
+void Studio::setPreferences (const Preferences& p)
+{
+    prefs = p;
+    commands::setMiddleCOctave (prefs.middleC);
+    recent.setLimit (static_cast<std::size_t> (prefs.recentItems));
+    local.softwareMonitoring = prefs.softwareMonitoring;
+    local.monitorSelectedOnly = prefs.monitorSelectedOnly;
+    layout.darkTheme = wantsDarkTheme();
+    Theme::get().setDark (layout.darkTheme);
+    Theme::get().widePlayhead = prefs.widePlayhead;
+    dropoutsSeen = eng->dropouts();
+    syncEngine();
+    if (onPreferencesChanged)
+        onPreferencesChanged (prefs);
     sendChangeMessage();
 }
 
@@ -837,6 +900,13 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 void Studio::tick()
 {
     checkDevice();
+    // D-UI-41: say so when the audio engine drops out.
+    if (const auto dropouts = eng->dropouts(); dropouts > dropoutsSeen)
+    {
+        dropoutsSeen = dropouts;
+        if (prefs.overloadMessage)
+            setStatus ("The audio engine couldn't keep up and dropped out. A larger buffer size in Audio & MIDI Settings can help.");
+    }
     if (silentClock != nullptr)
     {
         // No-audio mode: the engine runs on the message thread, in step with the system clock.
@@ -1398,7 +1468,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
-        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
+        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::settings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
@@ -2036,9 +2106,13 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::toggleTheme:
-            layout.darkTheme = ! layout.darkTheme;
-            Theme::get().setDark (layout.darkTheme);
+        {
+            // An explicit choice: it stops following the system (D-UI-41).
+            auto p = prefs;
+            p.appearance = layout.darkTheme ? Preferences::Appearance::light : Preferences::Appearance::dark;
+            setPreferences (p);
             break;
+        }
         case Cmd::newTrack:
         case Cmd::toolMenu:
         case Cmd::about:
@@ -2057,6 +2131,7 @@ bool Studio::perform (Cmd command)
         case Cmd::saveAs:
         case Cmd::projectSettings:
         case Cmd::audioSettings:
+        case Cmd::settings:
         case Cmd::shareProject:
         case Cmd::shareFolder:
         case Cmd::joinProject:

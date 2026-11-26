@@ -206,6 +206,7 @@ std::vector<CommandInfo> build()
         { Cmd::goToMarkerNumber, "Go to Marker Number...", "Ctrl+/", { key ('/', ctrl) } },
         { Cmd::applyRegionParameters, "Apply All Parameters Permanently", "", {} },
         { Cmd::applyRegionParametersExceptDelay, "Apply All Except Delay", "", {} },
+        { Cmd::settings, "Settings...", "Ctrl+,", { key (',', ctrl) } },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
         { Cmd::automationAllTouch, "Set All Tracks to Automation Touch", "", {} },

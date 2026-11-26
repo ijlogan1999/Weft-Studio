@@ -2,6 +2,8 @@
 
 #include "UiFixture.h"
 
+#include "ui/ProjectDialogs.h"
+
 #include <cstdlib>
 #include <tuple>
 
@@ -518,4 +520,82 @@ TEST_CASE ("AT-PRL-24 the inspector sets the more MIDI region parameters and Rev
     CHECK (ui.region (audio).audio.reversed);
     CHECK (in.regionReverse.getToggleState());
     CHECK (s.undoName() == "Reverse");
+}
+
+TEST_CASE ("AT-UI-13 the Settings window", "[UI][AT-UI-13]")
+{
+    Ui ui;
+    Preferences saved;
+    int saves = 0;
+    ui.studio.onPreferencesChanged = [&] (const Preferences& p) {
+        saved = p;
+        ++saves;
+    };
+    SettingsDialog dialog (ui.studio);
+    CHECK (dialog.startup.getSelectedId() == 1);
+    CHECK (dialog.recentItems.getSelectedId() == 10);
+    CHECK (dialog.softwareMonitoring.getToggleState());
+    CHECK (dialog.appearance.getSelectedId() == 1);
+    CHECK (dialog.middleC.getSelectedId() == 3);
+
+    // Each change applies at once and is saved.
+    dialog.middleC.setSelectedId (4, juce::sendNotificationSync);
+    CHECK (commands::noteName (60) == "C4");
+    CHECK (saves == 1);
+    CHECK (saved.middleC == 4);
+    dialog.middleC.setSelectedId (3, juce::sendNotificationSync);
+    CHECK (commands::noteName (60) == "C3");
+
+    dialog.appearance.setSelectedId (2, juce::sendNotificationSync);
+    CHECK_FALSE (ui.studio.layout.darkTheme);
+    CHECK_FALSE (Theme::get().isDark());
+    ui.main->run (Cmd::toggleTheme); // the View menu's switch still works, and sets Dark
+    CHECK (ui.studio.preferences().appearance == Preferences::Appearance::dark);
+    CHECK (Theme::get().isDark());
+
+    dialog.softwareMonitoring.setToggleState (false, juce::sendNotificationSync);
+    CHECK_FALSE (ui.studio.engine().localState().softwareMonitoring);
+    dialog.monitorSelectedOnly.setToggleState (true, juce::sendNotificationSync);
+    CHECK (ui.studio.engine().localState().monitorSelectedOnly);
+
+    dialog.recentItems.setSelectedId (5, juce::sendNotificationSync);
+    CHECK (ui.studio.recentProjects().limit() == 5);
+    dialog.widePlayhead.setToggleState (true, juce::sendNotificationSync);
+    CHECK (Theme::get().widePlayhead);
+    dialog.startup.setSelectedId (2, juce::sendNotificationSync);
+    CHECK (saved.startup == Preferences::Startup::lastProject);
+
+    // Help tags off removes the tooltips.
+    dialog.helpTags.setToggleState (false, juce::sendNotificationSync);
+    ui.settle();
+    CHECK_FALSE (ui.studio.preferences().helpTags);
+
+    // The settings read back as written.
+    const auto again = Preferences::fromString (saved.toString());
+    CHECK (again == saved);
+    CHECK (again.recentItems == 5);
+    CHECK_FALSE (again.softwareMonitoring);
+
+    // A dropout says so in the status bar, unless that's turned off.
+    ui.studio.engine().addDeviceDropouts (1);
+    ui.studio.tick();
+    CHECK (ui.studio.status.startsWith ("The audio engine couldn't keep up"));
+    dialog.overloadMessage.setToggleState (false, juce::sendNotificationSync);
+    ui.studio.setStatus ({});
+    ui.studio.engine().addDeviceDropouts (1);
+    ui.studio.tick();
+    CHECK (ui.studio.status.isEmpty());
+
+    // File › Settings... (Ctrl+,).
+    CHECK (commandInfo (Cmd::settings).shortcut == "Ctrl+,");
+    const auto menu = ui.main->getMenuForIndex (0, "File");
+    bool listed = false;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        listed = listed || it.getItem().text == "Settings...";
+    CHECK (listed);
+
+    // Put things back for the other tests.
+    ui.studio.onPreferencesChanged = nullptr;
+    ui.studio.setPreferences ({});
+    Theme::get().widePlayhead = false;
 }

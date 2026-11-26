@@ -593,6 +593,8 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         plan.instrument = track->kind == model::TrackKind::instrument ? instruments.find (track->id) : nullptr;
         plan.armed = local.armed.contains (track->id) && track->kind != model::TrackKind::bus;
         plan.monitor = monitorFromString (track->monitor);
+        if (! local.softwareMonitoring || (local.monitorSelectedOnly && local.selectedTrack != track->id))
+            plan.monitor = MonitorMode::off; // D-UI-41
         if (track->kind == model::TrackKind::audio && track->input.kind == model::InputAssignment::Kind::audio)
             plan.inputFirst = std::max (0, track->input.firstChannel);
         if (track->kind == model::TrackKind::instrument)

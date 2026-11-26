@@ -217,6 +217,8 @@ public:
     /** Switches theme and repaints everything (no restart). */
     void setDark (bool shouldBeDark);
     juce::LookAndFeel& lookAndFeel();
+    /** Settings › View › Wide playhead (D-UI-41). */
+    bool widePlayhead = false;
 
 private:
     Theme();

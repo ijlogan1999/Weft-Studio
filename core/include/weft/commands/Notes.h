@@ -52,6 +52,9 @@ std::vector<PlayedNote> playedNotes (const model::Region& r, const model::MidiSe
 
 /** "C3" for MIDI 60 (D-W4-1); sharps for black keys ("C#3"). */
 std::string noteName (int pitch);
+/** Settings › View › Middle C (D-UI-41): the octave number note 60 is shown with, 3 or 4. */
+void setMiddleCOctave (int octave) noexcept;
+int middleCOctave() noexcept;
 inline bool isBlackKey (int pitch) noexcept
 {
     const auto k = ((pitch % 12) + 12) % 12;

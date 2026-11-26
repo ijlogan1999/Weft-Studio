@@ -150,6 +150,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-22** [E] · L-MREC-6, D-W2-4 · With MIDI Recording › Replace on, a one-bar pass from bar 1 deletes the existing notes on its track inside that bar, deletes a region left empty inside it, keeps notes after it, and adds the new region (even with Merge on); one undo restores it all.
 
+**AT-REC-23** [E] · D-UI-41 · A track with monitoring On plays its input; with software monitoring off it doesn't; with Monitor only the selected track it doesn't while another track is selected, and does once it is selected.
+
 ## 4. Tracks (TRK)
 
 **AT-TRK-1** [E] · F-TRK-1 · A mono audio track's region is output equally to L and R at center pan (−3 dB each per pan law); a stereo track preserves channel separation.
@@ -541,6 +543,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-UI-11** [UI] · F-TRN-8, D-UI-21 · In a 1400 px window the control bar shows the More button; its menu lists the three count-in choices and a CPU line, and choosing "2-bar count-in" sets the count-in to 2 bars. At 2200 px the More button is hidden. Navigate › Count-in lists Off, 1 Bar and 2 Bars; Shift+K turns a 2-bar count-in off and back on at 2 bars.
 
 **AT-UI-12** [UI] · F-UI-10, D-UI-29 · The Tool menu shows each tool's key (T, P, I, J, E, M, and N, Z, A, G, Q since D-UI-36); with it open, P picks the Pencil and M the Mute tool; a key that isn't a tool's (W) picks nothing; with Ctrl held nothing is picked.
+
+**AT-UI-13** [UI] · D-UI-41 · The Settings window opens with Welcome, 10 recent, software monitoring on, Dark and C3. Middle C as C4 names note 60 "C4" at once and saves the settings; C3 again names it "C3". Light makes the theme light; View › Dark Theme then sets the appearance to Dark. Software monitoring off and Monitor only the selected track reach the engine; 5 recent limits Open Recent; Wide playhead and the start-up choice apply and save; Help tags off turns tooltips off. The saved settings read back unchanged. A dropout puts "The audio engine couldn't keep up…" in the status bar, and nothing once that's turned off. File › Settings... has Ctrl+,.
 
 ## 16. Collaboration (COL)
 

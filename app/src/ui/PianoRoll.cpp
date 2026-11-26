@@ -1098,7 +1098,7 @@ void PianoRoll::paint (juce::Graphics& g)
     if (x >= static_cast<float> (keyboardWidth))
     {
         g.setColour (colour (Token::playhead));
-        g.drawLine (x, static_cast<float> (toolbarHeight), x, static_cast<float> (getHeight()), 1.5f);
+        g.drawLine (x, static_cast<float> (toolbarHeight), x, static_cast<float> (getHeight()), Theme::get().widePlayhead ? 3.0f : 1.5f);
     }
 }
 

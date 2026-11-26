@@ -99,6 +99,26 @@ struct PanelLayout
     friend bool operator== (const PanelLayout&, const PanelLayout&) = default;
 };
 
+/** This computer's settings (Settings window, D-UI-41); saved with the app, never in a project. */
+struct Preferences
+{
+    enum class Startup { welcome, lastProject };
+    enum class Appearance { dark, light, system };
+    Startup startup = Startup::welcome;
+    int recentItems = 10;            // 5, 10, 20 or 50
+    bool softwareMonitoring = true;  // off: no track monitors its input
+    bool monitorSelectedOnly = false;
+    bool overloadMessage = true;     // a status message when the audio engine drops out
+    Appearance appearance = Appearance::dark;
+    bool widePlayhead = false;
+    int middleC = 3;                 // note 60 is C3 or C4
+    bool helpTags = true;            // tooltips
+
+    juce::String toString() const;
+    static Preferences fromString (const juce::String& text);
+    friend bool operator== (const Preferences&, const Preferences&) = default;
+};
+
 /** The piano roll's view state (local, F-PRL): its selection, clipboard, grid and quantize settings. */
 struct PianoRollState
 {
@@ -271,6 +291,13 @@ public:
     void setStatus (const juce::String& message);
     /** Applies a command result: on failure shows the session's message. */
     bool check (const commands::EditResult& result);
+
+    /** Settings (D-UI-41): applies them at once and tells onPreferencesChanged, which saves them. */
+    const Preferences& preferences() const noexcept { return prefs; }
+    void setPreferences (const Preferences& p);
+    std::function<void (const Preferences&)> onPreferencesChanged;
+    /** Whether the theme is dark now: the Appearance setting, or the system's when it follows it. */
+    bool wantsDarkTheme() const;
 
     // Projects (M9, W-10) -------------------------------------------------------------
     /** Ctrl+S: writes the document atomically, then the media index and this user's view. */
@@ -716,6 +743,8 @@ private:
     std::unique_ptr<project::ProjectFolder> folder;
     std::unique_ptr<commands::Session> sess;
     commands::LocalView local;
+    Preferences prefs;
+    std::int64_t dropoutsSeen = 0;
     engine::KeyboardMidi keys;
     std::map<Id, int> heights;
     std::vector<ViewSnapshot> backViews, forwardViews; // Navigation: Back / Forward

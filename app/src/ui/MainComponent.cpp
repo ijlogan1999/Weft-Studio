@@ -134,6 +134,7 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s), plugins (s)
 {
     setTitle ("Weft Studio");
+    juce::Desktop::getInstance().addDarkModeSettingListener (this);
     for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly, &preview })
         addChildComponent (c);
     preview.restore.onClick = [this] { studio.restorePreviewed(); };
@@ -215,6 +216,7 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
 
 MainComponent::~MainComponent()
 {
+    juce::Desktop::getInstance().removeDarkModeSettingListener (this);
     studio.uiCommand = nullptr;
     studio.onMissingPlugins = nullptr;
     studio.confirmBreakLock = nullptr;
@@ -223,8 +225,17 @@ MainComponent::~MainComponent()
     studio.removeChangeListener (this);
 }
 
+void MainComponent::darkModeSettingChanged()
+{
+    // Follow the system's appearance when the setting says so (D-UI-41).
+    if (studio.preferences().appearance == Preferences::Appearance::system && studio.wantsDarkTheme() != studio.layout.darkTheme)
+        studio.setPreferences (studio.preferences());
+}
+
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    if (studio.preferences().helpTags != (tooltips != nullptr))
+        tooltips = studio.preferences().helpTags ? std::make_unique<juce::TooltipWindow> (this, 600) : nullptr;
     const auto title = studio.windowTitle();
     if (getName() != title)
     {
@@ -550,6 +561,11 @@ void MainComponent::handleUiCommand (Cmd command)
     }
     else if (command == Cmd::audioSettings && devices != nullptr && desktopWindows())
         launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
+    else if (command == Cmd::settings && desktopWindows())
+    {
+        auto* dialog = launchDialog (std::make_unique<SettingsDialog> (studio), "Settings", this);
+        dialog->onAudioSettings = [this] { run (Cmd::audioSettings); };
+    }
 }
 
 void MainComponent::whenSignedIn (std::function<void()> next)
@@ -873,6 +889,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);
+            add (Cmd::settings);
             menu.addSeparator();
             add (Cmd::quit);
             break;

@@ -74,7 +74,8 @@ public:
     const bool vertical;
 };
 
-class MainComponent final : public juce::Component, public juce::MenuBarModel, private juce::ChangeListener, private juce::Timer
+class MainComponent final : public juce::Component, public juce::MenuBarModel, private juce::ChangeListener, private juce::Timer,
+                            private juce::DarkModeSettingListener
 {
 public:
     /** browserRoot: where the file browser starts. */
@@ -201,7 +202,8 @@ private:
     void chooseSharedFolder();
     Id questionTrack;
     juce::String asked;
-    juce::TooltipWindow tooltips { this, 600 };
+    std::unique_ptr<juce::TooltipWindow> tooltips = std::make_unique<juce::TooltipWindow> (this, 600); // null with help tags off (D-UI-41)
+    void darkModeSettingChanged() override;
     PanelLayout shownLayout;
     std::vector<int> heldKeys; // keyboard MIDI keys currently down
 };

@@ -793,3 +793,29 @@ TEST_CASE ("AT-REC-20: the computer keyboard plays and records notes", "[E][reco
     CHECK (notes[0]->pos == 0);
     CHECK (notes[0]->length == 960);
 }
+
+TEST_CASE ("AT-REC-23: software monitoring off, and monitoring only the selected track", "[E][record][monitor][AT-REC-23]")
+{
+    Rig rig;
+    recordSettings (rig);
+    constantInputs (rig, 0.25f);
+    const auto track = inputTrack (rig, "Audio 1", 2, 0, "on");
+    const auto other = rig.audioTrack();
+    const auto audible = [&] { return peak (rig.run (2048), 512, 1536) > 0.2f; };
+    LocalMixState view;
+    view.selectedTrack = other;
+    rig.engine.setLocalView (view);
+    CHECK (audible());
+
+    view.softwareMonitoring = false; // nothing monitors, whatever the track says
+    rig.engine.setLocalView (view);
+    CHECK_FALSE (audible());
+
+    view.softwareMonitoring = true;
+    view.monitorSelectedOnly = true; // another track is selected
+    rig.engine.setLocalView (view);
+    CHECK_FALSE (audible());
+    view.selectedTrack = track;
+    rig.engine.setLocalView (view);
+    CHECK (audible());
+}

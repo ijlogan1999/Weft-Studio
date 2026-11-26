@@ -5,6 +5,7 @@
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <map>
@@ -162,11 +163,19 @@ std::vector<PlayedNote> playedNotes (const model::Region& r, const model::MidiSe
     return out;
 }
 
+namespace
+{
+std::atomic<int> middleC { 3 };
+}
+
+void setMiddleCOctave (int octave) noexcept { middleC.store (octave == 4 ? 4 : 3, std::memory_order_relaxed); }
+int middleCOctave() noexcept { return middleC.load (std::memory_order_relaxed); }
+
 std::string noteName (int pitch)
 {
     static const std::array<const char*, 12> names { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     const auto k = ((pitch % 12) + 12) % 12;
-    const auto octave = (pitch - k) / 12 - 2; // 60 -> C3 (D-W4-1)
+    const auto octave = (pitch - k) / 12 - 5 + middleCOctave(); // 60 -> C3 (D-W4-1), or C4 (D-UI-41)
     return std::string (names[static_cast<std::size_t> (k)]) + std::to_string (octave);
 }
 

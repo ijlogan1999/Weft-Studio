@@ -20,14 +20,15 @@ juce::Colour regionColour (const model::ProjectModel& m, const model::Region& r)
     return colourFor (c.palette, c.rgb);
 }
 
-/** The playhead: a 1 px line with a dark halo, readable over any region colour. */
+/** The playhead: a 1 px line (3 px when wide, D-UI-41) with a dark halo, readable over any region colour. */
 void drawPlayheadLine (juce::Graphics& g, float x, float top, float bottom)
 {
     const auto px = static_cast<float> (juce::roundToInt (x));
+    const float half = Theme::get().widePlayhead ? 1.0f : 0.0f;
     g.setColour (depth::shade (0.45f, 0.15f));
-    g.fillRect (px - 1.0f, top, 3.0f, bottom - top);
+    g.fillRect (px - 1.0f - half, top, 3.0f + 2 * half, bottom - top);
     g.setColour (colour (Token::playhead));
-    g.fillRect (px, top, 1.0f, bottom - top);
+    g.fillRect (px - half, top, 1.0f + 2 * half, bottom - top);
 }
 
 } // namespace

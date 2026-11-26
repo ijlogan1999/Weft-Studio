@@ -45,6 +45,15 @@ public:
         studio = std::make_unique<weft::ui::Studio> (devices->make (audio), weft::ui::textPath (projects.getFullPathName()), audio.config());
         studio->decoders = weft::engine::importDecoders();
         studio->layout = layout;
+        // D-UI-41: saved settings; before there were any, the theme the layout remembered.
+        auto prefs = weft::ui::Preferences::fromString (settings->getValue ("preferences"));
+        if (settings->getValue ("preferences").isEmpty())
+            prefs.appearance = layout.darkTheme ? weft::ui::Preferences::Appearance::dark : weft::ui::Preferences::Appearance::light;
+        studio->setPreferences (prefs);
+        studio->onPreferencesChanged = [this] (const weft::ui::Preferences& p) {
+            settings->setValue ("preferences", p.toString());
+            settings->saveIfNeeded();
+        };
         studio->midiInputs().setDisabled (audio.disabledMidiInputs);
         midi = std::make_unique<weft::engine::JuceMidiInputs> (studio->midiInputs());
 
@@ -62,9 +71,19 @@ public:
                 return;
             mainWindow = std::make_unique<MainWindow> (getApplicationName(), content);
             if (picked.isNotEmpty())
+            {
                 content->openProject (weft::ui::textPath (picked));
-            else
-                content->showWelcome();
+                return;
+            }
+            // D-UI-41: or straight into the most recent project that's still there.
+            if (studio->preferences().startup == weft::ui::Preferences::Startup::lastProject)
+                for (const auto& p : studio->recentProjects().items())
+                    if (weft::project::RecentProjects::available (p))
+                    {
+                        content->openProject (p);
+                        return;
+                    }
+            content->showWelcome();
         };
         if (stored)
         {

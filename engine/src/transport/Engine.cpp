@@ -765,6 +765,8 @@ void Engine::setLocalView (const LocalMixState& view)
 {
     local.soloed = view.soloed;
     local.selectedTrack = view.selectedTrack;
+    local.softwareMonitoring = view.softwareMonitoring;
+    local.monitorSelectedOnly = view.monitorSelectedOnly;
     setArmedTracks (view.armed); // recompiles
 }
 

@@ -291,6 +291,109 @@ void ProjectSettingsDialog::resized()
     cancel.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);
 }
 
+// Settings -----------------------------------------------------------------------------------
+
+SettingsDialog::SettingsDialog (Studio& s) : studio (s)
+{
+    const auto& p = studio.preferences();
+    startup.addItem ("Show the Welcome window", 1);
+    startup.addItem ("Open the most recent project", 2);
+    startup.setSelectedId (p.startup == Preferences::Startup::lastProject ? 2 : 1, juce::dontSendNotification);
+    describe (startup, "When Weft Studio starts");
+    startup.onChange = [this] { change ([this] (Preferences& x) { x.startup = startup.getSelectedId() == 2 ? Preferences::Startup::lastProject : Preferences::Startup::welcome; }); };
+    for (int n : { 5, 10, 20, 50 })
+        recentItems.addItem (juce::String (n), n);
+    recentItems.setSelectedId (p.recentItems, juce::dontSendNotification);
+    describe (recentItems, "Recent projects", "How many projects File › Open Recent lists");
+    recentItems.onChange = [this] { change ([this] (Preferences& x) { x.recentItems = recentItems.getSelectedId(); }); };
+
+    softwareMonitoring.setToggleState (p.softwareMonitoring, juce::dontSendNotification);
+    describe (softwareMonitoring, "Software monitoring", "Off: no track plays its input through, whatever its monitoring setting (for hardware monitoring)");
+    softwareMonitoring.onClick = [this] { change ([this] (Preferences& x) { x.softwareMonitoring = softwareMonitoring.getToggleState(); }); };
+    monitorSelectedOnly.setToggleState (p.monitorSelectedOnly, juce::dontSendNotification);
+    describe (monitorSelectedOnly, "Monitor only the selected track", "Only the selected track plays its input through");
+    monitorSelectedOnly.onClick = [this] { change ([this] (Preferences& x) { x.monitorSelectedOnly = monitorSelectedOnly.getToggleState(); }); };
+    overloadMessage.setToggleState (p.overloadMessage, juce::dontSendNotification);
+    describe (overloadMessage, "Say when the audio drops out", "A message in the status bar when the audio engine can't keep up");
+    overloadMessage.onClick = [this] { change ([this] (Preferences& x) { x.overloadMessage = overloadMessage.getToggleState(); }); };
+    describe (audioDevice, Cmd::audioSettings);
+    audioDevice.onClick = [this] {
+        if (onAudioSettings)
+            onAudioSettings();
+    };
+
+    appearance.addItem ("Dark", 1);
+    appearance.addItem ("Light", 2);
+    appearance.addItem ("Follow the system", 3);
+    appearance.setSelectedId (p.appearance == Preferences::Appearance::light ? 2 : p.appearance == Preferences::Appearance::system ? 3 : 1, juce::dontSendNotification);
+    describe (appearance, "Appearance");
+    appearance.onChange = [this] {
+        change ([this] (Preferences& x) {
+            x.appearance = appearance.getSelectedId() == 2   ? Preferences::Appearance::light
+                           : appearance.getSelectedId() == 3 ? Preferences::Appearance::system
+                                                             : Preferences::Appearance::dark;
+        });
+    };
+    middleC.addItem ("C3 (Weft, Yamaha)", 3);
+    middleC.addItem ("C4 (scientific)", 4);
+    middleC.setSelectedId (p.middleC, juce::dontSendNotification);
+    describe (middleC, "Middle C", "How note 60 is named in the piano roll and the inspector");
+    middleC.onChange = [this] { change ([this] (Preferences& x) { x.middleC = middleC.getSelectedId(); }); };
+    widePlayhead.setToggleState (p.widePlayhead, juce::dontSendNotification);
+    describe (widePlayhead, "Wide playhead", "A thicker playhead line, easier to see");
+    widePlayhead.onClick = [this] { change ([this] (Preferences& x) { x.widePlayhead = widePlayhead.getToggleState(); }); };
+    helpTags.setToggleState (p.helpTags, juce::dontSendNotification);
+    describe (helpTags, "Show help tags", "Tooltips when the pointer rests on a control");
+    helpTags.onClick = [this] { change ([this] (Preferences& x) { x.helpTags = helpTags.getToggleState(); }); };
+    close.onClick = [this] {
+        if (onClose)
+            onClose();
+    };
+    close.addShortcut (juce::KeyPress (juce::KeyPress::escapeKey));
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &startup, &recentItems, &softwareMonitoring, &monitorSelectedOnly, &overloadMessage, &audioDevice,
+                                                                          &appearance, &middleC, &widePlayhead, &helpTags, &close })
+        addAndMakeVisible (c);
+    setSize (520, 16 + 12 * rowHeight + 50);
+}
+
+void SettingsDialog::change (const std::function<void (Preferences&)>& edit)
+{
+    auto p = studio.preferences();
+    edit (p);
+    if (! (p == studio.preferences()))
+        studio.setPreferences (p);
+}
+
+void SettingsDialog::paint (juce::Graphics& g)
+{
+    // Section captions, then the labels of the rows that have them.
+    g.setFont (font (Type::strong));
+    g.setColour (colour (Token::text));
+    for (const auto& [row, text] : { std::pair { 0, "General" }, { 3, "Audio" }, { 8, "View" } })
+        g.drawText (text, labelX, 16 + row * rowHeight, controlX - labelX, 26, juce::Justification::centredLeft);
+    g.setFont (font (Type::body));
+    g.setColour (colour (Token::textDim));
+    for (const auto& [row, text] : { std::pair { 1, "On start" }, { 2, "Recent" }, { 9, "Appearance" }, { 10, "Middle C" } })
+        g.drawText (text, labelX, 16 + row * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
+}
+
+void SettingsDialog::resized()
+{
+    const int w = getWidth() - controlX - 20;
+    const auto at = [&] (int row) { return 16 + row * rowHeight; };
+    startup.setBounds (controlX, at (1), w, 26);
+    recentItems.setBounds (controlX, at (2), 80, 26);
+    softwareMonitoring.setBounds (controlX, at (4), w, 26);
+    monitorSelectedOnly.setBounds (controlX, at (5), w, 26);
+    overloadMessage.setBounds (controlX, at (6), w, 26);
+    audioDevice.setBounds (controlX, at (7), 200, 26);
+    appearance.setBounds (controlX, at (9), 200, 26);
+    middleC.setBounds (controlX, at (10), 200, 26);
+    widePlayhead.setBounds (controlX, at (11), w / 2, 26);
+    helpTags.setBounds (controlX + w / 2, at (11), w / 2, 26);
+    close.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);
+}
+
 // Missing Media ----------------------------------------------------------------------------
 
 MissingMediaDialog::MissingMediaDialog (Studio& s) : studio (s)

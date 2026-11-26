@@ -65,7 +65,8 @@ bool saveProjectAs (doc::Document& document, const model::ProjectModel& model, c
 class RecentProjects
 {
 public:
-    static constexpr std::size_t maxItems = 10;
+    static constexpr std::size_t maxItems = 10; // the default limit
+    static constexpr std::size_t minLimit = 5, maxLimit = 50;
 
     explicit RecentProjects (fs::path storeFile = {}) : file (std::move (storeFile)) {}
 
@@ -73,16 +74,20 @@ public:
     void load();
     bool save() const;
 
-    /** Moves a project to the top, dropping the oldest past ten. Saves. */
+    /** Moves a project to the top, dropping the oldest past the limit (ten by default). Saves. */
     void add (const fs::path& root);
     /** Removes a project (a deleted one, when clicked). Saves. */
     void remove (const fs::path& root);
     const std::vector<fs::path>& items() const noexcept { return list; }
+    /** How many are kept (Settings › General, D-UI-41): 5 to 50; a lower limit drops the oldest. */
+    void setLimit (std::size_t n);
+    std::size_t limit() const noexcept { return keep; }
     /** False for a project that's been deleted or moved. */
     static bool available (const fs::path& root) { return isProjectFolder (root); }
 
 private:
     fs::path file;
+    std::size_t keep = maxItems;
     std::vector<fs::path> list;
 };
 
