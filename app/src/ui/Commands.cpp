@@ -118,6 +118,14 @@ std::vector<CommandInfo> build()
         { Cmd::deleteUnusedTracks, "Delete Unused Tracks", "", {} },
         { Cmd::newTrackNextInput, "New Track with Next Input", "Ctrl+Shift+N", { key ('N', ctrl | shift) } },
         { Cmd::searchTracks, "Search and Select Track...", "Ctrl+Alt+F", { key ('F', ctrl | alt) } },
+        { Cmd::selectAllFollowing, "Select All Following", "Shift+F", { key ('F', shift) } },
+        { Cmd::legato, "Legato", "Ctrl+Shift+L", { key ('L', ctrl | shift) } },
+        { Cmd::removeOverlaps, "Remove Overlaps", "", {} },
+        { Cmd::noteStartToPlayhead, "Note Start to Playhead", "", {} },
+        { Cmd::noteEndToPlayhead, "Note End to Playhead", "", {} },
+        { Cmd::lengthenNotes, "Lengthen Notes", "Alt+Shift+Right", { key (K::rightKey, alt | shift) } },
+        { Cmd::shortenNotes, "Shorten Notes", "Alt+Shift+Left", { key (K::leftKey, alt | shift) } },
+        { Cmd::scaleQuantize, "Scale Quantize", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

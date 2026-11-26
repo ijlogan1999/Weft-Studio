@@ -87,6 +87,93 @@ std::string noteName (int pitch)
     return std::string (names[static_cast<std::size_t> (k)]) + std::to_string (octave);
 }
 
+std::map<NoteRef, NoteSpan> legatoSpans (const std::vector<TimedNote>& notes)
+{
+    std::vector<Ticks> starts;
+    for (const auto& n : notes)
+        starts.push_back (n.start);
+    std::sort (starts.begin(), starts.end());
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+    {
+        const auto next = std::upper_bound (starts.begin(), starts.end(), n.start);
+        if (next == starts.end())
+            continue;
+        const auto length = *next - n.start;
+        if (length != n.length)
+            out[n.ref] = { n.start, length };
+    }
+    return out;
+}
+
+std::map<NoteRef, NoteSpan> overlapFreeSpans (const std::vector<TimedNote>& notes, const std::vector<TimedNote>& all)
+{
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+    {
+        std::optional<Ticks> next;
+        for (const auto& o : all)
+            if (o.pitch == n.pitch && o.start > n.start && ! (o.ref == n.ref) && (! next || o.start < *next))
+                next = o.start;
+        if (next && n.start + n.length > *next)
+            out[n.ref] = { n.start, *next - n.start };
+    }
+    return out;
+}
+
+std::map<NoteRef, NoteSpan> startToPlayheadSpans (const std::vector<TimedNote>& notes, Ticks playhead)
+{
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+        if (n.start < playhead && n.start + n.length > playhead)
+            out[n.ref] = { playhead, n.start + n.length - playhead };
+    return out;
+}
+
+std::map<NoteRef, NoteSpan> endToPlayheadSpans (const std::vector<TimedNote>& notes, Ticks playhead)
+{
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+        if (n.start < playhead && n.start + n.length != playhead)
+            out[n.ref] = { n.start, playhead - n.start };
+    return out;
+}
+
+const std::vector<ScaleInfo>& scales()
+{
+    // Bit n set: n semitones above the root.
+    static const std::vector<ScaleInfo> list {
+        { "Major", 0b101010110101 },
+        { "Natural Minor", 0b010110101101 },
+        { "Harmonic Minor", 0b100110101101 },
+        { "Melodic Minor", 0b101010101101 },
+        { "Dorian", 0b011010101101 },
+        { "Phrygian", 0b010110101011 },
+        { "Lydian", 0b101011010101 },
+        { "Mixolydian", 0b011010110101 },
+        { "Locrian", 0b010101101011 },
+        { "Major Pentatonic", 0b001010010101 },
+        { "Minor Pentatonic", 0b010010101001 },
+        { "Blues", 0b010011101001 },
+    };
+    return list;
+}
+
+int scaleQuantizePitch (int pitch, int root, std::uint16_t degrees) noexcept
+{
+    if ((degrees & 0xFFF) == 0)
+        return pitch;
+    const auto in = [&] (int p) { return p >= 0 && p <= 127 && (degrees >> (((p - root) % 12 + 12) % 12) & 1) != 0; };
+    for (int d = 0; d <= 12; ++d)
+    {
+        if (in (pitch - d))
+            return pitch - d;
+        if (in (pitch + d))
+            return pitch + d;
+    }
+    return pitch;
+}
+
 NoteSpan resizeNote (NoteSpan note, bool rightEdge, Ticks pointer, Ticks grid) noexcept
 {
     const auto snap = [grid] (Ticks t) { return grid > 0 ? quantizeTick (t, grid, 1.0, 0.0) : t; };

@@ -846,6 +846,20 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
                             Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
                 add (c);
+            {
+                // Piano roll note functions (D-W4-14, D-W4-15).
+                juce::PopupMenu noteMenu;
+                for (auto c : { Cmd::selectAllFollowing, Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead,
+                                Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    noteMenu.addItem (item);
+                }
+                menu.addSubMenu ("Note Functions", noteMenu);
+            }
             menu.addSeparator();
             add (Cmd::toolMenu);
             menu.addSeparator();

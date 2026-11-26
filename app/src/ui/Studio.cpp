@@ -817,6 +817,43 @@ std::optional<bool> Studio::performNotes (Cmd command)
             setStatus ("Select notes first.");
         return ! notes.empty();
     };
+    // The shown notes (or only the selected ones) where they sit on the timeline (D-W4-14).
+    const auto timed = [&] (bool selectedOnly) {
+        std::vector<commands::TimedNote> out;
+        for (const auto& id : regions)
+        {
+            const auto* r = m.region (id);
+            if (const auto* seq = m.sequence (r->midi.sequenceId))
+                for (const auto& [noteId, n] : seq->notes)
+                    if (n.pos >= r->midi.sequenceOffset && n.pos < r->midi.sequenceOffset + r->length
+                        && (! selectedOnly || piano.selection.contains ({ id, noteId })))
+                        out.push_back ({ { id, noteId }, r->start + n.pos - r->midi.sequenceOffset, n.length, n.pitch });
+        }
+        return out;
+    };
+    const auto applySpans = [&] (const std::map<commands::NoteRef, commands::NoteSpan>& spans, const char* name) {
+        if (spans.empty())
+        {
+            setStatus ("Nothing to change.");
+            return false;
+        }
+        const bool own = ! s.inGesture();
+        if (own)
+            s.beginGesture (name);
+        for (const auto& [ref, span] : spans)
+            if (! s.setNoteSpan (ref, span.start, span.length))
+            {
+                if (own)
+                    s.cancelGesture();
+                setStatus (juce::String (s.lastError()));
+                edited();
+                return false;
+            }
+        if (own)
+            s.endGesture();
+        edited();
+        return true;
+    };
     const auto audition = [&] {
         if (! notes.empty())
             if (const auto* n = commands::findNote (m, notes.front()))
@@ -941,6 +978,81 @@ std::optional<bool> Studio::performNotes (Cmd command)
             if (const auto* n = commands::findNote (m, std::get<2> (*to)))
                 auditionNote (std::get<2> (*to).regionId, n->pitch, n->velocity, n->channel, n->length);
             sendChangeMessage();
+            return true;
+        }
+        case Cmd::selectAllFollowing:
+        {
+            // D-W4-14: every shown note starting at or after the earliest selected one, or the playhead.
+            Ticks from = playhead();
+            bool any = false;
+            for (const auto& n : timed (true))
+                if (! any || n.start < from)
+                    from = n.start, any = true;
+            piano.selection.clear();
+            for (const auto& n : timed (false))
+                if (n.start >= from)
+                    piano.selection.insert (n.ref);
+            piano.point.reset();
+            sendChangeMessage();
+            return ! piano.selection.empty();
+        }
+        case Cmd::legato:
+            return needNotes() && applySpans (commands::legatoSpans (timed (true)), "Legato");
+        case Cmd::removeOverlaps:
+            return needNotes() && applySpans (commands::overlapFreeSpans (timed (true), timed (false)), "Remove Overlaps");
+        case Cmd::noteStartToPlayhead:
+            return needNotes() && applySpans (commands::startToPlayheadSpans (timed (true), playhead()), "Note Start to Playhead");
+        case Cmd::noteEndToPlayhead:
+            return needNotes() && applySpans (commands::endToPlayheadSpans (timed (true), playhead()), "Note End to Playhead");
+        case Cmd::lengthenNotes:
+        case Cmd::shortenNotes:
+        {
+            if (! needNotes())
+                return false;
+            // By the snap value (a sixteenth with snap off); never shorter than one tick.
+            const auto step = piano.grid > 0 ? piano.grid : Ticks (240);
+            std::map<commands::NoteRef, commands::NoteSpan> spans;
+            for (const auto& n : timed (true))
+                if (const auto length = std::max<Ticks> (1, n.length + (command == Cmd::lengthenNotes ? step : -step)); length != n.length)
+                    spans[n.ref] = { n.start, length };
+            return applySpans (spans, "Note Length");
+        }
+        case Cmd::scaleQuantize:
+        {
+            if (! needNotes())
+                return false;
+            const auto& list = commands::scales();
+            const auto degrees = list[static_cast<std::size_t> (std::clamp (piano.scale, 0, static_cast<int> (list.size()) - 1))].degrees;
+            std::vector<model::Note> changed;
+            std::vector<Id> regionOf;
+            for (const auto& ref : notes)
+                if (const auto* n = commands::findNote (m, ref))
+                    if (const auto to = commands::scaleQuantizePitch (n->pitch, piano.scaleRoot, degrees); to != n->pitch)
+                    {
+                        changed.push_back (*n);
+                        changed.back().pitch = to;
+                        regionOf.push_back (ref.regionId);
+                    }
+            if (changed.empty())
+            {
+                setStatus ("The selected notes are already in the scale.");
+                return false;
+            }
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture ("Scale Quantize");
+            for (std::size_t i = 0; i < changed.size(); ++i)
+                if (! s.updateNote (regionOf[i], changed[i]))
+                {
+                    if (own)
+                        s.cancelGesture();
+                    setStatus (juce::String (s.lastError()));
+                    edited();
+                    return false;
+                }
+            if (own)
+                s.endGesture();
+            edited();
             return true;
         }
         case Cmd::escape:
@@ -1450,6 +1562,14 @@ bool Studio::perform (Cmd command)
         }
         case Cmd::muteNotes:
         case Cmd::quantize:
+        case Cmd::selectAllFollowing:
+        case Cmd::legato:
+        case Cmd::removeOverlaps:
+        case Cmd::noteStartToPlayhead:
+        case Cmd::noteEndToPlayhead:
+        case Cmd::lengthenNotes:
+        case Cmd::shortenNotes:
+        case Cmd::scaleQuantize:
             setStatus ("Click in the piano roll to edit notes.");
             return false;
         case Cmd::transposeUp:
@@ -2866,6 +2986,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
         Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
+        Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

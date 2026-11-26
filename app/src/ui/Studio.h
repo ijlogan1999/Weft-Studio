@@ -101,6 +101,8 @@ struct PianoRollState
     bool follow = true;
     Ticks lastLength = 240;    // the pencil draws notes like the last one made or resized
     int lastVelocity = 100;
+    int scaleRoot = 0;         // Scale Quantize (D-W4-15): 0 = C .. 11 = B
+    int scale = 0;             // index into commands::scales()
 };
 
 /** Track lane heights: local view state (F-TRK-12). */

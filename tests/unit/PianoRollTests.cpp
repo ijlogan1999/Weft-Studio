@@ -386,3 +386,58 @@ TEST_CASE ("Note and controller edits refresh just that event and leave the proj
     }
     CHECK (sequence (r.s.model())->notes.size() == 18);
 }
+
+namespace
+{
+commands::TimedNote timedNote (const char* id, Ticks start, Ticks length, int pitch = 60) { return { { "r", id }, start, length, pitch }; }
+} // namespace
+
+TEST_CASE ("AT-PRL-20 legato, remove overlaps, and note edges to the playhead", "[U][AT-PRL-20]")
+{
+    const auto a = timedNote ("a", 0, 240), b = timedNote ("b", 480, 240), c = timedNote ("c", 1200, 240), other = timedNote ("d", 480, 240, 64);
+
+    const auto legato = commands::legatoSpans ({ a, b, c });
+    CHECK (legato.size() == 2);
+    CHECK (legato.at (a.ref) == NoteSpan { 0, 480 });
+    CHECK (legato.at (b.ref) == NoteSpan { 480, 720 });
+    CHECK_FALSE (legato.contains (c.ref)); // the last keeps its length
+    // A chord ends together at the next start.
+    const auto chord = commands::legatoSpans ({ a, timedNote ("e", 0, 100, 64), b });
+    CHECK (chord.at (a.ref) == NoteSpan { 0, 480 });
+    CHECK (chord.at ({ "r", "e" }) == NoteSpan { 0, 480 });
+
+    const auto longA = timedNote ("a", 0, 960);
+    CHECK (commands::overlapFreeSpans ({ longA }, { longA, b }).at (longA.ref) == NoteSpan { 0, 480 });
+    CHECK (commands::overlapFreeSpans ({ longA }, { longA, other }).empty()); // another pitch doesn't count
+
+    const auto starts = commands::startToPlayheadSpans ({ a, b }, 120);
+    CHECK (starts.size() == 1);
+    CHECK (starts.at (a.ref) == NoteSpan { 120, 120 });
+    const auto ends = commands::endToPlayheadSpans ({ a, b }, 120);
+    CHECK (ends.size() == 1);
+    CHECK (ends.at (a.ref) == NoteSpan { 0, 120 });
+    CHECK (commands::endToPlayheadSpans ({ a }, 600).at (a.ref) == NoteSpan { 0, 600 }); // longer too
+}
+
+TEST_CASE ("AT-PRL-21 scale quantize moves pitches to the nearest note of the scale", "[U][AT-PRL-21]")
+{
+    const auto& list = commands::scales();
+    const auto find = [&] (std::string_view name) {
+        const auto it = std::find_if (list.begin(), list.end(), [&] (const auto& sc) { return name == sc.name; });
+        REQUIRE (it != list.end());
+        return it->degrees;
+    };
+    const auto major = find ("Major");
+    CHECK (commands::scaleQuantizePitch (61, 0, major) == 60); // C#3 -> C3: halfway goes down
+    CHECK (commands::scaleQuantizePitch (66, 0, major) == 65); // F#3 -> F3
+    CHECK (commands::scaleQuantizePitch (64, 0, major) == 64); // E3 stays
+    const auto pent = find ("Minor Pentatonic");
+    CHECK (commands::scaleQuantizePitch (70, 9, pent) == 69); // A#3 -> A3
+    CHECK (commands::scaleQuantizePitch (71, 9, pent) == 72); // B3 -> C4
+    CHECK (commands::scaleQuantizePitch (73, 9, pent) == 72); // C#4 -> C4
+    CHECK (commands::scaleQuantizePitch (127, 1, major) <= 127);
+    CHECK (commands::scaleQuantizePitch (0, 1, major) >= 0);
+    // Every scale holds its root.
+    for (const auto& sc : list)
+        CHECK ((sc.degrees & 1) == 1);
+}

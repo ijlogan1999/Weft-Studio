@@ -59,7 +59,9 @@ enum class Cmd
     // Delete Unused Tracks (D-UI-32)
     deleteUnusedTracks,
     // D-UI-34: a track like the selected one on the next input; find a track by name
-    newTrackNextInput, searchTracks
+    newTrackNextInput, searchTracks,
+    // Piano roll note functions (D-W4-14, D-W4-15)
+    selectAllFollowing, legato, removeOverlaps, noteStartToPlayhead, noteEndToPlayhead, lengthenNotes, shortenNotes, scaleQuantize
 };
 
 struct CommandInfo

@@ -223,7 +223,8 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Rename / Delete marker | Shift+' / Alt+Delete | | Select previous / next region or note | Left / Right |
 | Move notes left / right (piano roll) | Alt+Left / Alt+Right | | Tools, while the Tool menu is open | T P I J E M |
 | Search and Add Plug-in | Ctrl+Shift+P | | New Track with Next Input | Ctrl+Shift+N |
-| Search and Select Track | Ctrl+Alt+F | | | |
+| Search and Select Track | Ctrl+Alt+F | | Select All Following (piano roll) | Shift+F |
+| Legato (piano roll) | Ctrl+Shift+L | | Lengthen / Shorten Notes | Alt+Shift+Right / Left |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 

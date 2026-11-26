@@ -316,6 +316,10 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRL-19** [UI] · F-PRL-4, D-UI-28 · With notes at ticks 0 (pitch 60), 480 (64) and 480 (60) selected one at a time, Right steps 0/60 → 480/60 → 480/64 and Left steps back; with no note selected and the playhead at tick 240, Right selects 480/60. Alt+Right moves the selected note one grid step; Alt+Left moves it back.
 
+**AT-PRL-20** [U][UI] · D-W4-14 · Notes at ticks 0, 480 and 1200 (all 240 long, pitch 60) and 480 (pitch 64): Legato on the first three makes them 480, 720 and 240 long (480/64 unselected stays 240); a chord at 0 and 0 ends together at the next start. Remove Overlaps shortens a 960-long note at 0 to 480 when the same pitch starts at 480, and leaves it alone when only another pitch does. With the playhead at 120, Note Start to Playhead makes a 0–240 note 120–240 and leaves a note at 480; Note End to Playhead (from the original notes) leaves the note at 480 alone and makes the note at 0 end at 120. Lengthen Notes adds one snap step; Shorten Notes never goes below one tick. Select All Following from a selected note at 480 selects every note starting at 480 or later. Each edit is one undo step with its name.
+
+**AT-PRL-21** [U][UI] · D-W4-15 · Scale Quantize with C Major moves C#3 to C3 (halfway goes down), F#3 to F3, and leaves E3; with A Minor Pentatonic A#3 goes to A3, B3 to C4 and C#4 to C4; pitch stays in 0–127. The piano roll's second toolbar row shows the regions' names, the selected note's velocity (dragging it sets every selected note as one undo step "Note Velocity"), the Scale root and Scale menus with Scale Q, and the info line names the pitch and bar position under the pointer.
+
 ## 8. Quantize (QNT)
 
 **AT-QNT-1** [U][E] · F-QNT-1 · Setting region quantize 1/8 at 100% plays notes at quantized positions while stored positions are unchanged; setting Off restores original timing in playback; Apply Quantize bakes positions (stored positions equal quantized) and sets region quantize Off, in one undo step.
