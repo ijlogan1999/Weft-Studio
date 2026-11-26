@@ -2474,7 +2474,9 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
         });
     };
     addTrack.setMouseClickGrabsKeyboardFocus (false);
-    addTrack.onClick = [this] { studio.perform (Cmd::newTrack); };
+    // Alt+click adds a track like the selected one on the next input, without the dialog (D-UI-34).
+    addTrack.onClick = [this] { studio.perform (juce::ModifierKeys::currentModifiers.isAltDown() ? Cmd::newTrackNextInput : Cmd::newTrack); };
+    addTrack.setTooltip (addTrack.getTooltip() + "; Alt+click: " + commandInfo (Cmd::newTrackNextInput).name);
     addAndMakeVisible (addTrack);
     addAndMakeVisible (vertical);
     addAndMakeVisible (horizontal);
@@ -2540,6 +2542,22 @@ void TracksArea::timerCallback()
         for (auto& h : trackHeaders)
             h->repaint();
     hadCollaborators = ! studio.collaborators().empty();
+}
+
+void TracksArea::revealTrack (const Id& trackId)
+{
+    const auto& order = studio.model().rows;
+    const auto it = std::find (order.begin(), order.end(), trackId);
+    if (it == order.end())
+        return;
+    const auto row = lanes.rowBounds (static_cast<int> (it - order.begin()));
+    if (row.getY() < 0.0f)
+        lanes.scrollY += juce::roundToInt (row.getY());
+    else if (row.getBottom() > static_cast<float> (lanes.getHeight()))
+        lanes.scrollY += juce::roundToInt (std::min (row.getY(), row.getBottom() - static_cast<float> (lanes.getHeight())));
+    lanes.scrollY = std::max (0, lanes.scrollY);
+    resized();
+    repaint();
 }
 
 void TracksArea::scrollBarMoved (juce::ScrollBar* bar, double start)

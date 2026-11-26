@@ -116,6 +116,8 @@ std::vector<CommandInfo> build()
         { Cmd::selectNext, "Select Next Region or Note", "Right", { key (K::rightKey) } },
         { Cmd::searchPlugins, "Search and Add Plug-in...", "Ctrl+Shift+P", { key ('P', ctrl | shift) } },
         { Cmd::deleteUnusedTracks, "Delete Unused Tracks", "", {} },
+        { Cmd::newTrackNextInput, "New Track with Next Input", "Ctrl+Shift+N", { key ('N', ctrl | shift) } },
+        { Cmd::searchTracks, "Search and Select Track...", "Ctrl+Alt+F", { key ('F', ctrl | alt) } },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

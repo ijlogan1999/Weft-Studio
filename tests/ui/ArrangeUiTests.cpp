@@ -1,6 +1,7 @@
 // Arrange window [UI] criteria: ruler, selection, zoom, tools, markers, track headers.
 
 #include "UiFixture.h"
+#include "ui/PluginSearch.h"
 
 #include "weft/time/Position.h"
 
@@ -403,9 +404,9 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (! it.getItem().isSeparator)
             items.add (it.getItem().text);
-    CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "Duplicate Track", "Duplicate Track with Regions",
-                                        "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down", "Mute Track", "Solo Track", "Record-Enable Track",
-                                        "Lock/Unlock Track" });
+    CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "New Track with Next Input", "Duplicate Track",
+                                        "Duplicate Track with Regions", "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down",
+                                        "Mute Track", "Solo Track", "Record-Enable Track", "Search and Select Track...", "Lock/Unlock Track" });
 
     // Color › swatch 7 from the menu bar.
     ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);
@@ -1391,6 +1392,89 @@ TEST_CASE ("AT-TRK-17 keys for the selected track's Mute, Solo and Record-enable
         items.add (it.getItem().text);
     for (const auto* name : { "New Audio Track", "New Instrument Track", "Mute Track", "Solo Track", "Record-Enable Track" })
         CHECK (items.contains (name));
+}
+
+TEST_CASE ("AT-TRK-21 New Track with Next Input and Search and Select Track", "[UI][AT-TRK-21]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto bus = s.createTrack (model::TrackKind::bus, "Drums").value();
+    const auto first = s.createTrack (model::TrackKind::audio, "Mono", 1).value();
+    model::InputAssignment in;
+    in.kind = model::InputAssignment::Kind::audio;
+    in.firstChannel = 0;
+    REQUIRE (s.setTrackInput (first, in));
+    REQUIRE (s.setTrackOutput (first, bus));
+    REQUIRE (s.setTrackMonitor (first, "on"));
+    ui.studio.edited();
+    ui.studio.selectTrack (first);
+    ui.settle();
+    const auto inputs = ui.studio.device().config().numInputChannels;
+    REQUIRE (inputs >= 2);
+
+    // Ctrl+Shift+N: a mono audio track on input 2, out to Drums, monitoring on, below and selected, one undo step.
+    const auto before = ui.m().trackOrder.size();
+    REQUIRE (ui.key ('N', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    REQUIRE (ui.m().trackOrder.size() == before + 1);
+    const auto made = ui.studio.selectedTrack();
+    const auto* t = ui.m().track (made);
+    REQUIRE (t != nullptr);
+    CHECK (t->kind == model::TrackKind::audio);
+    CHECK (t->channels == 1);
+    CHECK (t->input.kind == model::InputAssignment::Kind::audio);
+    CHECK (t->input.firstChannel == 1);
+    CHECK (t->output.busId == bus);
+    CHECK (t->monitor == "on");
+    const auto& order = ui.m().trackOrder;
+    CHECK (std::find (order.begin(), order.end(), made) == std::find (order.begin(), order.end(), first) + 1);
+    CHECK (s.undoName() == "New Track");
+
+    // Past the device's last input the new track gets none.
+    in.firstChannel = inputs - 1;
+    REQUIRE (s.setTrackInput (made, in));
+    ui.studio.edited();
+    REQUIRE (ui.studio.perform (Cmd::newTrackNextInput));
+    CHECK (ui.m().track (ui.studio.selectedTrack())->input.kind == model::InputAssignment::Kind::none);
+
+    // Alt+click on + does the same; a bus selected says so.
+    const auto count = ui.m().trackOrder.size();
+    juce::ModifierKeys::currentModifiers = juce::ModifierKeys::altModifier;
+    ui.main->tracks().addTrackButton().onClick();
+    juce::ModifierKeys::currentModifiers = {};
+    ui.settle();
+    CHECK (ui.m().trackOrder.size() == count + 1);
+    ui.studio.selectTrack (bus);
+    CHECK_FALSE (ui.studio.perform (Cmd::newTrackNextInput));
+    CHECK (ui.m().trackOrder.size() == count + 1);
+
+    // Instrument tracks keep the instrument.
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto instruments = ui.studio.pluginChoices (true);
+    REQUIRE_FALSE (instruments.empty());
+    REQUIRE (ui.studio.setInstrument (keys, instruments.back()));
+    ui.settle();
+    ui.studio.selectTrack (keys);
+    REQUIRE (ui.studio.perform (Cmd::newTrackNextInput));
+    const auto* inst = ui.m().track (ui.studio.selectedTrack());
+    REQUIRE (inst->kind == model::TrackKind::instrument);
+    REQUIRE (inst->strip.instrument);
+    CHECK (inst->strip.instrument->pluginUid == ui.m().track (keys)->strip.instrument->pluginUid);
+
+    // Search and Select Track: every word, any case; the master is never listed.
+    REQUIRE (s.renameTrack (first, "Lead Vocal"));
+    ui.studio.edited();
+    CHECK (TrackSearch::matches (ui.studio, "vocal LEAD") == std::vector<Id> { first });
+    CHECK (TrackSearch::matches (ui.studio, "drums") == std::vector<Id> { bus });
+    for (const auto& id : TrackSearch::matches (ui.studio, {}))
+        CHECK (ui.m().track (id)->kind != model::TrackKind::master);
+    TrackSearch search (ui.studio);
+    Id chosen;
+    search.onChosen = [&] (const Id& id) { chosen = id; };
+    search.setSearch ("drum");
+    REQUIRE (search.results().size() == 1);
+    REQUIRE (search.selectHighlighted());
+    CHECK (ui.studio.selectedTrack() == bus);
+    CHECK (chosen == bus);
 }
 
 TEST_CASE ("AT-ARR-36 right-click menus in the marker, tempo and signature lanes", "[UI][AT-ARR-36]")

@@ -57,7 +57,9 @@ enum class Cmd
     // Search and Add Plug-in (D-W6-11)
     searchPlugins,
     // Delete Unused Tracks (D-UI-32)
-    deleteUnusedTracks
+    deleteUnusedTracks,
+    // D-UI-34: a track like the selected one on the next input; find a track by name
+    newTrackNextInput, searchTracks
 };
 
 struct CommandInfo

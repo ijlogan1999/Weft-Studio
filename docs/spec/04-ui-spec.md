@@ -222,7 +222,8 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Mute / Solo / Record-enable track | Shift+M / S / Shift+R | | New audio / instrument track | Ctrl+Alt+A / Ctrl+Alt+I |
 | Rename / Delete marker | Shift+' / Alt+Delete | | Select previous / next region or note | Left / Right |
 | Move notes left / right (piano roll) | Alt+Left / Alt+Right | | Tools, while the Tool menu is open | T P I J E M |
-| Search and Add Plug-in | Ctrl+Shift+P | | | |
+| Search and Add Plug-in | Ctrl+Shift+P | | New Track with Next Input | Ctrl+Shift+N |
+| Search and Select Track | Ctrl+Alt+F | | | |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 
@@ -235,6 +236,7 @@ Shown in the bottom area (MVP; detachable window in v2).
 - **Decision D-UI-31:** while anything is soloed, the Mute button of every track the solo silences (not soloed, and not feeding or fed by a soloed track) shows a faint mute tint. It doesn't flash, so it stays readable for long sessions.
 - **Decision D-UI-32:** the New Track dialog has, besides type, count and channels: **Input** (No input, or the device's inputs in the chosen format; Input 1 or 1-2 by default) with **Ascending** (several tracks take the next inputs in turn; a track whose input would be past the device's last gets none), **Output** (Master or an existing bus), **Instrument** (instrument tracks; Weft Keys by default), **Input monitoring** (audio: monitoring On instead of Auto) and **Record enable**. Everything but record enable, which is local, is in the tracks' one undo step. Right-click in the header column below the last track offers New Track..., New Audio Track, New Instrument Track and **Delete Unused Tracks**, which deletes every audio and instrument track that has no regions (buses and the master stay; a track locked by someone else stays) as one undo step; it is also in the Track menu.
 - **Decision D-UI-33:** the file browser's header has **Back** and **Forward** (the last 50 folders shown; going somewhere new drops the forward ones), **Up**, and two places: **Home** (the user's home folder) and **Project** (the open project's folder). Below them, beside the folder name, a **Search** field shows only files whose name holds every typed word, any case; folders always show so you can keep moving, and Esc clears it. At the bottom, **Play** previews the selected audio file (Stop while one plays; a click on a file still previews it) and a slider sets the preview volume from -60 dB (silent) to 0 dB, for this session only.
+- **Decision D-UI-34:** **New Track with Next Input** (Ctrl+Shift+N, Track menu, and Alt+click on the **+** button) adds one track like the selected audio or instrument track below it and selects it, as one undo step ("New Track"): same kind, channel count, output and (audio) monitoring, with an audio track on the input after the selected one's (none past the device's last input, or when the selected one has none) and an instrument track with a fresh copy of the same instrument (its kind, not its settings). With a bus, the master or nothing selected it only says "Select an audio or instrument track first." **Search and Select Track...** (Ctrl+Alt+F, Track menu) opens a search field over the track list (every track but the master, hidden ones marked): every typed word must be in the name, any case; Enter selects the highlighted track and scrolls it into view.
 
 ## 12. Dialogs and windows (MVP list)
 
@@ -286,3 +288,4 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-31 | Mute buttons of tracks a solo silences show a faint tint. |
 | D-UI-32 | New Track dialog input/output/instrument/monitoring/record-enable; header-area menu; Delete Unused Tracks. |
 | D-UI-33 | File browser Back/Forward, Home and Project, name search, Play/Stop and preview volume. |
+| D-UI-34 | New Track with Next Input (Ctrl+Shift+N, Alt+click +); Search and Select Track (Ctrl+Alt+F). |

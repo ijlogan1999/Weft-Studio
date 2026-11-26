@@ -287,6 +287,8 @@ public:
     Timeline& timeline() noexcept { return lanes; }
     /** "+" above the headers: opens the New Track dialog (04 §6.1). */
     juce::Button& addTrackButton() noexcept { return addTrack; }
+    /** Scrolls the tracks so the track's row shows (Search and Select Track, D-UI-34). */
+    void revealTrack (const Id& trackId);
     /** The column the headers sit in; a double-click on its empty part below the last track opens the New Track dialog. */
     juce::Component& headerArea() noexcept { return headerColumn; }
     /** Right-click below the last header (D-UI-32): the new-track commands and Delete Unused Tracks. Item ids are

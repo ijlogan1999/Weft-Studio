@@ -968,6 +968,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
+        case Cmd::newTrackNextInput: case Cmd::searchTracks:
             break;
     }
     return std::nullopt;
@@ -1065,6 +1066,8 @@ bool Studio::perform (Cmd command)
             edited();
             return ! made.empty();
         }
+        case Cmd::newTrackNextInput:
+            return newTrackNextInput().has_value();
         case Cmd::pause:
             // Stops where it is (F-TRN-3, D-INV-6); pressed again, plays on from there.
             if (playing())
@@ -1353,6 +1356,7 @@ bool Studio::perform (Cmd command)
         case Cmd::toolMenu:
         case Cmd::about:
         case Cmd::searchPlugins:
+        case Cmd::searchTracks:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
         case Cmd::bounce:
@@ -1546,6 +1550,63 @@ bool Studio::previewFile (const fs::path& file)
     }
     eng->preview (std::make_shared<const media::AudioData> (std::move (*audio)));
     return true;
+}
+
+std::optional<Id> Studio::newTrackNextInput()
+{
+    // D-UI-34: the selected track's kind, channels and output, one track below it, on the input after its own.
+    const auto* t = model().track (local.selectedTrack);
+    if (t == nullptr || (t->kind != model::TrackKind::audio && t->kind != model::TrackKind::instrument))
+    {
+        setStatus ("Select an audio or instrument track first.");
+        return std::nullopt;
+    }
+    const auto kind = t->kind;
+    const auto channels = t->channels;
+    const auto input = t->input;
+    const auto output = t->output.busId;
+    const auto monitor = t->monitor;
+    // The same instrument, fresh: its kind, not its settings.
+    std::optional<model::PluginInstance> instrument;
+    if (t->strip.instrument)
+    {
+        instrument.emplace();
+        instrument->format = t->strip.instrument->format;
+        instrument->pluginUid = t->strip.instrument->pluginUid;
+        instrument->name = t->strip.instrument->name;
+        instrument->vendor = t->strip.instrument->vendor;
+        instrument->version = t->strip.instrument->version;
+    }
+    auto& s = *sess;
+    s.beginGesture ("New Track");
+    const auto made = s.createTracks (kind, 1, channels, local.selectedTrack);
+    if (made.empty())
+    {
+        s.cancelGesture();
+        setStatus (juce::String (s.lastError()));
+        edited();
+        return std::nullopt;
+    }
+    const auto id = made.front();
+    if (kind == model::TrackKind::audio)
+    {
+        model::InputAssignment next;
+        if (input.kind == model::InputAssignment::Kind::audio && input.firstChannel + 2 * channels <= device().config().numInputChannels)
+        {
+            next.kind = model::InputAssignment::Kind::audio;
+            next.firstChannel = input.firstChannel + channels;
+        }
+        s.setTrackInput (id, next);
+        s.setTrackMonitor (id, monitor);
+    }
+    if (kind == model::TrackKind::instrument && instrument)
+        s.setInstrument (id, *instrument);
+    if (! output.empty())
+        s.setTrackOutput (id, output);
+    s.endGesture();
+    selectTrack (id);
+    edited();
+    return id;
 }
 
 // Projects ------------------------------------------------------------------------------
@@ -2804,7 +2865,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
-        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks,
+        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

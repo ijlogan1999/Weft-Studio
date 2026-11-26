@@ -155,6 +155,8 @@ public:
 
     const Id& selectedTrack() const noexcept { return local.selectedTrack; }
     void selectTrack (const Id& trackId);
+    /** New Track with Next Input (D-UI-34): one track like the selected one below it, on the next input; selected. */
+    std::optional<Id> newTrackNextInput();
     /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
     bool moveTrackTo (const Id& trackId, std::size_t index);
     const commands::LocalView& localView() const noexcept { return local; }

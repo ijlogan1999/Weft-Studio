@@ -420,6 +420,17 @@ void MainComponent::handleUiCommand (Cmd command)
     }
     else if (command == Cmd::searchPlugins)
         PluginSearch::show (studio, this);
+    else if (command == Cmd::searchTracks)
+    {
+        if (auto* search = TrackSearch::show (studio, this))
+        {
+            juce::Component::SafePointer<MainComponent> self (this);
+            search->onChosen = [self] (const Id& id) {
+                if (self != nullptr)
+                    self->tracks().revealTrack (id);
+            };
+        }
+    }
     else if (command == Cmd::pluginManager)
         PluginManager::show (studio, this);
     else if (command == Cmd::deleteTrack)
@@ -845,6 +856,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::newTrack);
             add (Cmd::newAudioTrack);
             add (Cmd::newInstrumentTrack);
+            add (Cmd::newTrackNextInput);
             add (Cmd::duplicateTrack);
             add (Cmd::duplicateTrackWithRegions);
             add (Cmd::deleteTrack);
@@ -859,6 +871,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::muteTrack, Cmd::soloTrack, Cmd::armTrack })
                 add (c);
             menu.addSeparator();
+            add (Cmd::searchTracks);
             add (Cmd::lockTrack);
             break;
         }
