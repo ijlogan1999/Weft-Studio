@@ -199,6 +199,10 @@ public:
     bool toggleAllTracksOff();
     /** Sets every audio and instrument track on or off, as one undo step (Alt+click on an On/Off button). */
     bool setAllTracksOff (bool off);
+    /** Copy / Paste Channel Strip Setting (D-W6-13): volume, pan and inserts, kept while the app runs. */
+    bool copyChannelStrip (const Id& trackId);
+    bool pasteChannelStrip (const Id& trackId);
+    bool hasChannelStripCopy() const noexcept { return stripClipboard.has_value(); }
     Ticks lastLocatePosition() const noexcept { return lastLocate; }
     /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
     bool moveTrackTo (const Id& trackId, std::size_t index);
@@ -668,6 +672,8 @@ private:
     std::unique_ptr<engine::Vst3Host> host;
     std::map<Id, double> pendingState; // plug-in id -> when its parameters last changed (ms)
     std::optional<PluginSetting> settingClipboard;
+    std::optional<model::ChannelStrip> stripClipboard;
+    std::set<Id> keptSolo; // Clear/Recall Solo
     std::string settingClipboardPlugin; // format + uid of the plug-in it came from
     double lastParamChange = 0;
     void endPluginGesture();

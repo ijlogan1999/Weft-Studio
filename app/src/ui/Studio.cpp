@@ -412,6 +412,51 @@ bool Studio::setAllTracksOff (bool off)
     return true;
 }
 
+bool Studio::copyChannelStrip (const Id& trackId)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr)
+    {
+        setStatus ("Select a track first.");
+        return false;
+    }
+    for (const auto& p : t->strip.inserts)
+        writePluginState (p.id); // the editors' last changes go with the copy
+    t = model().track (trackId);
+    stripClipboard = t->strip;
+    setStatus ("Copied the channel strip of " + juce::String (t->name) + ".");
+    return true;
+}
+
+bool Studio::pasteChannelStrip (const Id& trackId)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr || ! stripClipboard)
+    {
+        setStatus (t == nullptr ? "Select a track first." : "Copy a channel strip setting first.");
+        return false;
+    }
+    // D-W6-13: volume, pan and the insert effects (fresh copies, settings and bypass kept); sends and routing stay.
+    const auto from = *stripClipboard;
+    std::vector<Id> old;
+    for (const auto& p : t->strip.inserts)
+        old.push_back (p.id);
+    endPluginGesture();
+    sess->beginGesture ("Paste Channel Strip Setting");
+    sess->setTrackVolume (trackId, from.volumeDb);
+    sess->setTrackPan (trackId, from.pan);
+    for (const auto& id : old)
+        sess->removeInsert (trackId, id);
+    for (auto p : from.inserts)
+    {
+        p.id.clear(); // a fresh plug-in: the same one can be pasted onto several tracks
+        sess->addInsert (trackId, p);
+    }
+    sess->endGesture();
+    edited();
+    return true;
+}
+
 bool Studio::toggleAllTracksOff()
 {
     bool anyOff = false;
@@ -1201,6 +1246,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::nudgeByGrid: case Cmd::nudgeByBar: case Cmd::nudgeByBeat: case Cmd::nudgeByDivision: case Cmd::nudgeByTick: case Cmd::slipLeft: case Cmd::slipRight: case Cmd::shuffleLeft: case Cmd::shuffleRight: case Cmd::gridLines:
         case Cmd::nextTool: case Cmd::previousTool:
         case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff: case Cmd::togglePluginWindows:
+        case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1816,6 +1862,73 @@ bool Studio::perform (Cmd command)
         case Cmd::nudgeByTick: nudgeValue = NudgeValue::tick; break;
         case Cmd::gridLines: gridLines = ! gridLines; break;
         case Cmd::toggleAllTracksOff: return toggleAllTracksOff();
+        case Cmd::unmuteAll:
+        {
+            std::vector<Id> muted; // by value: each edit rebuilds the model
+            for (const auto& id : m.trackOrder)
+                if (const auto* t = m.track (id); t != nullptr && t->mute)
+                    muted.push_back (id);
+            if (muted.empty())
+            {
+                setStatus ("No track is muted.");
+                return false;
+            }
+            s.beginGesture ("Mute Off for All");
+            for (const auto& id : muted)
+                s.setTrackMute (id, false);
+            s.endGesture();
+            edited();
+            return true;
+        }
+        case Cmd::clearRecallSolo:
+            // D-W6-13: with anything soloed the solos are kept aside and cleared; with none, the kept ones come back.
+            if (! local.soloed.empty())
+            {
+                keptSolo = local.soloed;
+                local.soloed.clear();
+            }
+            else if (! keptSolo.empty())
+            {
+                for (const auto& id : keptSolo)
+                    if (m.track (id) != nullptr)
+                        local.setSolo (id, true);
+                keptSolo.clear();
+            }
+            else
+            {
+                setStatus ("Nothing is soloed.");
+                return false;
+            }
+            edited();
+            return true;
+        case Cmd::soloSelectedRegions:
+        {
+            std::set<Id> tracks;
+            for (const auto& id : selection.ids())
+                if (const auto* r = m.region (id))
+                    tracks.insert (m.effectiveTrackId (*r));
+            if (tracks.empty())
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            local.soloed = tracks;
+            edited();
+            return true;
+        }
+        case Cmd::monitorTrack:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr || t->kind != model::TrackKind::audio)
+            {
+                setStatus ("Select an audio track first.");
+                return false;
+            }
+            setTrackSwitch (TrackSwitch::monitor, t->id, t->monitor != "on");
+            return true;
+        }
+        case Cmd::copyChannelStrip: return copyChannelStrip (local.selectedTrack);
+        case Cmd::pasteChannelStrip: return pasteChannelStrip (local.selectedTrack);
         case Cmd::lengthenNotes:
         case Cmd::shortenNotes:
         case Cmd::slipLeft:
@@ -3496,7 +3609,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
         Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
-        Cmd::toggleAllTracksOff,
+        Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

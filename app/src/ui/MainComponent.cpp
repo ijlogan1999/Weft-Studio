@@ -903,7 +903,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::moveTrackUp);
             add (Cmd::moveTrackDown);
             menu.addSeparator();
-            for (auto c : { Cmd::muteTrack, Cmd::soloTrack, Cmd::armTrack })
+            for (auto c : { Cmd::muteTrack, Cmd::soloTrack, Cmd::armTrack, Cmd::monitorTrack, Cmd::unmuteAll, Cmd::clearRecallSolo, Cmd::soloSelectedRegions })
                 add (c);
             menu.addSeparator();
             add (Cmd::searchTracks);
@@ -920,6 +920,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::searchPlugins);
             add (Cmd::pluginManager);
             add (Cmd::togglePluginWindows);
+            menu.addSeparator();
+            add (Cmd::copyChannelStrip);
+            add (Cmd::pasteChannelStrip);
             break;
         case 4:
         {

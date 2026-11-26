@@ -229,6 +229,8 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Go to Selection Start / End | Shift+Home / Shift+End | | Play from Selection | Shift+Space |
 | Move Cycle Forward / Back | Ctrl+Shift+Right / Left | | Slip Left / Right | Ctrl+Alt+Left / Right |
 | Configure Track Header | Alt+T | | Show/Hide All Plug-in Windows | V |
+| Mute Off for All | Ctrl+Alt+Shift+M | | Clear/Recall Solo | Ctrl+Alt+Shift+S |
+| Input Monitoring Track | Shift+I | | | |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 

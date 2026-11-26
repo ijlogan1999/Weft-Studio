@@ -71,7 +71,9 @@ enum class Cmd
     // D-UI-37: track header options, all tracks on/off
     configureTrackHeader, toggleAllTracksOff,
     // D-W6-12
-    togglePluginWindows
+    togglePluginWindows,
+    // D-W6-13: mixer commands
+    unmuteAll, clearRecallSolo, soloSelectedRegions, monitorTrack, copyChannelStrip, pasteChannelStrip
 };
 
 struct CommandInfo

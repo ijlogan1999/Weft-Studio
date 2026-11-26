@@ -921,3 +921,102 @@ TEST_CASE ("AT-PLG-14 plug-in settings: save, load, next/previous, compare, copy
     CHECK_FALSE (windows.toggleAll());
     CHECK_FALSE (windows.allWindowsHidden());
 }
+
+TEST_CASE ("AT-MIX-18 peak number, Mute Off for All, Clear/Recall Solo, solo by regions, monitoring key, copy and paste a strip", "[UI][AT-MIX-18]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto first = ui.m().trackOrder.front();
+    const auto second = s.createTrack (model::TrackKind::instrument, "Second").value();
+    const auto third = s.createTrack (model::TrackKind::instrument, "Third").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    auto* strip = mixer.stripFor (first);
+    REQUIRE (strip != nullptr);
+
+    // The peak number holds the highest level, red over 0 dB; a click resets it and the clip light.
+    CHECK (strip->peak.getText() == "-inf");
+    strip->meter.update (2.0f, 0.5f, true, 0.0);
+    strip->updateMeter (0.1);
+    CHECK (strip->peak.getText() == "+6.0");
+    CHECK (strip->peak.findColour (juce::Label::textColourId) == colour (Token::meterClip));
+    strip->meter.update (0.5f, 0.1f, false, 0.2);
+    strip->updateMeter (0.3);
+    CHECK (strip->peak.getText() == "+6.0"); // held
+    strip->mouseDown (mouse (strip->peak, strip->peak.getLocalBounds().getCentre().toFloat()));
+    CHECK (strip->peak.getText() == "-inf");
+    CHECK_FALSE (strip->meter.ballistics.clip());
+    CHECK (strip->peak.getRight() <= strip->getWidth());
+    CHECK (strip->readout.getRight() <= strip->peak.getX());
+
+    // Mute Off for All: one undo step.
+    REQUIRE (s.setTrackMute (first, true));
+    REQUIRE (s.setTrackMute (third, true));
+    ui.studio.edited();
+    REQUIRE (ui.studio.perform (Cmd::unmuteAll));
+    ui.settle();
+    CHECK_FALSE ((ui.m().track (first)->mute || ui.m().track (third)->mute));
+    CHECK (s.undoName() == "Mute Off for All");
+    CHECK_FALSE (ui.studio.perform (Cmd::unmuteAll));
+
+    // Clear/Recall Solo.
+    ui.studio.toggleSolo (first);
+    ui.studio.toggleSolo (second);
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    CHECK (ui.studio.localView().soloed.empty());
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    CHECK (ui.studio.localView().soloed == std::set<Id> { first, second });
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    ui.studio.toggleSolo (third); // a new solo replaces what was kept
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    CHECK (ui.studio.localView().soloed == std::set<Id> { third });
+
+    // Solo Tracks of Selected Regions: exactly those tracks.
+    const auto r1 = s.createMidiRegion (second, 0, 3840).value();
+    const auto r2 = s.createMidiRegion (third, 3840, 3840).value();
+    ui.studio.edited();
+    ui.studio.selection.set ({ r1, r2 });
+    REQUIRE (ui.studio.perform (Cmd::soloSelectedRegions));
+    CHECK (ui.studio.localView().soloed == std::set<Id> { second, third });
+    ui.studio.selection.set (std::vector<Id> {});
+    CHECK_FALSE (ui.studio.perform (Cmd::soloSelectedRegions));
+
+    // Shift+I: the selected track's input monitoring On, then Auto.
+    ui.studio.selectTrack (first);
+    REQUIRE (ui.key ('I', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.m().track (first)->monitor == "on");
+    REQUIRE (ui.studio.perform (Cmd::monitorTrack));
+    CHECK (ui.m().track (first)->monitor == "auto");
+
+    // Copy Channel Strip Setting from one track, paste onto another: volume, pan and inserts, one undo step.
+    REQUIRE (s.setTrackVolume (first, -6.0));
+    REQUIRE (s.setTrackPan (first, 0.3));
+    ui.studio.edited();
+    strip = mixer.stripFor (first);
+    const auto eq = entry (strip->insertMenu (0), "Weft EQ");
+    REQUIRE (eq);
+    strip->pickInsert (0, eq->id);
+    ui.settle();
+    const auto sourceInsert = ui.m().track (first)->strip.inserts.at (0);
+    REQUIRE (s.setPluginParam (first, sourceInsert.id, "hpOn", 1.0));
+    ui.studio.edited();
+    CHECK_FALSE (ui.studio.hasChannelStripCopy());
+    REQUIRE (ui.studio.perform (Cmd::copyChannelStrip));
+    CHECK (ui.studio.hasChannelStripCopy());
+    ui.studio.selectTrack (third);
+    REQUIRE (ui.studio.perform (Cmd::pasteChannelStrip));
+    ui.settle();
+    const auto& pasted = ui.m().track (third)->strip;
+    CHECK (pasted.volumeDb == Catch::Approx (-6.0));
+    CHECK (pasted.pan == Catch::Approx (0.3));
+    REQUIRE (pasted.inserts.size() == 1);
+    CHECK (pasted.inserts[0].pluginUid == sourceInsert.pluginUid);
+    CHECK (pasted.inserts[0].id != sourceInsert.id);
+    CHECK (pasted.inserts[0].params.at ("hpOn") == Catch::Approx (1.0));
+    CHECK (s.undoName() == "Paste Channel Strip Setting");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().track (third)->strip.inserts.empty());
+    CHECK (ui.m().track (third)->strip.volumeDb == Catch::Approx (0.0));
+}

@@ -372,6 +372,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-17** [UI] · F-MIX-6, D-W6-10 · Shift+click on a filled insert slot bypasses it without opening its window. Pressing the first slot's bypass dot bypasses it; dragging across the next slot's dot and another channel's first dot bypasses them too, a free slot is skipped, and it is one undo step ("Bypass Plug-ins") that undo reverses for all three. Insert Before › Weft Delay on slot 2 puts the delay in slot 2 and the plug-in that was there in slot 3.
 
+**AT-MIX-18** [UI] · D-W6-13 · A strip's peak number reads "-inf", then "+6.0" in red after a peak of 2.0 (linear), stays at "+6.0" after a lower one, and a click on it gives "-inf" and turns the clip light off; it sits right of the volume readout. With two tracks muted, Mute Off for All unmutes both as one undo step ("Mute Off for All"), and with none muted does nothing. With two tracks soloed, Clear/Recall Solo clears them, then brings both back; after a new solo, it brings back only the new one. With regions on two instrument tracks selected, Solo Tracks of Selected Regions solos exactly those two; with nothing selected it does nothing. Shift+I sets the selected audio track's monitoring On, and again Auto. Copying a strip with -6 dB, pan 0.3 and Weft EQ (Low Cut on) and pasting it on another track gives that track -6 dB, pan 0.3 and its own Weft EQ (a new id) with Low Cut on, as one undo step ("Paste Channel Strip Setting"); Undo takes it all back.
+
 ## 10. Plugins (PLG)
 
 **AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error. **Decision D-AT-4** fixes the list.

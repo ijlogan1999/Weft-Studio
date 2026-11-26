@@ -160,6 +160,12 @@ std::vector<CommandInfo> build()
         { Cmd::configureTrackHeader, "Configure Track Header...", "Alt+T", { key ('T', alt) } },
         { Cmd::toggleAllTracksOff, "Turn All Tracks On/Off", "", {} },
         { Cmd::togglePluginWindows, "Show/Hide All Plug-in Windows", "V", { key ('V') } },
+        { Cmd::unmuteAll, "Mute Off for All", "Ctrl+Alt+Shift+M", { key ('M', ctrl | alt | shift) } },
+        { Cmd::clearRecallSolo, "Clear/Recall Solo", "Ctrl+Alt+Shift+S", { key ('S', ctrl | alt | shift) } },
+        { Cmd::soloSelectedRegions, "Solo Tracks of Selected Regions", "", {} },
+        { Cmd::monitorTrack, "Input Monitoring Track", "Shift+I", { key ('I', shift) } },
+        { Cmd::copyChannelStrip, "Copy Channel Strip Setting", "", {} },
+        { Cmd::pasteChannelStrip, "Paste Channel Strip Setting", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

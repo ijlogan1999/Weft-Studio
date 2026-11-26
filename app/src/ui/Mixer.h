@@ -46,6 +46,10 @@ public:
     juce::Rectangle<float> barArea() const;
     engine::MeterBallistics ballistics;
     float rmsDb = -144.0f;
+    /** The highest peak since the last reset (the strip's peak number, D-W6-13). */
+    float maxPeakDb = -144.0f;
+    /** Clears the clip light and the peak number. */
+    void resetPeak();
     std::function<void()> onResetClip;
     static constexpr int clipHeight = 8;
     static constexpr int clipGap = 4;
@@ -146,6 +150,8 @@ public:
     juce::ComboBox automation;
     juce::Slider pan, volume;
     juce::Label readout;
+    /** The highest peak since it was last clicked (D-W6-13); red over 0 dB. Clicking resets it and the clip light. */
+    juce::Label peak;
     MeterView meter;
     SwipeButton mute { "M" }, solo { "S" }, arm { "R" }, monitor { "I" };
     std::vector<std::unique_ptr<InsertSlot>> inserts;

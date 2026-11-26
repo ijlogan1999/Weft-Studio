@@ -101,6 +101,7 @@ void MeterView::update (float peak, float rms, bool clip, double now)
 {
     const auto before = std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip(), rmsDb);
     ballistics.update (peak, clip, now);
+    maxPeakDb = std::max (maxPeakDb, engine::gainToDb (peak));
     rmsLinear = rms;
     rmsDb = engine::gainToDb (rms);
     if (std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip(), rmsDb) != before)
@@ -152,15 +153,19 @@ void MeterView::paint (juce::Graphics& g)
     }
 }
 
+void MeterView::resetPeak()
+{
+    ballistics.resetClip();
+    maxPeakDb = -144.0f;
+    if (onResetClip)
+        onResetClip();
+    repaint();
+}
+
 void MeterView::mouseDown (const juce::MouseEvent& e)
 {
     if (e.y <= clipHeight + clipGap)
-    {
-        ballistics.resetClip();
-        if (onResetClip)
-            onResetClip();
-        repaint();
-    }
+        resetPeak();
 }
 
 // Insert slot ------------------------------------------------------------------------------
@@ -489,6 +494,12 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
 
     describe (meter, "Meter", "Level: RMS bar, peak above it (click the light to reset the clip indicator)");
     meter.onResetClip = [this] { studio.engine().resetClip (isMaster() ? Id() : id); };
+    peak.setJustificationType (juce::Justification::centred);
+    setField (peak);
+    describe (peak, "Peak level", "The highest level since you last clicked here (click to reset it and the clip light)");
+    peak.setText ("-inf", juce::dontSendNotification);
+    peak.addMouseListener (this, false);
+    addAndMakeVisible (peak);
     addAndMakeVisible (meter);
 
     for (auto* b : { &mute, &solo, &arm, &monitor })
@@ -731,6 +742,12 @@ void ChannelStrip::updateMeter (double now)
 {
     const auto m = studio.takeMeter (isMaster() ? Id() : id, this);
     meter.update (m.output, m.rms, m.clip, now);
+    const auto text = fader::dbText (meter.maxPeakDb);
+    if (peak.getText() != text)
+    {
+        peak.setText (text, juce::dontSendNotification);
+        peak.setColour (juce::Label::textColourId, meter.maxPeakDb > 0.0f ? colour (Token::meterClip) : colour (Token::text));
+    }
 }
 
 void ChannelStrip::followAutomation()
@@ -868,7 +885,10 @@ void ChannelStrip::resized()
         if (! b->isVisible())
             b->setBounds ({});
     r.removeFromBottom (gap);
-    readout.setBounds (r.removeFromBottom (rowHeight));
+    // Volume readout | peak number (D-W6-13).
+    auto numbers = r.removeFromBottom (rowHeight);
+    peak.setBounds (numbers.removeFromRight (numbers.getWidth() * 2 / 5));
+    readout.setBounds (numbers.withTrimmedRight (space::half));
     r.removeFromBottom (gap);
     // Fader | scale | meter. The meter's clip light sits above the fader's travel.
     auto faderArea = r;
@@ -878,8 +898,15 @@ void ChannelStrip::resized()
     volume.setBounds (faderArea);
 }
 
-void ChannelStrip::mouseDown (const juce::MouseEvent&)
+void ChannelStrip::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.eventComponent == &peak)
+    {
+        meter.resetPeak();
+        peak.setText (fader::dbText (meter.maxPeakDb), juce::dontSendNotification);
+        peak.setColour (juce::Label::textColourId, colour (Token::text));
+        return;
+    }
     if (! isMaster() && selectsOnClick)
         studio.selectTrack (id);
 }
