@@ -967,7 +967,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::stop: case Cmd::countIn: case Cmd::muteTrack: case Cmd::soloTrack: case Cmd::armTrack: case Cmd::newAudioTrack:
         case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
-        case Cmd::marker18: case Cmd::marker19:
+        case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins:
             break;
     }
     return std::nullopt;
@@ -1315,6 +1315,7 @@ bool Studio::perform (Cmd command)
         case Cmd::newTrack:
         case Cmd::toolMenu:
         case Cmd::about:
+        case Cmd::searchPlugins:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
         case Cmd::bounce:
@@ -2761,7 +2762,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
-        Cmd::renameMarker, Cmd::deleteMarker,
+        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

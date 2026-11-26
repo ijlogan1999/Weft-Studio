@@ -4,6 +4,7 @@
 #include "AudioSetup.h"
 #include "BounceDialog.h"
 #include "NewTrackDialog.h"
+#include "PluginSearch.h"
 #include "ProjectDialogs.h"
 #include "ShareDialogs.h"
 
@@ -417,6 +418,8 @@ void MainComponent::handleUiCommand (Cmd command)
         if (const auto* marker = studio.markerAtPlayhead())
             tracks().ruler().renameMarker (marker->id);
     }
+    else if (command == Cmd::searchPlugins)
+        PluginSearch::show (studio, this);
     else if (command == Cmd::pluginManager)
         PluginManager::show (studio, this);
     else if (command == Cmd::deleteTrack)
@@ -862,6 +865,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::newBus);
             add (Cmd::toggleMixer);
             menu.addSeparator();
+            add (Cmd::searchPlugins);
             add (Cmd::pluginManager);
             break;
         case 4:

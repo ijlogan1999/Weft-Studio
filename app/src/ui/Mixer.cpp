@@ -167,13 +167,14 @@ void MeterView::mouseDown (const juce::MouseEvent& e)
 
 InsertSlot::InsertSlot (ChannelStrip& strip, std::size_t i, const model::PluginInstance* plugin, bool isPlaceholder)
     : index (i), pluginId (plugin != nullptr ? plugin->id : Id()), label (plugin != nullptr ? juce::String (plugin->name) : juce::String()),
-      bypassed (plugin != nullptr && plugin->bypass), placeholder (isPlaceholder), owner (strip)
+      placeholder (isPlaceholder), owner (strip), bypassed (plugin != nullptr && plugin->bypass)
 {
     const auto title = plugin == nullptr ? juce::String ("Empty insert slot") : "Insert " + juce::String (i + 1) + ": " + label;
     setTitle (title);
     setTooltip (placeholder ? label + ": Not installed on this computer"
                             : plugin == nullptr ? juce::String ("Add an effect")
-                                                : label + " (click to open; drag to another slot or channel, Ctrl+drag to copy; Alt+click removes; right-click for more)");
+                                                : label + " (click to open; drag to another slot or channel, Ctrl+drag to copy; Alt+click removes; Shift+click "
+                                                          "or the dot bypasses, drag across dots to bypass several; right-click for more)");
 }
 
 void InsertSlot::paint (juce::Graphics& g)
@@ -226,12 +227,49 @@ void InsertSlot::mouseDown (const juce::MouseEvent& e)
         removed = true; // the quick way to take a plug-in out (D-W6-9); the mouse-up that follows does nothing
         owner.pickInsert (index, ChannelStrip::itemRemove);
     }
-    else if (e.x < bypassWidth)
+    else if (e.mods.isShiftDown())
+    {
+        removed = true; // Shift+click bypasses (D-W6-10); the mouse-up neither opens nor drags
         owner.pickInsert (index, ChannelStrip::itemBypass);
+    }
+    else if (e.x < bypassWidth)
+    {
+        // The dot: toggles now, and a drag from it carries this state across other dots (D-W6-10).
+        swipingBypass = true;
+        bypassTarget = ! bypassed;
+        if (! owner.studio.session().inGesture())
+            owner.studio.session().beginGesture ("Bypass Plug-ins");
+        owner.setBypass (index, bypassTarget);
+    }
+}
+
+void InsertSlot::showBypass (bool on)
+{
+    if (bypassed != on)
+    {
+        bypassed = on;
+        repaint();
+    }
+}
+
+void InsertSlot::swipeBypassOver (InsertSlot* other)
+{
+    if (! swipingBypass || other == nullptr || other == this || other->pluginId.empty() || other->isBypassed() == bypassTarget)
+        return;
+    other->strip().setBypass (other->index, bypassTarget);
 }
 
 void InsertSlot::mouseDrag (const juce::MouseEvent& e)
 {
+    if (swipingBypass)
+    {
+        auto* top = getTopLevelComponent();
+        InsertSlot* over = nullptr;
+        for (auto* c = top->getComponentAt (top->getLocalPoint (this, e.getPosition())); c != nullptr && over == nullptr; c = c->getParentComponent())
+            over = dynamic_cast<InsertSlot*> (c);
+        swipeBypassOver (over);
+        return;
+    }
     if (! pluginId.empty() && ! removed && ! e.mods.isPopupMenu() && e.getDistanceFromDragStart() > 4)
     {
         dragging = true;
@@ -242,6 +280,13 @@ void InsertSlot::mouseDrag (const juce::MouseEvent& e)
 void InsertSlot::mouseUp (const juce::MouseEvent& e)
 {
     setMouseCursor (juce::MouseCursor::NormalCursor);
+    if (std::exchange (swipingBypass, false))
+    {
+        if (owner.studio.session().inGesture())
+            owner.studio.session().endGesture();
+        owner.studio.edited();
+        return;
+    }
     if (pluginId.empty() || e.mods.isPopupMenu() || std::exchange (removed, false))
         return;
     if (dragging)
@@ -538,7 +583,7 @@ void ChannelStrip::rebuildSlots()
     for (const auto& p : t->strip.inserts)
     {
         const auto proc = studio.processor (p.id);
-        key += p.id + p.name + (p.bypass ? "b" : "") + (proc != nullptr && proc->isPlaceholder() ? "p" : "") + ";";
+        key += p.id + p.name + (proc != nullptr && proc->isPlaceholder() ? "p" : "") + ";"; // bypass shows in place
     }
     key += "|";
     for (const auto& snd : t->strip.sends)
@@ -548,6 +593,8 @@ void ChannelStrip::rebuildSlots()
     {
         for (std::size_t i = 0; i < sends.size() && i < t->strip.sends.size(); ++i)
             setDbSlider (sends[i]->level, t->strip.sends[i].levelDb);
+        for (std::size_t i = 0; i < inserts.size() && i < t->strip.inserts.size(); ++i)
+            inserts[i]->showBypass (t->strip.inserts[i].bypass);
         return;
     }
     shownSlots = key;
@@ -892,6 +939,9 @@ juce::PopupMenu ChannelStrip::insertMenu (std::size_t slot) const
     juce::PopupMenu replace;
     addPluginChoices (replace, choices, itemPlugin);
     menu.addSubMenu ("Replace", replace);
+    juce::PopupMenu before;
+    addPluginChoices (before, choices, itemInsertBefore);
+    menu.addSubMenu ("Insert Before", before, t->strip.inserts.size() < static_cast<std::size_t> (model::maxInserts));
     return menu;
 }
 
@@ -902,6 +952,14 @@ void ChannelStrip::pickInsert (std::size_t slot, int itemId)
         return;
     const auto filled = slot < t->strip.inserts.size();
     const auto pluginId = filled ? t->strip.inserts[slot].id : Id();
+    if (itemId >= itemInsertBefore)
+    {
+        const auto choices = studio.pluginChoices (false);
+        const auto i = static_cast<std::size_t> (itemId - itemInsertBefore);
+        if (i < choices.size())
+            studio.addPlugin (id, choices[i], slot);
+        return;
+    }
     if (itemId >= itemPlugin)
     {
         const auto choices = studio.pluginChoices (false);
@@ -938,6 +996,16 @@ void ChannelStrip::moveInsert (std::size_t from, std::size_t to)
         return;
     studio.check (studio.session().moveInsert (id, t->strip.inserts[from].id, std::min (to, t->strip.inserts.size() - 1)));
     studio.edited();
+}
+
+void ChannelStrip::setBypass (std::size_t slot, bool on)
+{
+    const auto* t = track();
+    if (t == nullptr || slot >= t->strip.inserts.size() || t->strip.inserts[slot].bypass == on)
+        return;
+    studio.check (studio.session().setInsertBypass (id, t->strip.inserts[slot].id, on));
+    if (slot < inserts.size())
+        inserts[slot]->showBypass (on);
 }
 
 void ChannelStrip::dropInsert (std::size_t from, ChannelStrip& target, std::size_t to, bool copy)

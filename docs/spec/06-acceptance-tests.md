@@ -352,6 +352,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-16** [U][UI] · F-TRK-10, D-W6-1, D-UI-31 · With track A output to a bus and track B on its own, soloing A leaves A and the bus audible and B silenced (`audibleWithSolo`), and soloing the bus instead leaves A audible too; B's Mute button in the header and the mixer carries the silenced-by-solo tint, A's and the bus's don't; clearing the solo clears the tint. In the mixer Alt+click on a Mute mutes every strip but the master.
 
+**AT-MIX-17** [UI] · F-MIX-6, D-W6-10 · Shift+click on a filled insert slot bypasses it without opening its window. Pressing the first slot's bypass dot bypasses it; dragging across the next slot's dot and another channel's first dot bypasses them too, a free slot is skipped, and it is one undo step ("Bypass Plug-ins") that undo reverses for all three. Insert Before › Weft Delay on slot 2 puts the delay in slot 2 and the plug-in that was there in slot 3.
+
 ## 10. Plugins (PLG)
 
 **AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error. **Decision D-AT-4** fixes the list.
@@ -379,6 +381,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-PLG-11** [E] · F-PLG-15 · Opening a project referencing a VST3 class ID not installed creates a placeholder that passes audio unchanged, shows the plugin's name, and on save writes the original state bytes unchanged (byte-identical).
 
 **AT-PLG-12** [UI] · F-PLG-4, D-UI-24 · An insert effect's window has a Bypass button in a strip above the editor: pressing it bypasses the insert and lights the button; bypassing from the mixer slot's menu puts the button out again.
+
+**AT-PLG-13** [UI] · F-PLG-4, D-W6-11 · With no track selected Ctrl+Shift+P only reports that a track is needed. On an audio track an empty search lists every effect and no instrument; " dEL " finds only Weft Delay; "weft del" finds it too; "zzz" finds nothing. Searching "eq" and pressing Enter adds Weft EQ to the track's first insert slot. On an instrument track the list also has the instruments, and choosing one sets the track's instrument; an instrument can't be added to an audio track. The Mix menu lists Search and Add Plug-in....
 
 ## 11. Automation (AUT)
 

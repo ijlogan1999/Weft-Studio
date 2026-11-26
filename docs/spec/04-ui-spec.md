@@ -222,6 +222,7 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Mute / Solo / Record-enable track | Shift+M / S / Shift+R | | New audio / instrument track | Ctrl+Alt+A / Ctrl+Alt+I |
 | Rename / Delete marker | Shift+' / Alt+Delete | | Select previous / next region or note | Left / Right |
 | Move notes left / right (piano roll) | Alt+Left / Alt+Right | | Tools, while the Tool menu is open | T P I J E M |
+| Search and Add Plug-in | Ctrl+Shift+P | | | |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 

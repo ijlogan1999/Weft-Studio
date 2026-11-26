@@ -2,6 +2,8 @@
 
 #include "UiFixture.h"
 
+#include "ui/PluginSearch.h"
+
 using namespace weft;
 using namespace weft::ui;
 using namespace weft::ui::test;
@@ -633,4 +635,132 @@ TEST_CASE ("AT-MIX-16 Mute buttons show which tracks a solo silences; Alt+click 
     for (const auto& id : { a, b, bus })
         CHECK (ui.m().track (id)->mute);
     CHECK_FALSE (ui.m().track (ui.m().info.masterTrackId)->mute);
+}
+
+TEST_CASE ("AT-MIX-17 Shift+click and swipes bypass inserts; Insert Before puts a plug-in ahead of one", "[UI][AT-MIX-17]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    const auto second = ui.studio.session().createTrack (model::TrackKind::audio, "Second").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    for (const auto& id : { first, first, second })
+    {
+        auto* strip = mixer.stripFor (id);
+        const auto slot = ui.m().track (id)->strip.inserts.size();
+        const auto eq = entry (strip->insertMenu (slot), "Weft EQ");
+        REQUIRE (eq);
+        strip->pickInsert (slot, eq->id);
+        ui.settle();
+    }
+    const auto bypass = [&] (const Id& id, std::size_t i) { return ui.m().track (id)->strip.inserts[i].bypass; };
+    auto* a = mixer.stripFor (first);
+    auto* b = mixer.stripFor (second);
+    REQUIRE (a->inserts.size() >= 2);
+    REQUIRE (b->inserts.size() >= 1);
+
+    // Shift+click toggles bypass and opens nothing.
+    std::vector<Id> opened; // adding opened their windows; closing one writes its state, so copy the ids first
+    for (const auto& id : { first, second })
+        for (const auto& p : ui.m().track (id)->strip.inserts)
+            opened.push_back (p.id);
+    for (const auto& id : opened)
+        ui.main->pluginWindows().close (id);
+    ui.settle();
+    REQUIRE (ui.main->pluginWindows().find (ui.m().track (first)->strip.inserts[0].id) == nullptr);
+    auto& slot0 = *a->inserts[0];
+    const auto middle = slot0.getLocalBounds().getCentre().toFloat();
+    slot0.mouseDown (mouse (slot0, middle, juce::ModifierKeys (juce::ModifierKeys::shiftModifier | juce::ModifierKeys::leftButtonModifier)));
+    slot0.mouseUp (mouse (slot0, middle, juce::ModifierKeys::shiftModifier));
+    ui.settle();
+    CHECK (bypass (first, 0));
+    CHECK (ui.main->pluginWindows().find (ui.m().track (first)->strip.inserts[0].id) == nullptr);
+    a->pickInsert (0, ChannelStrip::itemBypass);
+    ui.settle();
+    REQUIRE_FALSE (bypass (first, 0));
+
+    // A press on a dot, then across the other dots: all bypassed, one undo step, the slots stay the same objects.
+    {
+        auto* from = a->inserts[0].get();
+        const auto dot = juce::Point<float> (4.0f, static_cast<float> (from->getHeight()) / 2.0f);
+        from->mouseDown (mouse (*from, dot, juce::ModifierKeys::leftButtonModifier));
+        ui.settle();
+        CHECK (bypass (first, 0));
+        CHECK (a->inserts[0].get() == from);
+        from->swipeBypassOver (a->inserts[1].get());
+        from->swipeBypassOver (b->inserts[0].get());
+        from->swipeBypassOver (b->inserts.back().get()); // the free slot: nothing to bypass
+        from->mouseUp (mouse (*from, dot));
+        ui.settle();
+    }
+    CHECK ((bypass (first, 0) && bypass (first, 1) && bypass (second, 0)));
+    CHECK (ui.studio.session().undoName() == "Bypass Plug-ins");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK_FALSE ((bypass (first, 0) || bypass (first, 1) || bypass (second, 0)));
+
+    // Insert Before: a new plug-in in that slot, the rest move down.
+    const auto was = ui.m().track (first)->strip.inserts[1].id;
+    std::optional<MenuEntry> delay;
+    for (const auto& e : entries (a->insertMenu (1)))
+        if (e.id >= ChannelStrip::itemInsertBefore && e.text.startsWith ("Weft Delay"))
+            delay = e;
+    REQUIRE (delay);
+    a->pickInsert (1, delay->id);
+    ui.settle();
+    REQUIRE (ui.m().track (first)->strip.inserts.size() == 3);
+    CHECK (ui.m().track (first)->strip.inserts[1].pluginUid == "weft.delay");
+    CHECK (ui.m().track (first)->strip.inserts[2].id == was);
+}
+
+TEST_CASE ("AT-PLG-13 Search and Add Plug-in", "[UI][AT-PLG-13]")
+{
+    Ui ui;
+    const auto audio = ui.m().trackOrder.front();
+    const auto keys = ui.studio.session().createTrack (model::TrackKind::instrument, "Keys").value();
+    ui.studio.edited();
+    ui.settle();
+
+    // No track selected: the command says so.
+    ui.studio.selectTrack ({});
+    ui.key ('P', juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.status.contains ("Select a track"));
+
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    const auto all = PluginSearch::matches (ui.studio, "");
+    CHECK (all.size() == ui.studio.pluginChoices (false).size()); // effects only on an audio track
+    const auto delay = PluginSearch::matches (ui.studio, "  dEL ");
+    REQUIRE (delay.size() == 1);
+    CHECK (delay[0].label == "Weft Delay");
+    CHECK (PluginSearch::matches (ui.studio, "weft del").size() == 1); // every word must match
+    CHECK (PluginSearch::matches (ui.studio, "zzz").empty());
+
+    PluginSearch search (ui.studio);
+    search.setSearch ("eq");
+    REQUIRE_FALSE (search.results().empty());
+    CHECK (search.addSelected());
+    ui.settle();
+    REQUIRE (ui.m().track (audio)->strip.inserts.size() == 1);
+    CHECK (ui.m().track (audio)->strip.inserts[0].pluginUid == "weft.eq");
+
+    // An instrument track also finds instruments, and an instrument goes in its instrument slot.
+    ui.studio.selectTrack (keys);
+    ui.settle();
+    const auto withInstruments = PluginSearch::matches (ui.studio, "");
+    CHECK (withInstruments.size() == ui.studio.pluginChoices (true).size() + ui.studio.pluginChoices (false).size());
+    const auto instrument = ui.studio.pluginChoices (true).front();
+    CHECK (PluginSearch::add (ui.studio, instrument));
+    ui.settle();
+    REQUIRE (ui.m().track (keys)->strip.instrument.has_value());
+    CHECK (ui.m().track (keys)->strip.instrument->pluginUid == instrument.plugin.pluginUid);
+    ui.studio.selectTrack (audio);
+    CHECK_FALSE (PluginSearch::add (ui.studio, instrument));
+    CHECK (ui.studio.status.contains ("instrument track"));
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (3, "Mix");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Search and Add Plug-in..."));
 }
