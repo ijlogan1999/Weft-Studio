@@ -464,6 +464,7 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
 
 ChannelStrip::~ChannelStrip()
 {
+    studio.forgetMeterReader (this);
     sends.clear();
     pan.setLookAndFeel (nullptr);
 }
@@ -669,7 +670,7 @@ void ChannelStrip::refresh()
 
 void ChannelStrip::updateMeter (double now)
 {
-    const auto m = studio.engine().takeMeter (isMaster() ? Id() : id);
+    const auto m = studio.takeMeter (isMaster() ? Id() : id, this);
     meter.update (m.output, m.rms, m.clip, now);
 }
 
@@ -699,7 +700,7 @@ void ChannelStrip::followAutomation()
 void ChannelStrip::paint (juce::Graphics& g)
 {
     const auto* t = track();
-    const auto selected = ! isMaster() && studio.selectedTrack() == id;
+    const auto selected = ! isMaster() && highlightSelection && studio.selectedTrack() == id;
     // Each strip is a raised panel on the mixer's ground, with the track colour along the top.
     const auto panel = getLocalBounds().toFloat().reduced (1.0f, 0.0f);
     depth::shadow (g, panel, radius::r1, depth::Level::panel);
@@ -820,7 +821,7 @@ void ChannelStrip::resized()
 
 void ChannelStrip::mouseDown (const juce::MouseEvent&)
 {
-    if (! isMaster())
+    if (! isMaster() && selectsOnClick)
         studio.selectTrack (id);
 }
 

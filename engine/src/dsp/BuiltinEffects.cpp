@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <numbers>
 
 namespace weft::engine
@@ -53,6 +54,15 @@ void Biquad::design (Type type, double rate, double freq, double q, double gainD
     b0 = B0 / A0, b1 = B1 / A0, b2 = B2 / A0, a1 = A1 / A0, a2 = A2 / A0;
 }
 
+double Biquad::magnitudeDb (double freq, double rate) const noexcept
+{
+    // |H(e^jw)| with z^-1 = e^-jw.
+    const double w = 2.0 * std::numbers::pi * freq / rate;
+    const std::complex<double> z1 = std::polar (1.0, -w), z2 = std::polar (1.0, -2.0 * w);
+    const auto h = (b0 + b1 * z1 + b2 * z2) / (1.0 + a1 * z1 + a2 * z2);
+    return 20.0 * std::log10 (std::max (std::abs (h), 1.0e-9));
+}
+
 // EQ -------------------------------------------------------------------------------------
 
 WeftEq::WeftEq()
@@ -83,17 +93,31 @@ void WeftEq::prepare (double sampleRate, int)
     design();
 }
 
-void WeftEq::design() noexcept
+void WeftEq::design() noexcept { designInto (bands, active, rate); }
+
+void WeftEq::designInto (std::array<Biquad, 6>& out, std::array<bool, 6>& on, double sampleRate) const noexcept
 {
     constexpr double butterworthQ = 0.70710678118654752;
     using T = Biquad::Type;
-    bands[0].design (T::highPass, rate, value (1), butterworthQ, 0);
-    bands[1].design (T::lowShelf, rate, value (2), butterworthQ, value (3));
-    bands[2].design (T::peak, rate, value (4), value (6), value (5));
-    bands[3].design (T::peak, rate, value (7), value (9), value (8));
-    bands[4].design (T::highShelf, rate, value (10), butterworthQ, value (11));
-    bands[5].design (T::lowPass, rate, value (13), butterworthQ, 0);
-    active = { value (0) > 0.5, value (3) != 0.0, value (5) != 0.0, value (8) != 0.0, value (11) != 0.0, value (12) > 0.5 };
+    out[0].design (T::highPass, sampleRate, value (1), butterworthQ, 0);
+    out[1].design (T::lowShelf, sampleRate, value (2), butterworthQ, value (3));
+    out[2].design (T::peak, sampleRate, value (4), value (6), value (5));
+    out[3].design (T::peak, sampleRate, value (7), value (9), value (8));
+    out[4].design (T::highShelf, sampleRate, value (10), butterworthQ, value (11));
+    out[5].design (T::lowPass, sampleRate, value (13), butterworthQ, 0);
+    on = { value (0) > 0.5, value (3) != 0.0, value (5) != 0.0, value (8) != 0.0, value (11) != 0.0, value (12) > 0.5 };
+}
+
+double WeftEq::responseDb (double freq, double sampleRate) const noexcept
+{
+    std::array<Biquad, 6> sections {};
+    std::array<bool, 6> on {};
+    designInto (sections, on, sampleRate);
+    double db = 0;
+    for (std::size_t b = 0; b < sections.size(); ++b)
+        if (on[b])
+            db += sections[b].magnitudeDb (freq, sampleRate);
+    return db;
 }
 
 void WeftEq::process (std::span<const MidiEvent>, float* const* io, int numChannels, int numFrames) noexcept
