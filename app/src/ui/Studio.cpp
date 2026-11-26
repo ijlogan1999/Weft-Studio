@@ -85,6 +85,98 @@ juce::String toolKey (Tool t)
 
 // Layout ---------------------------------------------------------------------------
 
+juce::var ControlBarLayout::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("items", items);
+    o->setProperty ("master", master == Master::none ? "none" : master == Master::meter ? "meter" : "volume");
+    static const char* const formats[] = { "milliseconds", "samples", "timecode24", "timecode25", "timecode30" };
+    o->setProperty ("time", formats[static_cast<int> (timeFormat)]);
+    o->setProperty ("tempoDecimals", tempoDecimals);
+    return juce::var (o);
+}
+
+ControlBarLayout ControlBarLayout::fromVar (const juce::var& v)
+{
+    ControlBarLayout l;
+    if (! v.isObject())
+        return l;
+    if (v.hasProperty ("items"))
+        l.items = static_cast<int> (v["items"]) & allItems;
+    const auto master = v["master"].toString();
+    l.master = master == "none" ? Master::none : master == "meter" ? Master::meter : Master::volume;
+    const auto time = v["time"].toString();
+    l.timeFormat = time == "samples"      ? TimeFormat::samples
+                   : time == "timecode24" ? TimeFormat::timecode24
+                   : time == "timecode25" ? TimeFormat::timecode25
+                   : time == "timecode30" ? TimeFormat::timecode30
+                                          : TimeFormat::milliseconds;
+    const int decimals = v.hasProperty ("tempoDecimals") ? static_cast<int> (v["tempoDecimals"]) : 2;
+    l.tempoDecimals = decimals <= 0 ? 0 : decimals >= 4 ? 4 : 2;
+    return l;
+}
+
+juce::String formatDisplayTime (double seconds, double sampleRate, ControlBarLayout::TimeFormat format)
+{
+    using F = ControlBarLayout::TimeFormat;
+    const auto negative = seconds < 0;
+    const auto s = std::abs (seconds);
+    const juce::String sign = negative ? "-" : "";
+    switch (format)
+    {
+        case F::samples:
+            return sign + juce::String (static_cast<juce::int64> (std::llround (s * sampleRate)));
+        case F::timecode24:
+        case F::timecode25:
+        case F::timecode30:
+        {
+            const int fps = format == F::timecode24 ? 24 : format == F::timecode25 ? 25 : 30;
+            const auto frames = static_cast<juce::int64> (std::floor (s * fps + 1e-9));
+            const auto whole = frames / fps;
+            return sign + juce::String::formatted ("%02d:%02d:%02d:%02d", static_cast<int> (whole / 3600), static_cast<int> (whole / 60 % 60),
+                                                   static_cast<int> (whole % 60), static_cast<int> (frames % fps));
+        }
+        case F::milliseconds:
+        default:
+            return sign + juce::String::formatted ("%d:%06.3f", static_cast<int> (s / 60.0), std::fmod (s, 60.0));
+    }
+}
+
+std::vector<Cmd> defaultToolbarCommands()
+{
+    return { Cmd::split, Cmd::join, Cmd::repeat, Cmd::quantize, Cmd::setCycleToSelection, Cmd::addMarker, Cmd::zoomToFit, Cmd::bounce };
+}
+
+std::vector<Cmd> toolbarChoices()
+{
+    return { Cmd::split, Cmd::splitAtCycle, Cmd::join, Cmd::repeat, Cmd::muteRegions, Cmd::loopRegion, Cmd::crossfade, Cmd::reverseRegions,
+             Cmd::quantize, Cmd::setCycleToSelection, Cmd::addMarker, Cmd::zoomToFit, Cmd::tapTempo, Cmd::newTrack, Cmd::duplicateTrack,
+             Cmd::deleteUnusedTracks, Cmd::importAudio, Cmd::exportRegions, Cmd::bounce, Cmd::pluginManager, Cmd::searchPlugins };
+}
+
+namespace
+{
+juce::var commandList (const std::vector<Cmd>& cmds)
+{
+    juce::Array<juce::var> names;
+    for (const auto c : cmds)
+        names.add (juce::String (commandInfo (c).name));
+    return names;
+}
+
+std::vector<Cmd> commandsNamed (const juce::var& v, std::vector<Cmd> fallback)
+{
+    if (! v.isArray())
+        return fallback;
+    std::vector<Cmd> out;
+    for (const auto& name : *v.getArray())
+        for (const auto c : toolbarChoices())
+            if (name.toString() == juce::String (commandInfo (c).name) && std::find (out.begin(), out.end(), c) == out.end())
+                out.push_back (c);
+    return out;
+}
+} // namespace
+
 juce::String PanelLayout::toString() const
 {
     auto* o = new juce::DynamicObject();
@@ -96,6 +188,12 @@ juce::String PanelLayout::toString() const
     o->setProperty ("sidePanelWidth", sidePanelWidth);
     o->setProperty ("bottomHeight", bottomHeight);
     o->setProperty ("darkTheme", darkTheme);
+    o->setProperty ("controlBar", controlBar);
+    o->setProperty ("toolbar", toolbar);
+    o->setProperty ("bar", bar.toVar());
+    o->setProperty ("barDefault", barDefault.toVar());
+    o->setProperty ("toolbarCommands", commandList (toolbarCommands));
+    o->setProperty ("toolbarDefault", commandList (toolbarDefault));
     return juce::JSON::toString (juce::var (o), true);
 }
 
@@ -117,6 +215,12 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
     l.sidePanelWidth = std::clamp (get ("sidePanelWidth", l.sidePanelWidth), 200, 700);
     l.bottomHeight = std::clamp (get ("bottomHeight", l.bottomHeight), 160, 2000);
     l.darkTheme = get ("darkTheme", l.darkTheme);
+    l.controlBar = get ("controlBar", l.controlBar);
+    l.toolbar = get ("toolbar", l.toolbar);
+    l.bar = ControlBarLayout::fromVar (v["bar"]);
+    l.barDefault = ControlBarLayout::fromVar (v["barDefault"]);
+    l.toolbarCommands = commandsNamed (v["toolbarCommands"], l.toolbarCommands);
+    l.toolbarDefault = commandsNamed (v["toolbarDefault"], l.toolbarDefault);
     return l;
 }
 
@@ -1487,6 +1591,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::markerForSelection: case Cmd::cycleToMarker: case Cmd::cycleToPreviousMarker: case Cmd::cycleToNextMarker: case Cmd::previousMarkerSetLocators: case Cmd::nextMarkerSetLocators: case Cmd::goToMarkerNumber:
         case Cmd::applyRegionParameters: case Cmd::applyRegionParametersExceptDelay:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
+        case Cmd::toggleControlBar: case Cmd::toggleToolbar: case Cmd::customizeControlBar: case Cmd::bigBeatsDisplay: case Cmd::bigTimeDisplay: case Cmd::performanceMeter:
             break;
     }
     return std::nullopt;
@@ -1951,6 +2056,8 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::toggleInspector: layout.inspector = ! layout.inspector; break;
+        case Cmd::toggleControlBar: layout.controlBar = ! layout.controlBar; break;
+        case Cmd::toggleToolbar: layout.toolbar = ! layout.toolbar; break;
         case Cmd::toggleSidePanel: layout.sidePanel = ! layout.sidePanel; break;
         case Cmd::toggleGlobalTracks: layout.globalTracks = ! layout.globalTracks; break;
         case Cmd::toggleAutomation:
@@ -2132,6 +2239,10 @@ bool Studio::perform (Cmd command)
         case Cmd::projectSettings:
         case Cmd::audioSettings:
         case Cmd::settings:
+        case Cmd::customizeControlBar:
+        case Cmd::bigBeatsDisplay:
+        case Cmd::bigTimeDisplay:
+        case Cmd::performanceMeter:
         case Cmd::shareProject:
         case Cmd::shareFolder:
         case Cmd::joinProject:

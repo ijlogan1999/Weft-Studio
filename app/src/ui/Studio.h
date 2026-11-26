@@ -82,6 +82,40 @@ enum class BottomTab
     audioEditor
 };
 
+/** Customize Control Bar (D-UI-43): which controls the control bar shows, the master
+    control beside the modes, and how the display writes time and tempo. */
+struct ControlBarLayout
+{
+    /** Bits of `items`: each one shows a control or a group of controls. */
+    enum Item : int
+    {
+        panelButtons = 1, toolbarButton = 2, transportMoves = 4, // Go to Start, Previous and Next Bar
+        timeDisplay = 8, tempoDisplay = 16, signatureDisplay = 32, keyDisplay = 64,
+        clickAndPunch = 128, countInMenu = 256, snapControls = 512, followButton = 1024, keysButton = 2048, cpuMeter = 4096
+    };
+    static constexpr int allItems = 8191;
+    enum class Master { none, volume, meter };
+    enum class TimeFormat { milliseconds, samples, timecode24, timecode25, timecode30 };
+
+    int items = allItems;
+    Master master = Master::volume;
+    TimeFormat timeFormat = TimeFormat::milliseconds;
+    int tempoDecimals = 2; // 0, 2 or 4
+
+    bool shows (Item i) const noexcept { return (items & i) != 0; }
+    juce::var toVar() const;
+    static ControlBarLayout fromVar (const juce::var& v);
+    friend bool operator== (const ControlBarLayout&, const ControlBarLayout&) = default;
+};
+
+/** The display's time text in a ControlBarLayout format (D-UI-43): 1:02.345, 2,976,000 samples or 00:01:02:08. */
+juce::String formatDisplayTime (double seconds, double sampleRate, ControlBarLayout::TimeFormat format);
+
+/** The toolbar's buttons until it is customized (D-UI-43). */
+std::vector<Cmd> defaultToolbarCommands();
+/** Every command the toolbar can hold, in its menu's order. */
+std::vector<Cmd> toolbarChoices();
+
 /** Panel visibility and sizes, kept per user across restarts (F-UI-1). */
 struct PanelLayout
 {
@@ -93,6 +127,11 @@ struct PanelLayout
     int sidePanelWidth = 304;
     int bottomHeight = 288;
     bool darkTheme = true;
+    /** View › Control Bar and View › Toolbar, and their customized contents (D-UI-43). */
+    bool controlBar = true;
+    bool toolbar = false;
+    ControlBarLayout bar, barDefault;
+    std::vector<Cmd> toolbarCommands = defaultToolbarCommands(), toolbarDefault = defaultToolbarCommands();
 
     juce::String toString() const;
     static PanelLayout fromString (const juce::String& text);

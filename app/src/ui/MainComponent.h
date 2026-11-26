@@ -110,6 +110,11 @@ public:
     } toolKeys { *this };
 
     ControlBar& controlBar() noexcept { return control; }
+    Toolbar& toolbar() noexcept { return toolbarRow; }
+    /** Open big displays and performance meters (D-UI-43). */
+    const juce::OwnedArray<FloatingWindow>& floatingWindows() const noexcept { return floating; }
+    /** Opens a big beats or time display, or the performance meter (scale 1 to 3). */
+    void openFloating (Cmd kind, int scale = 1);
     Inspector& inspector() noexcept { return inspectorPanel; }
     TracksArea& tracks() noexcept { return tracksArea; }
     BottomArea& bottom() noexcept { return bottomArea; }
@@ -181,6 +186,8 @@ private:
 
     Studio& studio;
     ControlBar control;
+    Toolbar toolbarRow { studio };
+    juce::OwnedArray<FloatingWindow> floating;
     Inspector inspectorPanel;
     TracksArea tracksArea;
     BottomArea bottomArea;

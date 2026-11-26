@@ -135,8 +135,9 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
 {
     setTitle ("Weft Studio");
     juce::Desktop::getInstance().addDarkModeSettingListener (this);
-    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly, &preview })
+    for (auto* c : std::initializer_list<juce::Component*> { &control, &toolbarRow, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly, &preview })
         addChildComponent (c);
+    control.onPerformanceMeter = [this] (int scale) { openFloating (Cmd::performanceMeter, scale); };
     preview.restore.onClick = [this] { studio.restorePreviewed(); };
     preview.back.onClick = [this] { studio.returnToCurrent(); };
     studio.confirmBreakLock = [this] (const Id& trackId) {
@@ -202,7 +203,6 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     };
     // Any input anywhere in the window keeps this user from showing as idle (05 §5).
     addMouseListener (this, true);
-    control.setVisible (true);
     tracksArea.setVisible (true);
     status.setVisible (true);
     setWantsKeyboardFocus (true);
@@ -302,7 +302,7 @@ void MainComponent::paintOverChildren (juce::Graphics& g)
                                 : juce::ColourGradient::horizontal (a, r.getX(), a.withAlpha (0.0f), r.getRight()));
         g.fillRect (r);
     };
-    shade ({ 0, control.getBottom(), getWidth(), 6 }, true);
+    shade ({ 0, std::max (control.getBottom(), toolbarRow.getBottom()), getWidth(), 6 }, true);
     if (inspectorPanel.isVisible())
         shade ({ inspectorPanel.getRight(), inspectorPanel.getY(), 5, inspectorPanel.getHeight() }, false);
 }
@@ -311,14 +311,18 @@ int MainComponent::maxBottom() const
 {
     // The tracks area keeps at least 160 px (F-UI-1: it is always visible); the bottom area may
     // take 80 % of the window (spec 04 §G).
-    const auto room = getHeight() - control.getHeight() - StatusBar::height - 160;
+    const auto room = getHeight() - control.getHeight() - toolbarRow.getHeight() - StatusBar::height - 160;
     return std::max (minBottom, std::min (room, getHeight() * 4 / 5));
 }
 
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
-    control.setBounds (r.removeFromTop (size::transport));
+    // View › Control Bar and View › Toolbar (D-UI-43).
+    control.setVisible (studio.layout.controlBar);
+    toolbarRow.setVisible (studio.layout.toolbar);
+    control.setBounds (studio.layout.controlBar ? r.removeFromTop (size::transport) : r.withHeight (0));
+    toolbarRow.setBounds (studio.layout.toolbar ? r.removeFromTop (Toolbar::height) : r.withHeight (0));
     status.setBounds (r.removeFromBottom (StatusBar::height));
     if (banner.isVisible())
         banner.setBounds (r.removeFromTop (NoAudioBanner::height));
@@ -561,11 +565,44 @@ void MainComponent::handleUiCommand (Cmd command)
     }
     else if (command == Cmd::audioSettings && devices != nullptr && desktopWindows())
         launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
+    else if (command == Cmd::bigBeatsDisplay || command == Cmd::bigTimeDisplay || command == Cmd::performanceMeter)
+        openFloating (command);
+    else if (command == Cmd::customizeControlBar)
+        control.customizeMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                                               [safe = juce::Component::SafePointer<MainComponent> (this)] (int item) {
+                                                   if (safe != nullptr)
+                                                       safe->control.pickCustomize (item);
+                                               });
     else if (command == Cmd::settings && desktopWindows())
     {
         auto* dialog = launchDialog (std::make_unique<SettingsDialog> (studio), "Settings", this);
         dialog->onAudioSettings = [this] { run (Cmd::audioSettings); };
     }
+}
+
+void MainComponent::openFloating (Cmd kind, int scale)
+{
+    std::unique_ptr<juce::Component> content;
+    juce::String title;
+    if (kind == Cmd::performanceMeter)
+    {
+        content = std::make_unique<PerformanceMeter> (studio);
+        content->setSize (content->getWidth() * std::clamp (scale, 1, 3), content->getHeight() * std::clamp (scale, 1, 3));
+        title = "Performance";
+    }
+    else
+    {
+        const auto beats = kind == Cmd::bigBeatsDisplay;
+        content = std::make_unique<BigDisplay> (studio, beats ? BigDisplay::Mode::beats : BigDisplay::Mode::time);
+        title = beats ? "Bars and Beats" : "Time";
+    }
+    floating.add (new FloatingWindow (title, std::move (content), [safe = juce::Component::SafePointer<MainComponent> (this)] (FloatingWindow* w) {
+        // Deleted after the close click returns.
+        juce::MessageManager::callAsync ([safe, w] {
+            if (safe != nullptr)
+                safe->floating.removeObject (w);
+        });
+    }));
 }
 
 void MainComponent::whenSignedIn (std::function<void()> next)
@@ -1080,6 +1117,15 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
+            {
+                // D-UI-43: the control bar, the toolbar and the big displays.
+                juce::PopupMenu bars;
+                bars.addItem (static_cast<int> (Cmd::toggleControlBar) + 1, commandInfo (Cmd::toggleControlBar).name, true, studio.layout.controlBar);
+                bars.addItem (static_cast<int> (Cmd::toggleToolbar) + 1, commandInfo (Cmd::toggleToolbar).name, true, studio.layout.toolbar);
+                for (auto c : { Cmd::customizeControlBar, Cmd::bigBeatsDisplay, Cmd::bigTimeDisplay, Cmd::performanceMeter })
+                    bars.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+                menu.addSubMenu ("Control Bar and Displays", bars);
+            }
             {
                 // D-W8-7: automation modes for every track, the selected track's toggles, and the used-parameter cycle.
                 juce::PopupMenu modes;

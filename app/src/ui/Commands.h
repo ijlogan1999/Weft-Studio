@@ -86,7 +86,9 @@ enum class Cmd
     automationAllOff, automationAllRead, automationAllTouch, automationAllLatch, automationOffRead, automationLatchRead, cycleAutomationParameter,
     // D-UI-39: marker commands
     markerForSelection, cycleToMarker, cycleToPreviousMarker, cycleToNextMarker, previousMarkerSetLocators, nextMarkerSetLocators, goToMarkerNumber,
-    applyRegionParameters, applyRegionParametersExceptDelay, settings
+    applyRegionParameters, applyRegionParametersExceptDelay, settings,
+    // D-UI-43: control bar, toolbar and big displays
+    toggleControlBar, toggleToolbar, customizeControlBar, bigBeatsDisplay, bigTimeDisplay, performanceMeter
 };
 
 struct CommandInfo

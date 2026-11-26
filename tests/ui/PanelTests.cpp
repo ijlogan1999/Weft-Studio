@@ -599,3 +599,111 @@ TEST_CASE ("AT-UI-13 the Settings window", "[UI][AT-UI-13]")
     ui.studio.setPreferences ({});
     Theme::get().widePlayhead = false;
 }
+
+TEST_CASE ("AT-UI-14 customize the control bar, its master control and display formats; toolbar; big displays", "[UI][AT-UI-14]")
+{
+    Ui ui;
+    ui.main->setSize (2400, 860);
+    ui.settle();
+    auto& bar = ui.main->controlBar();
+    using L = ControlBarLayout;
+
+    // The menu lists every item, ticked; unticking Tempo and Key hides them, and Revert brings back the last change.
+    juce::StringArray items;
+    const auto menu = bar.customizeMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+        items.add (it.getItem().text);
+    for (const auto* name : { "Tempo", "Key", "Count-in", "CPU Meter", "Master Volume", "Output Meter", "Samples", "BPM Without Decimals",
+                              "Open Big Beats Display", "Apply Defaults", "Save As Default", "Revert" })
+        CHECK (items.contains (name));
+    REQUIRE (bar.tempoDisplay().isVisible());
+    bar.pickCustomize (ControlBar::itemShowBase + 4); // Tempo
+    CHECK_FALSE (bar.tempoDisplay().isVisible());
+    bar.pickCustomize (ControlBar::itemShowBase + 6); // Key
+    CHECK_FALSE (bar.keyDisplay().isVisible());
+    bar.pickCustomize (ControlBar::itemRevert);
+    CHECK (bar.keyDisplay().isVisible());
+    CHECK_FALSE (bar.tempoDisplay().isVisible());
+    // Save As Default, change again, Apply Defaults: back to the saved layout.
+    bar.pickCustomize (ControlBar::itemSaveDefault);
+    CHECK (ui.studio.layout.barDefault.items == (L::allItems & ~L::tempoDisplay));
+    bar.pickCustomize (ControlBar::itemShowBase + 12); // CPU meter
+    CHECK_FALSE (bar.cpuDisplay().isVisible());
+    bar.pickCustomize (ControlBar::itemApplyDefaults);
+    CHECK (bar.cpuDisplay().isVisible());
+    CHECK_FALSE (bar.tempoDisplay().isVisible());
+
+    // The master volume slider sets the master's fader; the meter takes its place, or neither shows.
+    REQUIRE (bar.masterVolumeSlider().isVisible());
+    CHECK_FALSE (bar.outputMeterView().isVisible());
+    bar.masterVolumeSlider().setValue (-6.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (ui.m().info.masterTrackId)->strip.volumeDb == Catch::Approx (-6.0));
+    bar.pickCustomize (ControlBar::itemMasterBase + 2);
+    CHECK_FALSE (bar.masterVolumeSlider().isVisible());
+    CHECK (bar.outputMeterView().isVisible());
+    bar.pickCustomize (ControlBar::itemMasterBase);
+    CHECK_FALSE (bar.outputMeterView().isVisible());
+
+    // Display formats: time as samples or timecode, tempo without decimals.
+    bar.pickCustomize (ControlBar::itemShowBase + 4); // tempo back
+    ui.studio.locate (2 * 3840 + 960); // bar 3 beat 2 at 120 BPM: 4.5 s
+    bar.pickCustomize (ControlBar::itemTimeBase + 1);
+    bar.refresh();
+    CHECK (bar.timeDisplay().getText() == "216000");
+    bar.pickCustomize (ControlBar::itemTimeBase + 3);
+    bar.refresh();
+    CHECK (bar.timeDisplay().getText() == "00:00:04:12");
+    bar.pickCustomize (ControlBar::itemTempoBase);
+    bar.refresh();
+    CHECK (bar.tempoDisplay().getText() == "120");
+    CHECK (formatDisplayTime (62.345, 48000, L::TimeFormat::milliseconds) == "1:02.345");
+    CHECK (formatDisplayTime (3725.5, 48000, L::TimeFormat::timecode30) == "01:02:05:15");
+
+    // View › Control Bar hides the bar; View › Toolbar (or its button) shows the toolbar with the default buttons.
+    REQUIRE (ui.studio.perform (Cmd::toggleControlBar));
+    ui.settle();
+    CHECK_FALSE (bar.isVisible());
+    REQUIRE (ui.studio.perform (Cmd::toggleControlBar));
+    REQUIRE (ui.studio.perform (Cmd::toggleToolbar));
+    ui.settle();
+    CHECK (bar.isVisible());
+    auto& toolbar = ui.main->toolbar();
+    REQUIRE (toolbar.isVisible());
+    CHECK (toolbar.getY() == bar.getBottom());
+    REQUIRE (toolbar.buttons().size() == defaultToolbarCommands().size());
+    CHECK (toolbar.buttons()[0]->getButtonText() == "Split at Playhead");
+    // Add Split at Cycle (second in the menu): it takes its place in the menu's order. Restore Defaults removes it.
+    toolbar.pickCustomize (2);
+    REQUIRE (toolbar.buttons().size() == defaultToolbarCommands().size() + 1);
+    CHECK (toolbar.buttons()[1]->command == Cmd::splitAtCycle);
+    toolbar.pickCustomize (Toolbar::itemRestoreDefault);
+    CHECK (toolbar.buttons().size() == defaultToolbarCommands().size());
+    CHECK (toolbar.buttons()[6]->command == Cmd::zoomToFit);
+
+    // The layout survives a restart.
+    ui.studio.layout.toolbarCommands = { Cmd::bounce, Cmd::join };
+    const auto again = PanelLayout::fromString (ui.studio.layout.toString());
+    CHECK (again.toolbar);
+    CHECK (again.bar == ui.studio.layout.bar);
+    CHECK (again.barDefault == ui.studio.layout.barDefault);
+    CHECK (again.toolbarCommands == std::vector<Cmd> { Cmd::bounce, Cmd::join });
+
+    // Big displays and the performance meter open as windows; several can be open.
+    REQUIRE (ui.studio.perform (Cmd::bigBeatsDisplay));
+    REQUIRE (ui.studio.perform (Cmd::bigTimeDisplay));
+    REQUIRE (ui.studio.perform (Cmd::bigBeatsDisplay));
+    REQUIRE (ui.main->floatingWindows().size() == 3);
+    auto* beats = dynamic_cast<BigDisplay*> (ui.main->floatingWindows()[0]->getContentComponent());
+    auto* time = dynamic_cast<BigDisplay*> (ui.main->floatingWindows()[1]->getContentComponent());
+    REQUIRE (beats != nullptr);
+    REQUIRE (time != nullptr);
+    CHECK (beats->text() == bar.positionDisplay().getText());
+    CHECK (time->text() == "00:00:04:12");
+    bar.onPerformanceMeter (2); // Ctrl+double-click on the CPU reading: twice the size
+    REQUIRE (ui.main->floatingWindows().size() == 4);
+    auto* meter = dynamic_cast<PerformanceMeter*> (ui.main->floatingWindows()[3]->getContentComponent());
+    REQUIRE (meter != nullptr);
+    CHECK (meter->getWidth() == 520);
+    CHECK (meter->text().startsWith ("CPU "));
+}
