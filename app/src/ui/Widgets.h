@@ -87,6 +87,7 @@ public:
     /** The last click came from the popup-menu button (right-click, or Ctrl+click on a Mac). */
     bool popupClick = false;
 
+    using juce::TextButton::clicked;
     void clicked (const juce::ModifierKeys& mods) override
     {
         popupClick = mods.isPopupMenu();

@@ -46,10 +46,18 @@ enum class Tool
     scissors,
     glue,
     eraser,
-    mute
+    mute,
+    // D-UI-36
+    text,
+    zoom,
+    fade,
+    gain,
+    quantize
 };
+inline constexpr Tool lastTool = Tool::quantize;
 juce::String toolName (Tool t);
-/** The one-key picks inside the Tool menu (D-UI-29): T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute. */
+/** The one-key picks inside the Tool menu (D-UI-29, D-UI-36): T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute,
+    N Text, Z Zoom, A Fade, G Gain, Q Quantize. */
 std::optional<Tool> toolForKey (juce::juce_wchar key);
 juce::String toolKey (Tool t);
 

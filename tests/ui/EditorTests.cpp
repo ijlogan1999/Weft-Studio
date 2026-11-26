@@ -266,3 +266,101 @@ TEST_CASE ("AT-EDA-2 Snap Edits to Zero Crossings moves audio editor trims onto 
     CHECK (engine::nearestZeroCrossing (flat, 500, 100) == 500);
     CHECK (engine::nearestZeroCrossing (flat, 50, 100) == 0); // the file start counts
 }
+
+TEST_CASE ("AT-ARR-39 Text, Zoom, Fade, Gain and Quantize tools; Next and Previous Tool", "[UI][AT-ARR-39]")
+{
+    Ui ui;
+    const auto audio = importSine (ui, bar); // one second: bar 2 to bar 2 + 2 beats at 120 BPM
+    auto& tl = ui.timeline();
+    auto& s = ui.studio.session();
+    const auto box = [&] { return tl.regionBounds (ui.region (audio)); };
+
+    // Text: click a region, type a name.
+    ui.studio.tool = Tool::text;
+    tl.promptForText = [] (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done) {
+        CHECK (title == "Rename region");
+        CHECK (current.isNotEmpty());
+        done ("Lead take");
+    };
+    ui.click (box().getCentre());
+    CHECK (ui.region (audio).name == "Lead take");
+
+    // Fade: a drag in the left half sets the fade in, in the right half the fade out; one undo step each.
+    ui.studio.tool = Tool::fade;
+    {
+        const auto b = box();
+        tl.pointerDown (juce::Point<float> { b.getX() + b.getWidth() * 0.1f, b.getCentreY() }, {}, 1);
+        tl.pointerDrag (juce::Point<float> { b.getX() + b.getWidth() * 0.25f, b.getCentreY() }, {});
+        tl.pointerUp (juce::Point<float> { b.getX() + b.getWidth() * 0.25f, b.getCentreY() }, {});
+        ui.settle();
+    }
+    CHECK (ui.region (audio).audio.fadeIn.length == Catch::Approx (0.25 * static_cast<double> (ui.region (audio).length)).margin (500));
+    CHECK (ui.region (audio).audio.fadeOut.length == 0);
+    CHECK (s.undoName() == "Fade");
+    {
+        const auto b = box();
+        tl.pointerDown (juce::Point<float> { b.getRight() - 2.0f, b.getCentreY() }, {}, 1);
+        tl.pointerDrag (juce::Point<float> { b.getRight() - b.getWidth() * 0.5f, b.getCentreY() }, {});
+        tl.pointerUp (juce::Point<float> { b.getRight() - b.getWidth() * 0.5f, b.getCentreY() }, {});
+        ui.settle();
+    }
+    CHECK (ui.region (audio).audio.fadeOut.length > 0);
+
+    // Gain: up is louder, 0.25 dB a pixel, one undo step.
+    ui.studio.tool = Tool::gain;
+    {
+        const auto c = box().getCentre();
+        tl.pointerDown (c, {}, 1);
+        tl.pointerDrag (c.translated (0.0f, -24.0f), {});
+        tl.pointerUp (c.translated (0.0f, -24.0f), {});
+        ui.settle();
+    }
+    CHECK (ui.region (audio).audio.gainDb == Catch::Approx (6.0));
+    CHECK (s.undoName() == "Region Gain");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.region (audio).audio.gainDb == Catch::Approx (0.0));
+
+    // Quantize: a click quantizes a MIDI region's notes to the piano roll's quantize grid.
+    const auto keysTrack = ui.instrumentTracks (1).front();
+    const auto midi = *s.createMidiRegion (keysTrack, 4 * bar, bar);
+    const auto note = *s.drawNote (midi, 4 * bar + 250, 60, 120, 100);
+    ui.studio.edited();
+    ui.settle();
+    ui.studio.tool = Tool::quantize;
+    ui.studio.piano.quantizeGrid = 240;
+    ui.studio.piano.strength = 100.0;
+    ui.click (tl.regionBounds (ui.region (midi)).getCentre());
+    CHECK (commands::noteTimelineTick (ui.region (midi), commands::findNote (ui.m(), note)->pos) == 4 * bar + 240);
+
+    // Zoom: a box fits its range; a click zooms in; Alt+click out.
+    ui.studio.tool = Tool::zoom;
+    const auto from = ui.studio.view.tickToX (2.0 * bar), to = ui.studio.view.tickToX (3.0 * bar);
+    tl.pointerDown (juce::Point<float> { static_cast<float> (from), 10.0f }, {}, 1);
+    tl.pointerDrag (juce::Point<float> { static_cast<float> (to), 30.0f }, {});
+    tl.pointerUp (juce::Point<float> { static_cast<float> (to), 30.0f }, {});
+    ui.settle();
+    CHECK (ui.studio.view.xToTick (0.0) == Catch::Approx (2.0 * bar).margin (2.0));
+    CHECK (ui.studio.view.xToTick (static_cast<double> (tl.getWidth())) == Catch::Approx (3.0 * bar).margin (2.0));
+    const auto ppt = ui.studio.view.pixelsPerTick;
+    ui.click ({ 100.0f, 10.0f });
+    CHECK (ui.studio.view.pixelsPerTick == Catch::Approx (2.0 * ppt));
+    ui.click ({ 100.0f, 10.0f }, juce::ModifierKeys::altModifier);
+    CHECK (ui.studio.view.pixelsPerTick == Catch::Approx (ppt));
+
+    // Next / Previous Tool go through the Tool menu's order and wrap.
+    ui.studio.tool = Tool::quantize;
+    REQUIRE (ui.studio.perform (Cmd::nextTool));
+    CHECK (ui.studio.tool == Tool::pointer);
+    REQUIRE (ui.studio.perform (Cmd::previousTool));
+    CHECK (ui.studio.tool == Tool::quantize);
+    // The Tool menu lists every tool with its key.
+    juce::StringArray names, keys;
+    const auto menu = ui.main->toolMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+    {
+        names.add (it.getItem().text);
+        keys.add (it.getItem().shortcutKeyDescription);
+    }
+    CHECK (names == juce::StringArray { "Pointer", "Pencil", "Scissors", "Glue", "Eraser", "Mute", "Text", "Zoom", "Fade", "Gain", "Quantize" });
+    CHECK (keys == juce::StringArray { "T", "P", "I", "J", "E", "M", "N", "Z", "A", "G", "Q" });
+}

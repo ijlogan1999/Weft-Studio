@@ -1852,7 +1852,7 @@ void Timeline::paint (juce::Graphics& g)
         g.drawText (juce::String (formatBarsBeats (regionDrag->anchorStart(), m.signatures)) + (regionDrag->copying() ? "  (copy)" : ""),
                     juce::Rectangle<float> (lastAt.x + 12, lastAt.y - 22, 160, 18), juce::Justification::left);
     }
-    if (drag == Drag::rubberBand)
+    if (drag == Drag::rubberBand || drag == Drag::zoomBox)
     {
         g.setColour (colour (Token::accent).withAlpha (0.15f));
         const auto band = juce::Rectangle<float> (downAt, lastAt);
@@ -2175,6 +2175,57 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
                 studio.check (studio.tool == Tool::eraser ? s.deleteRegions (targets) : s.toggleRegionsMuted (targets));
             }
             return;
+        case Tool::text:
+            if (r != nullptr)
+                renameRegion (r->id);
+            return;
+        case Tool::zoom:
+            // D-UI-36: drag a box to fit it; click zooms in around the pointer, Alt+click out.
+            if (mods.isAltDown())
+            {
+                studio.view.zoomAround (0.5, p.x);
+                studio.sendChangeMessage();
+                return;
+            }
+            drag = Drag::zoomBox;
+            return;
+        case Tool::fade:
+            if (r != nullptr && ! r->isMidi)
+            {
+                // The half of the region clicked: its fade in or fade out, set by the drag.
+                if (! studio.selection.contains (r->id))
+                    studio.selection.click (r->id, false);
+                startRegionDrag (*r, p.x < regionBounds (*r).getCentreX() ? Zone::fadeIn : Zone::fadeOut, p, mods);
+                pointerDrag (p, mods);
+                studio.sendChangeMessage();
+            }
+            return;
+        case Tool::gain:
+            if (r != nullptr && ! r->isMidi)
+            {
+                // Dragging up or down changes the gain of the region, or of every selected audio region when it's one of them.
+                const auto targets = studio.selection.contains (r->id) ? studio.selection.ids() : std::vector<Id> { r->id };
+                gainFrom.clear();
+                for (const auto& id : targets)
+                    if (const auto* t = m.region (id); t != nullptr && ! t->isMidi)
+                        gainFrom[id] = t->audio.gainDb;
+                dragRegion = r->id;
+                drag = Drag::gain;
+                s.beginGesture ("Region Gain");
+                gestureOpen = true;
+            }
+            return;
+        case Tool::quantize:
+            if (r != nullptr && r->isMidi)
+            {
+                const auto targets = studio.selection.contains (r->id) ? studio.selection.ids() : std::vector<Id> { r->id };
+                std::vector<Id> midi;
+                for (const auto& id : targets)
+                    if (const auto* t = m.region (id); t != nullptr && t->isMidi)
+                        midi.push_back (id);
+                studio.check (s.quantizeNotes (midi, {}, studio.piano.quantizeGrid, studio.piano.strength / 100.0, studio.piano.swing));
+            }
+            return;
         case Tool::pointer: break;
     }
 
@@ -2274,8 +2325,22 @@ void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
             if (r != nullptr)
                 s.setRegionLoop (r->id, t);
             break;
+        case Drag::zoomBox: break;
+        case Drag::gain:
+        {
+            // 0.25 dB a pixel, up is louder; -60 dB and below is silence, +24 dB at most.
+            const auto delta = static_cast<double> (downAt.y - p.y) * 0.25;
+            for (const auto& [id, from] : gainFrom)
+            {
+                auto to = std::min (24.0, from + delta);
+                if (to <= -60.0)
+                    to = -200.0;
+                s.setRegionGain (id, to);
+            }
+            break;
+        }
     }
-    if (drag != Drag::move && drag != Drag::rubberBand && drag != Drag::none)
+    if (drag != Drag::move && drag != Drag::rubberBand && drag != Drag::none && drag != Drag::zoomBox)
         studio.edited();
     repaint();
 }
@@ -2300,6 +2365,15 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
         }
         regionDrag.reset();
     }
+    if (drag == Drag::zoomBox)
+    {
+        const auto band = juce::Rectangle<float> (downAt, p);
+        if (band.getWidth() >= 4.0f)
+            studio.view.fit (studio.view.xToTick (band.getX()), studio.view.xToTick (band.getRight()), getWidth(), 1.0);
+        else
+            studio.view.zoomAround (2.0, p.x);
+        studio.sendChangeMessage();
+    }
     if (gestureOpen)
     {
         studio.session().endGesture();
@@ -2308,6 +2382,22 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
     }
     drag = Drag::none;
     repaint();
+}
+
+void Timeline::renameRegion (const Id& regionId)
+{
+    const auto* r = studio.model().region (regionId);
+    if (r == nullptr)
+        return;
+    juce::Component::SafePointer<Timeline> self (this);
+    auto done = [self, regionId] (juce::String name) {
+        if (self != nullptr && name.trim().isNotEmpty())
+            self->studio.check (self->studio.session().setRegionName (regionId, name.trim().toStdString()));
+    };
+    if (promptForText)
+        promptForText ("Rename region", juce::String (r->name), std::move (done));
+    else
+        askForText ("Rename region", juce::String (r->name), std::move (done));
 }
 
 bool Timeline::cancelDrag()

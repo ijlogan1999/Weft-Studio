@@ -272,6 +272,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-38** [UI] · F-ARR-21, D-UI-27, D-UI-28 · With regions at bars 1, 3 and 5 on one track and the bar-3 region selected, Right selects the bar-5 region and Left twice the bar-1 region; Left at the first does nothing; with nothing selected and the playhead at bar 2, Right selects the bar-3 region. Z fits the selected region; Z again fits the whole project; Z after changing the selection fits the new selection.
 
+**AT-ARR-39** [UI] · D-UI-36 · Text tool: clicking an audio region and entering "Lead take" renames it. Fade tool: a drag from 10% to 25% of the region's width sets a fade in of about a quarter of its length and no fade out (step "Fade"); a drag from its right edge to the middle sets a fade out. Gain tool: dragging up 24 px makes the gain +6 dB (step "Region Gain"); undo makes it 0 dB. Quantize tool: clicking a MIDI region with a note 250 ticks into the bar and the quantize grid at 1/16 moves the note to 240. Zoom tool: a box from bar 3 to bar 4 shows exactly bars 3–4; a click doubles the zoom and Alt+click halves it. Next Tool after Quantize is Pointer and Previous Tool goes back. The Tool menu lists Pointer, Pencil, Scissors, Glue, Eraser, Mute, Text, Zoom, Fade, Gain, Quantize with keys T P I J E M N Z A G Q.
+
 ## 6. Audio editor (EDA)
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
@@ -508,7 +510,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-UI-11** [UI] · F-TRN-8, D-UI-21 · In a 1400 px window the control bar shows the More button; its menu lists the three count-in choices and a CPU line, and choosing "2-bar count-in" sets the count-in to 2 bars. At 2200 px the More button is hidden. Navigate › Count-in lists Off, 1 Bar and 2 Bars; Shift+K turns a 2-bar count-in off and back on at 2 bars.
 
-**AT-UI-12** [UI] · F-UI-10, D-UI-29 · The Tool menu shows each tool's key (T, P, I, J, E, M); with it open, P picks the Pencil and M the Mute tool; a key that isn't a tool's (Q) picks nothing; with Ctrl held nothing is picked.
+**AT-UI-12** [UI] · F-UI-10, D-UI-29 · The Tool menu shows each tool's key (T, P, I, J, E, M, and N, Z, A, G, Q since D-UI-36); with it open, P picks the Pencil and M the Mute tool; a key that isn't a tool's (W) picks nothing; with Ctrl held nothing is picked.
 
 ## 16. Collaboration (COL)
 

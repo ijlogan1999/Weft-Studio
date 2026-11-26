@@ -156,6 +156,11 @@ class Timeline final : public juce::Component, public juce::FileDragAndDropTarge
 public:
     explicit Timeline (Studio& studio);
 
+    /** The Text tool's prompt (D-UI-36); tests replace it. Default: a small dialog. */
+    std::function<void (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)> promptForText;
+    /** Asks for a new name for the region (the Text tool). */
+    void renameRegion (const Id& regionId);
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -267,7 +272,8 @@ private:
     Ticks tickAt (float x) const { return static_cast<Ticks> (std::llround (studio.view.xToTick (x))); }
 
     Studio& studio;
-    enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut, loop, rubberBand } drag = Drag::none;
+    enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut, loop, rubberBand, zoomBox, gain } drag = Drag::none;
+    std::map<Id, double> gainFrom; // Gain tool: each region's gain when the drag began
     std::unique_ptr<arrange::RegionDrag> regionDrag;
     Id dragRegion;
     juce::Point<float> downAt, lastAt;

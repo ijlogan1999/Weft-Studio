@@ -47,6 +47,11 @@ juce::String toolName (Tool t)
         case Tool::glue: return "Glue";
         case Tool::eraser: return "Eraser";
         case Tool::mute: return "Mute";
+        case Tool::text: return "Text";
+        case Tool::zoom: return "Zoom";
+        case Tool::fade: return "Fade";
+        case Tool::gain: return "Gain";
+        case Tool::quantize: return "Quantize";
     }
     return {};
 }
@@ -61,13 +66,18 @@ std::optional<Tool> toolForKey (juce::juce_wchar key)
         case 'j': return Tool::glue;
         case 'e': return Tool::eraser;
         case 'm': return Tool::mute;
+        case 'n': return Tool::text;
+        case 'z': return Tool::zoom;
+        case 'a': return Tool::fade;
+        case 'g': return Tool::gain;
+        case 'q': return Tool::quantize;
         default: return std::nullopt;
     }
 }
 
 juce::String toolKey (Tool t)
 {
-    for (const auto c : juce::String ("tpijem"))
+    for (const auto c : juce::String ("tpijemnzagq"))
         if (toolForKey (c) == t)
             return juce::String::charToString (juce::CharacterFunctions::toUpperCase (c));
     return {};
@@ -1081,6 +1091,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
+        case Cmd::nextTool: case Cmd::previousTool:
         case Cmd::newTrackNextInput: case Cmd::searchTracks:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
@@ -1265,29 +1276,29 @@ bool Studio::perform (Cmd command)
             std::optional<Ticks> to;
             const auto& cycle = m.info.cycle;
             const bool hasCycle = cycle.end > cycle.start;
-            switch (command)
+            const auto is = [command] (std::initializer_list<Cmd> cmds) { return std::find (cmds.begin(), cmds.end(), command) != cmds.end(); };
+            if (is ({ Cmd::goToCycleStart, Cmd::playFromCycleStart, Cmd::stopGoToCycleStart }))
             {
-                case Cmd::goToCycleStart: case Cmd::playFromCycleStart: case Cmd::stopGoToCycleStart:
-                    if (hasCycle)
-                        to = cycle.start;
-                    break;
-                case Cmd::goToCycleEnd:
-                    if (hasCycle)
-                        to = cycle.end;
-                    break;
-                case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::playFromSelection:
-                    to = selectionEdge (command == Cmd::goToSelectionEnd);
-                    break;
-                case Cmd::goToLastLocate: case Cmd::playFromLastLocate: case Cmd::stopGoToLastLocate: to = lastLocate; break;
-                case Cmd::playFromStart: case Cmd::stopGoToStart: to = 0; break;
-                case Cmd::playFromWindowEdge: to = std::max<Ticks> (0, static_cast<Ticks> (std::ceil (view.originTick))); break;
-                case Cmd::playFromPreviousBar:
-                {
-                    const auto pos = m.signatures.barAt (playhead());
-                    to = m.signatures.barStart (std::max (pos.bar - 1, 0));
-                    break;
-                }
-                default: break;
+                if (hasCycle)
+                    to = cycle.start;
+            }
+            else if (command == Cmd::goToCycleEnd)
+            {
+                if (hasCycle)
+                    to = cycle.end;
+            }
+            else if (is ({ Cmd::goToSelectionStart, Cmd::goToSelectionEnd, Cmd::playFromSelection }))
+                to = selectionEdge (command == Cmd::goToSelectionEnd);
+            else if (is ({ Cmd::goToLastLocate, Cmd::playFromLastLocate, Cmd::stopGoToLastLocate }))
+                to = lastLocate;
+            else if (is ({ Cmd::playFromStart, Cmd::stopGoToStart }))
+                to = 0;
+            else if (command == Cmd::playFromWindowEdge)
+                to = std::max<Ticks> (0, static_cast<Ticks> (std::ceil (view.originTick)));
+            else if (command == Cmd::playFromPreviousBar)
+            {
+                const auto pos = m.signatures.barAt (playhead());
+                to = m.signatures.barStart (std::max (pos.bar - 1, 0));
             }
             if (! to)
             {
@@ -1468,6 +1479,15 @@ bool Studio::perform (Cmd command)
         case Cmd::zoomIn: view.zoomAround (1.5, view.tickToX (static_cast<double> (playhead()))); break;
         case Cmd::zoomOut: view.zoomAround (1.0 / 1.5, view.tickToX (static_cast<double> (playhead()))); break;
         case Cmd::escape: tool = Tool::pointer; break;
+        case Cmd::nextTool:
+        case Cmd::previousTool:
+        {
+            // D-UI-36: through the Tool menu's order, wrapping.
+            const int n = static_cast<int> (lastTool) + 1;
+            tool = static_cast<Tool> ((static_cast<int> (tool) + (command == Cmd::nextTool ? 1 : n - 1)) % n);
+            setStatus (toolName (tool) + " tool.");
+            break;
+        }
         case Cmd::toggleInspector: layout.inspector = ! layout.inspector; break;
         case Cmd::toggleSidePanel: layout.sidePanel = ! layout.sidePanel; break;
         case Cmd::toggleGlobalTracks: layout.globalTracks = ! layout.globalTracks; break;

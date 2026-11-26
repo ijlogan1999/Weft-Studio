@@ -145,6 +145,8 @@ std::vector<CommandInfo> build()
         { Cmd::cycleBack, "Move Cycle Back by Its Length", "Ctrl+Shift+Left", { key (K::leftKey, ctrl | shift) } },
         { Cmd::doubleCycle, "Double Cycle Length", "", {} },
         { Cmd::halveCycle, "Halve Cycle Length", "", {} },
+        { Cmd::nextTool, "Next Tool", "", {} },
+        { Cmd::previousTool, "Previous Tool", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

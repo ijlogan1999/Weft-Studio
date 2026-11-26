@@ -383,8 +383,9 @@ bool MainComponent::keyStateChanged (bool isKeyDown)
 juce::PopupMenu MainComponent::toolMenu() const
 {
     juce::PopupMenu menu;
-    for (const auto t : { Tool::pointer, Tool::pencil, Tool::scissors, Tool::glue, Tool::eraser, Tool::mute })
+    for (int i = 0; i <= static_cast<int> (lastTool); ++i)
     {
+        const auto t = static_cast<Tool> (i);
         juce::PopupMenu::Item item (toolName (t));
         item.itemID = static_cast<int> (t) + 1;
         item.isTicked = studio.tool == t;
@@ -778,7 +779,7 @@ bool MainComponent::ToolKeys::keyPressed (const juce::KeyPress& key, juce::Compo
 
 void MainComponent::pickTool (int menuItemId)
 {
-    if (menuItemId < 1 || menuItemId > static_cast<int> (Tool::mute) + 1)
+    if (menuItemId < 1 || menuItemId > static_cast<int> (lastTool) + 1)
         return;
     studio.tool = static_cast<Tool> (menuItemId - 1);
     studio.sendChangeMessage();
@@ -864,6 +865,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             }
             menu.addSeparator();
             add (Cmd::toolMenu);
+            add (Cmd::nextTool);
+            add (Cmd::previousTool);
             menu.addSeparator();
             add (Cmd::addComment);
             break;

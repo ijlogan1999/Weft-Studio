@@ -133,7 +133,7 @@ TEST_CASE ("AT-ARR-23 tool menu: pencil, scissors, glue, eraser, Esc", "[UI]")
     ui.studio.uiCommand = [&] (Cmd c) { asked = c; };
     ui.key ('T');
     CHECK (asked == Cmd::toolMenu);
-    CHECK (main.toolMenu().getNumItems() == 6);
+    CHECK (main.toolMenu().getNumItems() == 11); // D-UI-36 added five
 
     main.pickTool (static_cast<int> (Tool::pencil) + 1);
     ui.settle();
@@ -1961,7 +1961,7 @@ TEST_CASE ("AT-UI-12 one key picks a tool while the Tool menu is open", "[UI][AT
     const auto menu = ui.main->toolMenu();
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         keys.add (it.getItem().shortcutKeyDescription);
-    CHECK (keys.joinIntoString (" ") == "T P I J E M");
+    CHECK (keys.joinIntoString (" ") == "T P I J E M N Z A G Q");
 
     auto& listener = ui.main->toolKeys;
     CHECK (listener.keyPressed (juce::KeyPress ('p', {}, 'p'), nullptr));
@@ -1969,7 +1969,7 @@ TEST_CASE ("AT-UI-12 one key picks a tool while the Tool menu is open", "[UI][AT
     CHECK (ui.studio.tool == Tool::pencil);
     CHECK (listener.keyPressed (juce::KeyPress ('m', {}, 'm'), nullptr));
     CHECK (ui.studio.tool == Tool::mute);
-    CHECK_FALSE (listener.keyPressed (juce::KeyPress ('q', {}, 'q'), nullptr));
+    CHECK_FALSE (listener.keyPressed (juce::KeyPress ('w', {}, 'w'), nullptr));
     CHECK (ui.studio.tool == Tool::mute);
     CHECK_FALSE (listener.keyPressed (juce::KeyPress ('t', juce::ModifierKeys (juce::ModifierKeys::commandModifier), 't'), nullptr));
     CHECK (ui.studio.tool == Tool::mute);
