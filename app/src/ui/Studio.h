@@ -5,6 +5,7 @@
 // and call perform(); it broadcasts a change after every edit. Message thread only.
 
 #include "Commands.h"
+#include "PluginSettings.h"
 #include "Waveform.h"
 
 #include "weft/arrange/Grid.h"
@@ -342,6 +343,8 @@ public:
     // Plug-ins (M6) --------------------------------------------------------------------
     /** The per-user settings folder (the plug-in list lives here). Set before making a Studio to move it. */
     static std::filesystem::path& settingsFolder();
+    /** A plug-in about to be inserted takes its saved default setting, when there is one (D-W6-12). */
+    model::PluginInstance withDefaultSetting (model::PluginInstance plugin) const;
     engine::PluginCatalog& plugins() noexcept { return *catalog; }
     /** The out-of-process scanner (F-PLG-2); next to the app by default. */
     std::filesystem::path scannerPath;
@@ -379,6 +382,18 @@ public:
     void flushPluginStates (bool all = false);
     bool pluginStatePending (const Id& pluginId) const { return pendingState.contains (pluginId); }
     std::function<void (const Id& pluginId)> openPluginEditor;
+    // Plug-in settings (D-W6-12) -----------------------------------------------------------
+    static std::filesystem::path pluginSettingsRoot() { return settingsFolder() / "Plug-in Settings"; }
+    /** What the plug-in is set to now: every parameter and its state chunk (unsaved editor changes included). */
+    std::optional<PluginSetting> currentSetting (const Id& pluginId);
+    /** Loads a setting into the plug-in as one undo step named `undoName`. */
+    bool applySetting (const Id& pluginId, const PluginSetting& setting, const juce::String& undoName);
+    /** Reset Setting: every parameter to its default, one undo step ("Reset Setting"). */
+    bool resetPluginSetting (const Id& pluginId);
+    /** Copy Setting / Paste Setting: one setting kept while the app runs, for the same plug-in. */
+    bool copyPluginSetting (const Id& pluginId);
+    bool canPastePluginSetting (const Id& pluginId) const;
+    bool pastePluginSetting (const Id& pluginId);
 
     // Automation (M7) --------------------------------------------------------------------
     /** Automation view (A): lanes under each track (local view state, F-AUT-1). */
@@ -652,6 +667,8 @@ private:
     std::unique_ptr<engine::PluginCatalog> catalog;
     std::unique_ptr<engine::Vst3Host> host;
     std::map<Id, double> pendingState; // plug-in id -> when its parameters last changed (ms)
+    std::optional<PluginSetting> settingClipboard;
+    std::string settingClipboardPlugin; // format + uid of the plug-in it came from
     double lastParamChange = 0;
     void endPluginGesture();
     std::unique_ptr<project::ProjectFolder> folder;

@@ -180,4 +180,17 @@ inline void setSilencedBySolo (juce::Button& b, bool silenced)
     }
 }
 inline bool silencedBySolo (const juce::Button& b) { return static_cast<bool> (b.getProperties()["weftImplied"]); }
+/** A small modal box with one text field; `done` gets the text when OK is pressed. */
+inline void askForText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)
+{
+    auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("text", current);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done = std::move (done)] (int result) {
+                            if (result == 1)
+                                done (w->getTextEditorContents ("text"));
+                        }),
+                        true);
+}
 } // namespace weft::ui

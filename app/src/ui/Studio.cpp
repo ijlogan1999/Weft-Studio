@@ -1200,7 +1200,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
         case Cmd::nudgeByGrid: case Cmd::nudgeByBar: case Cmd::nudgeByBeat: case Cmd::nudgeByDivision: case Cmd::nudgeByTick: case Cmd::slipLeft: case Cmd::slipRight: case Cmd::shuffleLeft: case Cmd::shuffleRight: case Cmd::gridLines:
         case Cmd::nextTool: case Cmd::previousTool:
-        case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff:
+        case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff: case Cmd::togglePluginWindows:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1706,6 +1706,7 @@ bool Studio::perform (Cmd command)
         case Cmd::searchPlugins:
         case Cmd::searchTracks:
         case Cmd::configureTrackHeader:
+        case Cmd::togglePluginWindows:
         case Cmd::goToPosition:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
@@ -2753,7 +2754,7 @@ std::vector<Studio::PluginChoice> Studio::pluginChoices (bool instruments) const
 std::optional<Id> Studio::addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index)
 {
     endPluginGesture();
-    const auto id = sess->addInsert (trackId, choice.plugin, index);
+    const auto id = sess->addInsert (trackId, withDefaultSetting (choice.plugin), index);
     if (! id)
         setStatus (juce::String (sess->lastError()));
     edited();
@@ -2765,7 +2766,7 @@ std::optional<Id> Studio::addPlugin (const Id& trackId, const PluginChoice& choi
 bool Studio::replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice)
 {
     endPluginGesture();
-    const auto id = sess->replaceInsert (trackId, pluginId, choice.plugin);
+    const auto id = sess->replaceInsert (trackId, pluginId, withDefaultSetting (choice.plugin));
     if (! id)
         setStatus (juce::String (sess->lastError()));
     edited();
@@ -2866,6 +2867,104 @@ void Studio::writePluginState (const Id& pluginId)
     endPluginGesture();
     eng->adoptPluginState (pluginId, bytes); // no need to load the state back into the plug-in
     check (sess->setPluginState (trackId, pluginId, *value));
+}
+
+model::PluginInstance Studio::withDefaultSetting (model::PluginInstance plugin) const
+{
+    const auto setting = plugin_settings::loadDefault (pluginSettingsRoot(), plugin);
+    if (! setting)
+        return plugin;
+    for (const auto& [id, v] : setting->params)
+        plugin.params[id] = v;
+    if (! setting->state.empty())
+        if (const auto value = media::pluginStateValue (setting->state, projectRoot() / "Blobs"))
+            plugin.state = *value;
+    return plugin;
+}
+
+std::optional<PluginSetting> Studio::currentSetting (const Id& pluginId)
+{
+    writePluginState (pluginId); // the editor's last changes first
+    const auto* plugin = pluginInstance (pluginId);
+    if (plugin == nullptr)
+        return std::nullopt;
+    PluginSetting s;
+    s.params = plugin->params;
+    const auto p = eng->processor (pluginId);
+    if (p != nullptr && ! p->isPlaceholder())
+    {
+        const auto infos = p->parameters();
+        for (std::size_t i = 0; i < infos.size(); ++i)
+            s.params[infos[i].id] = p->parameter (static_cast<int> (i));
+        s.state = p->state();
+    }
+    else if (const auto bytes = media::pluginStateBytes (plugin->state, projectRoot() / "Blobs"))
+        s.state = *bytes;
+    return s;
+}
+
+bool Studio::applySetting (const Id& pluginId, const PluginSetting& setting, const juce::String& undoName)
+{
+    Id trackId;
+    if (pluginInstance (pluginId, &trackId) == nullptr || previewing())
+        return false;
+    endPluginGesture();
+    pendingState.erase (pluginId);
+    std::optional<doc::Value> state;
+    if (! setting.state.empty())
+    {
+        std::string error;
+        state = media::pluginStateValue (setting.state, projectRoot() / "Blobs", &error);
+        if (! state)
+        {
+            setStatus ("Couldn't load the setting: " + juce::String (error));
+            return false;
+        }
+    }
+    sess->beginGesture (undoName.toStdString());
+    if (state)
+        sess->setPluginState (trackId, pluginId, *state); // the chunk first: parameters then land on top of it
+    for (const auto& [id, v] : setting.params)
+        sess->setPluginParam (trackId, pluginId, id, v);
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+bool Studio::resetPluginSetting (const Id& pluginId)
+{
+    const auto p = eng->processor (pluginId);
+    if (p == nullptr || p->isPlaceholder())
+        return false;
+    PluginSetting s;
+    for (const auto& info : p->parameters())
+        s.params[info.id] = info.defaultValue;
+    return applySetting (pluginId, s, "Reset Setting");
+}
+
+bool Studio::copyPluginSetting (const Id& pluginId)
+{
+    auto s = currentSetting (pluginId);
+    const auto* plugin = pluginInstance (pluginId);
+    if (! s || plugin == nullptr)
+        return false;
+    settingClipboard = std::move (s);
+    settingClipboardPlugin = plugin->format + ":" + plugin->pluginUid;
+    return true;
+}
+
+bool Studio::canPastePluginSetting (const Id& pluginId) const
+{
+    const auto* plugin = pluginInstance (pluginId);
+    return settingClipboard.has_value() && plugin != nullptr && settingClipboardPlugin == plugin->format + ":" + plugin->pluginUid;
+}
+
+bool Studio::pastePluginSetting (const Id& pluginId)
+{
+    if (! canPastePluginSetting (pluginId))
+        return false;
+    const auto s = *settingClipboard; // a copy: applying rebuilds the model
+    return applySetting (pluginId, s, "Paste Setting");
 }
 
 void Studio::flushPluginStates (bool all)

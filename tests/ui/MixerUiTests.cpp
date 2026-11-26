@@ -764,3 +764,160 @@ TEST_CASE ("AT-PLG-13 Search and Add Plug-in", "[UI][AT-PLG-13]")
         items.add (it.getItem().text);
     CHECK (items.contains ("Search and Add Plug-in..."));
 }
+
+TEST_CASE ("AT-PLG-14 plug-in settings: save, load, next/previous, compare, copy/paste, reset, default; hide all windows", "[UI][AT-PLG-14]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    const auto second = ui.studio.session().createTrack (model::TrackKind::audio, "Second").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    const auto addEq = [&] (const Id& trackId) {
+        auto* strip = mixer.stripFor (trackId);
+        const auto slot = ui.m().track (trackId)->strip.inserts.size();
+        const auto eq = entry (strip->insertMenu (slot), "Weft EQ");
+        REQUIRE (eq);
+        strip->pickInsert (slot, eq->id);
+        ui.settle();
+        return ui.m().track (trackId)->strip.inserts.back().id;
+    };
+    const auto a = addEq (first);
+    const auto b = addEq (second);
+    auto* window = ui.main->pluginWindows().find (a);
+    REQUIRE (window != nullptr);
+    auto* frame = window->frame();
+    auto* editor = window->generic();
+    REQUIRE ((frame != nullptr && editor != nullptr));
+    const auto proc = ui.studio.processor (a);
+    REQUIRE (proc != nullptr);
+    REQUIRE_FALSE (editor->rows.empty());
+    std::size_t g = 0; // the first continuous parameter
+    while (g < editor->rows.size() && proc->parameters()[g].steps > 1)
+        ++g;
+    REQUIRE (g < editor->rows.size());
+    const auto set = [&] (double v) {
+        window->pollParameters(); // the window's timer has seen the last session edit
+        editor->rows[g].slider->setValue (v, juce::sendNotificationSync);
+        window->pollParameters();
+        ui.settle();
+        frame->refresh();
+    };
+    const auto value = [&] { return proc->parameter (static_cast<int> (g)); };
+    const auto& names = [&] { return plugin_settings::names (Studio::pluginSettingsRoot(), *ui.studio.pluginInstance (a)); };
+
+    // Nothing saved yet: the button says Settings; Compare and Paste are off.
+    CHECK (frame->settings.getButtonText() == "Settings");
+    CHECK_FALSE (frame->compare.isEnabled());
+    CHECK_FALSE (frame->paste.isEnabled());
+    CHECK (window->isResizable()); // the slider list can be widened
+    CHECK (frame->getWidth() >= PluginFrame::minWidth);
+
+    // Save Setting As (asks for the name), then a second one.
+    set (0.8);
+    frame->promptForText = [] (const juce::String&, const juce::String&, std::function<void (juce::String)> done) { done ("Bright"); };
+    frame->pickSettings (PluginFrame::itemSaveAs);
+    CHECK (frame->settingName() == "Bright");
+    CHECK (frame->settings.getButtonText() == "Bright");
+    set (0.5);
+    CHECK (frame->modified());
+    CHECK (frame->settings.getButtonText() == "Bright *");
+    CHECK (frame->compare.isEnabled());
+
+    // Compare: the saved setting, then the edits again.
+    REQUIRE (frame->toggleCompare());
+    ui.settle();
+    CHECK (frame->comparing());
+    CHECK (value() == Catch::Approx (0.8).margin (1e-4));
+    REQUIRE (frame->toggleCompare());
+    ui.settle();
+    CHECK_FALSE (frame->comparing());
+    CHECK (value() == Catch::Approx (0.5).margin (1e-4));
+
+    REQUIRE (frame->saveSettingAs ("Air"));
+    CHECK (names() == std::vector<std::string> { "Air", "Bright" });
+
+    // Next and Previous go through the saved settings in name order, and wrap; loading is one undo step.
+    set (0.1);
+    REQUIRE (frame->stepSetting (1));
+    ui.settle();
+    CHECK (frame->settingName() == "Bright");
+    CHECK (value() == Catch::Approx (0.8).margin (1e-4));
+    CHECK (ui.studio.session().undoName() == "Load Setting");
+    frame->next.onClick();
+    ui.settle();
+    CHECK (frame->settingName() == "Air");
+    CHECK (value() == Catch::Approx (0.5).margin (1e-4));
+    frame->pickSettings (PluginFrame::itemPrevious);
+    ui.settle();
+    CHECK (frame->settingName() == "Bright");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (value() == Catch::Approx (0.5).margin (1e-4));
+
+    // The Settings menu lists the saved settings, ticking the current one.
+    {
+        const auto menu = frame->settingsMenu();
+        juce::StringArray items, ticked;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (it.getItem().itemID != 0)
+            {
+                items.add (it.getItem().text);
+                if (it.getItem().isTicked)
+                    ticked.add (it.getItem().text);
+            }
+        CHECK (items.joinIntoString ("|")
+               == "Next Setting|Previous Setting|Copy Setting|Paste Setting|Reset Setting|Save Setting|Save Setting As...|Save Setting as Default|"
+                  "Recall Default Setting|Delete \"Bright\"|Air|Bright");
+        CHECK (ticked == juce::StringArray { "Bright" });
+    }
+
+    // Copy on one EQ, Paste on the other.
+    set (0.3);
+    frame->copy.onClick();
+    auto* other = ui.main->pluginWindows().find (b);
+    REQUIRE (other != nullptr);
+    other->frame()->refresh();
+    CHECK (other->frame()->paste.isEnabled());
+    other->frame()->paste.onClick();
+    ui.settle();
+    CHECK (ui.studio.processor (b)->parameter (static_cast<int> (g)) == Catch::Approx (0.3).margin (1e-4));
+    CHECK (ui.studio.session().undoName() == "Paste Setting");
+
+    // Reset Setting: every parameter to its default.
+    frame->pickSettings (PluginFrame::itemReset);
+    ui.settle();
+    CHECK (value() == Catch::Approx (proc->parameters()[g].defaultValue).margin (1e-4));
+    CHECK (ui.studio.session().undoName() == "Reset Setting");
+    CHECK (frame->settingName().empty());
+
+    // Save as Default: a new Weft EQ starts from it; Recall Default Setting loads it back.
+    set (0.7);
+    frame->pickSettings (PluginFrame::itemSaveDefault);
+    const auto c = addEq (second);
+    const auto paramId = proc->parameters()[g].id;
+    REQUIRE (ui.studio.pluginInstance (c)->params.contains (paramId));
+    CHECK (ui.studio.pluginInstance (c)->params.at (paramId) == Catch::Approx (0.7).margin (1e-4));
+    CHECK (ui.studio.processor (c)->parameter (static_cast<int> (g)) == Catch::Approx (0.7).margin (1e-4));
+    set (0.2);
+    frame->pickSettings (PluginFrame::itemRecallDefault);
+    ui.settle();
+    CHECK (value() == Catch::Approx (0.7).margin (1e-4));
+
+    // Delete the current setting.
+    REQUIRE (frame->loadSetting ("Bright"));
+    frame->pickSettings (PluginFrame::itemDelete);
+    CHECK (names() == std::vector<std::string> { "Air" });
+    CHECK (frame->settingName().empty());
+
+    // V hides every plug-in window and shows them again; with none open it only says so.
+    auto& windows = ui.main->pluginWindows();
+    CHECK (commandInfo (Cmd::togglePluginWindows).shortcut == "V");
+    ui.main->run (Cmd::togglePluginWindows);
+    CHECK (windows.allWindowsHidden());
+    ui.main->run (Cmd::togglePluginWindows);
+    CHECK_FALSE (windows.allWindowsHidden());
+    windows.closeAll();
+    ui.settle();
+    CHECK_FALSE (windows.toggleAll());
+    CHECK_FALSE (windows.allWindowsHidden());
+}

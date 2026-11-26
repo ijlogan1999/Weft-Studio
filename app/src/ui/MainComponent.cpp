@@ -425,6 +425,8 @@ void MainComponent::handleUiCommand (Cmd command)
         control.positionDisplay().showEditor();
     else if (command == Cmd::configureTrackHeader)
         tracks().showHeaderOptions();
+    else if (command == Cmd::togglePluginWindows)
+        plugins.toggleAll();
     else if (command == Cmd::searchTracks)
     {
         if (auto* search = TrackSearch::show (studio, this))
@@ -917,6 +919,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::searchPlugins);
             add (Cmd::pluginManager);
+            add (Cmd::togglePluginWindows);
             break;
         case 4:
         {

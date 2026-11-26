@@ -69,7 +69,9 @@ enum class Cmd
     // D-W3-11: nudge value, slip, shuffle, grid lines
     nudgeByGrid, nudgeByBar, nudgeByBeat, nudgeByDivision, nudgeByTick, slipLeft, slipRight, shuffleLeft, shuffleRight, gridLines,
     // D-UI-37: track header options, all tracks on/off
-    configureTrackHeader, toggleAllTracksOff
+    configureTrackHeader, toggleAllTracksOff,
+    // D-W6-12
+    togglePluginWindows
 };
 
 struct CommandInfo

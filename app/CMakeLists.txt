@@ -25,6 +25,7 @@ add_library(weft_app_lib STATIC
     src/ui/MainComponent.cpp
     src/ui/Mixer.cpp
     src/ui/PluginWindows.cpp
+    src/ui/PluginSettings.cpp
     src/ui/ProjectDialogs.cpp
     src/ui/NewTrackDialog.cpp
     src/ui/PluginSearch.cpp

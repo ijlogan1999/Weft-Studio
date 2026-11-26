@@ -228,7 +228,7 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Go to Position | Ctrl+G | | Go to Cycle Start / End | Ctrl+Home / Ctrl+End |
 | Go to Selection Start / End | Shift+Home / Shift+End | | Play from Selection | Shift+Space |
 | Move Cycle Forward / Back | Ctrl+Shift+Right / Left | | Slip Left / Right | Ctrl+Alt+Left / Right |
-| Configure Track Header | Alt+T | | | |
+| Configure Track Header | Alt+T | | Show/Hide All Plug-in Windows | V |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 

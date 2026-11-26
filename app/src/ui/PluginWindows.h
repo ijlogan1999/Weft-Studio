@@ -33,8 +33,9 @@ private:
     std::vector<engine::ParameterInfo> infos;
 };
 
-/** What a plug-in window shows (D-UI-24): a header strip with the Bypass button (insert effects only), and the
-    editor under it. The frame follows the editor's size when the plug-in resizes itself. */
+/** What a plug-in window shows (D-UI-24): a header strip with the Bypass button (insert effects only) and the
+    setting controls (D-W6-12: Previous, the Settings menu, Next, Compare, Copy, Paste), and the editor under it.
+    The frame follows the editor's size when the plug-in resizes itself. */
 class PluginFrame final : public juce::Component, private juce::ComponentListener
 {
 public:
@@ -42,20 +43,57 @@ public:
     ~PluginFrame() override;
     void paint (juce::Graphics&) override;
     void resized() override;
-    /** Shows the insert's bypass state (the window's timer calls it). */
+    /** Shows the insert's bypass state and the setting's name (the window's timer calls it). */
     void refresh();
 
     juce::TextButton bypass { "Bypass" };
+    juce::TextButton previous { "<" }, settings { "Settings" }, next { ">" }, compare { "Compare" }, copy { "Copy" }, paste { "Paste" };
     juce::Component& editor() noexcept { return *content; }
-    static constexpr int headerHeight = 36;
+    static constexpr int headerHeight = 36, minWidth = 460;
+
+    /** The Settings menu (D-W6-12). Saved settings are itemLoad + their index in the list. */
+    juce::PopupMenu settingsMenu() const;
+    void pickSettings (int item);
+    enum SettingsItem
+    {
+        itemNext = 1,
+        itemPrevious,
+        itemCopy,
+        itemPaste,
+        itemReset,
+        itemSave,
+        itemSaveAs,
+        itemSaveDefault,
+        itemRecallDefault,
+        itemDelete,
+        itemLoad = 100
+    };
+    bool loadSetting (const std::string& name);
+    bool saveSettingAs (const std::string& name);
+    /** Next (1) or Previous (-1) saved setting, wrapping; from no setting, the first or the last. */
+    bool stepSetting (int direction);
+    /** Compare: between the setting as loaded or saved and the edits made since. */
+    bool toggleCompare();
+    bool comparing() const noexcept { return showingSaved; }
+    /** The setting's name, "" before one is loaded or saved. */
+    const std::string& settingName() const noexcept { return current; }
+    /** The plug-in's parameters differ from the setting as loaded or saved. */
+    bool modified() const;
+    /** Asks for a name (Save Setting As); tests replace it. */
+    std::function<void (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)> promptForText;
 
 private:
     void componentMovedOrResized (juce::Component&, bool moved, bool resized) override;
     /** The track and insert this window edits, or nothing for an instrument or a removed plug-in. */
     const model::PluginInstance* insert (Id* trackId = nullptr) const;
+    std::vector<std::string> savedNames() const;
+    void fitToEditor();
     Studio& studio;
     const Id pluginId;
     std::unique_ptr<juce::Component> content;
+    std::string current;
+    std::optional<PluginSetting> baseline, edits; // as loaded or saved; the edits Compare set aside
+    bool showingSaved = false;
 };
 
 class PluginWindows;
@@ -95,6 +133,9 @@ public:
     /** Writes the plug-in's state (D-DM-5) and closes its window. */
     void close (const Id& pluginId);
     void closeAll();
+    /** Show/Hide All Plug-in Windows (V, D-W6-12): hides the open windows, or shows them again. */
+    bool toggleAll();
+    bool allWindowsHidden() const noexcept { return allHidden; }
     PluginWindow* find (const Id& pluginId) const;
     std::size_t count() const noexcept { return windows.size(); }
     std::map<Id, juce::Point<int>> positions; // remembered while the app runs
@@ -103,6 +144,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     Studio& studio;
     std::map<Id, std::unique_ptr<PluginWindow>> windows;
+    bool allHidden = false;
 };
 
 /** Plug-in manager (F-PLG-3): name, vendor, format and status; enable or disable; Rescan; Retry failed. */

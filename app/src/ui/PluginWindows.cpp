@@ -88,11 +88,37 @@ PluginFrame::PluginFrame (Studio& s, const Id& id, juce::Component* editorToOwn)
         refresh();
     };
     addAndMakeVisible (bypass);
+    describe (previous, "Previous setting");
+    describe (next, "Next setting");
+    describe (settings, "Settings", "Load, save, copy and reset this plug-in's settings");
+    describe (compare, "Compare", "Switch between the setting as saved and your changes since");
+    describe (copy, "Copy setting", "Copy this plug-in's setting");
+    describe (paste, "Paste setting", "Paste a setting copied from the same plug-in");
+    previous.onClick = [this] { stepSetting (-1); };
+    next.onClick = [this] { stepSetting (1); };
+    settings.onClick = [this] {
+        juce::Component::SafePointer<PluginFrame> self (this);
+        settingsMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&settings), [self] (int item) {
+            if (self != nullptr && item != 0)
+                self->pickSettings (item);
+        });
+    };
+    compare.setClickingTogglesState (false);
+    compare.onClick = [this] { toggleCompare(); };
+    copy.onClick = [this] { pickSettings (itemCopy); };
+    paste.onClick = [this] { pickSettings (itemPaste); };
+    for (auto* b : { &previous, &settings, &next, &compare, &copy, &paste })
+    {
+        b->setMouseClickGrabsKeyboardFocus (false);
+        addAndMakeVisible (*b);
+    }
     addAndMakeVisible (*content);
     content->addComponentListener (this);
-    setSize (std::max (content->getWidth(), 160), content->getHeight() + headerHeight);
+    fitToEditor();
     refresh();
 }
+
+void PluginFrame::fitToEditor() { setSize (std::max (content->getWidth(), minWidth), content->getHeight() + headerHeight); }
 
 PluginFrame::~PluginFrame()
 {
@@ -115,12 +141,243 @@ const model::PluginInstance* PluginFrame::insert (Id* trackId) const
     return p;
 }
 
+std::vector<std::string> PluginFrame::savedNames() const
+{
+    const auto* p = studio.pluginInstance (pluginId);
+    return p == nullptr ? std::vector<std::string> {} : plugin_settings::names (Studio::pluginSettingsRoot(), *p);
+}
+
+bool PluginFrame::modified() const
+{
+    if (! baseline)
+        return false;
+    if (studio.pluginStatePending (pluginId))
+        return true;
+    const auto* p = studio.pluginInstance (pluginId);
+    if (p == nullptr)
+        return false;
+    for (const auto& [id, v] : p->params)
+        if (const auto it = baseline->params.find (id); it == baseline->params.end() || std::abs (it->second - v) > 1e-6)
+            return true;
+    return false;
+}
+
 void PluginFrame::refresh()
 {
     const auto* p = insert();
-    bypass.setVisible (p != nullptr);
+    if (bypass.isVisible() != (p != nullptr))
+    {
+        bypass.setVisible (p != nullptr);
+        resized();
+    }
     bypass.setEnabled (! studio.previewing());
     bypass.setToggleState (p != nullptr && p->bypass, juce::dontSendNotification);
+    const auto proc = studio.processor (pluginId);
+    const bool usable = proc != nullptr && ! proc->isPlaceholder() && ! studio.previewing();
+    for (auto* b : { &previous, &settings, &next, &copy })
+        b->setEnabled (usable);
+    paste.setEnabled (usable && studio.canPastePluginSetting (pluginId));
+    if (showingSaved && modified())
+        showingSaved = false; // an edit while comparing: the set-aside edits are gone
+    compare.setEnabled (usable && (showingSaved || modified()));
+    compare.setToggleState (showingSaved, juce::dontSendNotification);
+    const auto label = current.empty() ? juce::String ("Settings") : juce::String (juce::CharPointer_UTF8 (current.c_str())) + (modified() ? " *" : "");
+    if (settings.getButtonText() != label)
+        settings.setButtonText (label);
+}
+
+juce::PopupMenu PluginFrame::settingsMenu() const
+{
+    juce::PopupMenu m;
+    const auto proc = studio.processor (pluginId);
+    const bool usable = proc != nullptr && ! proc->isPlaceholder() && ! studio.previewing();
+    const auto names = savedNames();
+    const auto* p = studio.pluginInstance (pluginId);
+    const bool hasDefault = p != nullptr && plugin_settings::loadDefault (Studio::pluginSettingsRoot(), *p).has_value();
+    m.addItem (itemNext, "Next Setting", usable && ! names.empty());
+    m.addItem (itemPrevious, "Previous Setting", usable && ! names.empty());
+    m.addSeparator();
+    m.addItem (itemCopy, "Copy Setting", usable);
+    m.addItem (itemPaste, "Paste Setting", usable && studio.canPastePluginSetting (pluginId));
+    m.addItem (itemReset, "Reset Setting", usable);
+    m.addSeparator();
+    m.addItem (itemSave, "Save Setting", usable);
+    m.addItem (itemSaveAs, "Save Setting As...", usable);
+    m.addItem (itemSaveDefault, "Save Setting as Default", usable);
+    m.addItem (itemRecallDefault, "Recall Default Setting", usable && hasDefault);
+    const auto shown = juce::String (juce::CharPointer_UTF8 (current.c_str()));
+    m.addItem (itemDelete, current.empty() ? juce::String ("Delete Setting") : "Delete \"" + shown + "\"", usable && ! current.empty());
+    if (! names.empty())
+    {
+        m.addSeparator();
+        for (std::size_t i = 0; i < names.size(); ++i)
+            m.addItem (itemLoad + static_cast<int> (i), juce::String (juce::CharPointer_UTF8 (names[i].c_str())), usable, names[i] == current);
+    }
+    return m;
+}
+
+void PluginFrame::pickSettings (int item)
+{
+    const auto* p = studio.pluginInstance (pluginId);
+    if (p == nullptr)
+        return;
+    const auto plugin = *p; // a copy: edits rebuild the model
+    const auto root = Studio::pluginSettingsRoot();
+    switch (item)
+    {
+        case itemNext: stepSetting (1); break;
+        case itemPrevious: stepSetting (-1); break;
+        case itemCopy:
+            if (studio.copyPluginSetting (pluginId))
+                studio.setStatus ("Setting copied.");
+            break;
+        case itemPaste: studio.pastePluginSetting (pluginId); break;
+        case itemReset:
+            if (studio.resetPluginSetting (pluginId))
+            {
+                current.clear();
+                baseline.reset();
+                showingSaved = false;
+            }
+            break;
+        case itemSave:
+            if (current.empty())
+                pickSettings (itemSaveAs);
+            else
+                saveSettingAs (current);
+            break;
+        case itemSaveAs:
+        {
+            juce::Component::SafePointer<PluginFrame> self (this);
+            auto done = [self] (juce::String name) {
+                if (self != nullptr)
+                    self->saveSettingAs (name.toStdString());
+            };
+            const auto shown = juce::String (juce::CharPointer_UTF8 (current.c_str()));
+            if (promptForText)
+                promptForText ("Save Setting As", shown, std::move (done));
+            else
+                askForText ("Save Setting As", shown, std::move (done));
+            break;
+        }
+        case itemSaveDefault:
+            if (const auto s = studio.currentSetting (pluginId))
+            {
+                std::string error;
+                if (plugin_settings::save (root, plugin, *s, true, &error))
+                    studio.setStatus ("Saved as the default for " + juce::String (plugin.name) + ".");
+                else
+                    studio.setStatus (juce::String (error));
+            }
+            break;
+        case itemRecallDefault:
+            if (const auto s = plugin_settings::loadDefault (root, plugin); s && studio.applySetting (pluginId, *s, "Recall Default Setting"))
+            {
+                current.clear();
+                baseline = *s;
+                showingSaved = false;
+            }
+            break;
+        case itemDelete:
+            if (! current.empty() && plugin_settings::remove (root, plugin, current))
+            {
+                studio.setStatus ("Deleted the setting \"" + juce::String (juce::CharPointer_UTF8 (current.c_str())) + "\".");
+                current.clear();
+                baseline.reset();
+                showingSaved = false;
+            }
+            break;
+        default:
+            if (item >= itemLoad)
+            {
+                const auto names = savedNames();
+                if (const auto i = static_cast<std::size_t> (item - itemLoad); i < names.size())
+                    loadSetting (names[i]);
+            }
+            break;
+    }
+    refresh();
+}
+
+bool PluginFrame::loadSetting (const std::string& name)
+{
+    const auto* p = studio.pluginInstance (pluginId);
+    if (p == nullptr)
+        return false;
+    const auto s = plugin_settings::load (Studio::pluginSettingsRoot(), *p, name);
+    if (! s)
+    {
+        studio.setStatus ("Couldn't load that setting.");
+        return false;
+    }
+    if (! studio.applySetting (pluginId, *s, "Load Setting"))
+        return false;
+    current = s->name;
+    baseline = *s;
+    showingSaved = false;
+    edits.reset();
+    refresh();
+    return true;
+}
+
+bool PluginFrame::saveSettingAs (const std::string& name)
+{
+    const auto* p = studio.pluginInstance (pluginId);
+    auto s = studio.currentSetting (pluginId);
+    if (p == nullptr || ! s)
+        return false;
+    s->name = plugin_settings::cleanName (name);
+    std::string error;
+    if (! plugin_settings::save (Studio::pluginSettingsRoot(), *studio.pluginInstance (pluginId), *s, false, &error))
+    {
+        studio.setStatus (juce::String (error));
+        return false;
+    }
+    current = s->name;
+    baseline = std::move (s);
+    showingSaved = false;
+    edits.reset();
+    studio.setStatus ("Saved the setting \"" + juce::String (juce::CharPointer_UTF8 (current.c_str())) + "\".");
+    refresh();
+    return true;
+}
+
+bool PluginFrame::stepSetting (int direction)
+{
+    const auto names = savedNames();
+    if (names.empty())
+    {
+        studio.setStatus ("No saved settings for this plug-in yet.");
+        return false;
+    }
+    const auto n = static_cast<int> (names.size());
+    const auto at = std::find (names.begin(), names.end(), current);
+    int i = at == names.end() ? (direction > 0 ? 0 : n - 1) : (static_cast<int> (at - names.begin()) + direction + n) % n;
+    return loadSetting (names[static_cast<std::size_t> (i)]);
+}
+
+bool PluginFrame::toggleCompare()
+{
+    if (! baseline)
+        return false;
+    if (! showingSaved)
+    {
+        if (! modified())
+            return false;
+        edits = studio.currentSetting (pluginId);
+        if (! edits || ! studio.applySetting (pluginId, *baseline, "Compare"))
+            return false;
+        showingSaved = true;
+    }
+    else
+    {
+        showingSaved = false;
+        if (edits)
+            studio.applySetting (pluginId, *edits, "Compare");
+        edits.reset();
+    }
+    refresh();
+    return true;
 }
 
 void PluginFrame::paint (juce::Graphics& g)
@@ -134,14 +391,33 @@ void PluginFrame::paint (juce::Graphics& g)
 
 void PluginFrame::resized()
 {
-    bypass.setBounds (space::s1, (headerHeight - size::control) / 2, 72, size::control);
-    content->setTopLeftPosition (0, headerHeight);
+    auto row = juce::Rectangle<int> (space::s1, (headerHeight - size::control) / 2, getWidth() - 2 * space::s1, size::control);
+    if (bypass.isVisible())
+    {
+        bypass.setBounds (row.removeFromLeft (72));
+        row.removeFromLeft (space::s1);
+    }
+    previous.setBounds (row.removeFromLeft (size::control));
+    row.removeFromLeft (space::half);
+    settings.setBounds (row.removeFromLeft (std::clamp (row.getWidth() - 3 * 64 - size::control - 2 * space::s1, 96, 200)));
+    row.removeFromLeft (space::half);
+    next.setBounds (row.removeFromLeft (size::control));
+    row.removeFromLeft (space::s1);
+    for (auto* b : { &compare, &copy, &paste })
+    {
+        b->setBounds (row.removeFromLeft (64));
+        row.removeFromLeft (space::half);
+    }
+    if (dynamic_cast<GenericPluginEditor*> (content.get()) != nullptr)
+        content->setBounds (0, headerHeight, getWidth(), content->getHeight()); // the sliders take the window's width
+    else
+        content->setTopLeftPosition (0, headerHeight);
 }
 
 void PluginFrame::componentMovedOrResized (juce::Component&, bool, bool resized)
 {
     if (resized)
-        setSize (std::max (content->getWidth(), 160), content->getHeight() + headerHeight);
+        fitToEditor();
 }
 
 // Window ----------------------------------------------------------------------------------------
@@ -165,7 +441,11 @@ PluginWindow::PluginWindow (Studio& s, PluginWindows& owner, const Id& id)
     if (content == nullptr)
         content = new GenericPluginEditor (proc, name);
     setContentOwned (new PluginFrame (studio, pluginId, content), true);
-    setResizable (false, false);
+    // The slider list can be widened (D-W6-12); a plug-in's own editor keeps the size it chose.
+    const bool generic = dynamic_cast<GenericPluginEditor*> (content) != nullptr;
+    setResizable (generic, false);
+    if (generic)
+        setResizeLimits (PluginFrame::minWidth, getHeight(), 1600, getHeight());
     if (proc != nullptr && ! proc->isPlaceholder())
     {
         infos = proc->parameters();
@@ -259,9 +539,25 @@ void PluginWindows::open (const Id& pluginId)
         w->setTopLeftPosition (it->second);
     else
         w->centreWithSize (w->getWidth(), w->getHeight());
-    if (desktopWindows())
-        w->setVisible (true);
     windows[pluginId] = std::move (w);
+    if (allHidden) // opening one brings the hidden ones back too
+        toggleAll();
+    else if (desktopWindows())
+        windows[pluginId]->setVisible (true);
+}
+
+bool PluginWindows::toggleAll()
+{
+    if (windows.empty())
+    {
+        studio.setStatus ("No plug-in windows are open.");
+        return false;
+    }
+    allHidden = ! allHidden;
+    if (desktopWindows())
+        for (auto& [id, w] : windows)
+            w->setVisible (! allHidden);
+    return true;
 }
 
 void PluginWindows::close (const Id& pluginId)
@@ -280,6 +576,7 @@ void PluginWindows::closeAll()
 {
     while (! windows.empty())
         close (windows.begin()->first);
+    allHidden = false;
 }
 
 void PluginWindows::changeListenerCallback (juce::ChangeBroadcaster*)

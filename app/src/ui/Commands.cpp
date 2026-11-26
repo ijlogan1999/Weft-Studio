@@ -159,6 +159,7 @@ std::vector<CommandInfo> build()
         { Cmd::gridLines, "Grid Lines", "", {} },
         { Cmd::configureTrackHeader, "Configure Track Header...", "Alt+T", { key ('T', alt) } },
         { Cmd::toggleAllTracksOff, "Turn All Tracks On/Off", "", {} },
+        { Cmd::togglePluginWindows, "Show/Hide All Plug-in Windows", "V", { key ('V') } },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

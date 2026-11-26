@@ -30,18 +30,6 @@ void drawPlayheadLine (juce::Graphics& g, float x, float top, float bottom)
     g.fillRect (px, top, 1.0f, bottom - top);
 }
 
-void askForText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)
-{
-    auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon);
-    w->addTextEditor ("text", current);
-    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done = std::move (done)] (int result) {
-                            if (result == 1)
-                                done (w->getTextEditorContents ("text"));
-                        }),
-                        true);
-}
 } // namespace
 
 // Ruler -----------------------------------------------------------------------------------
