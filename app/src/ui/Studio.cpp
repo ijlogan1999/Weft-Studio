@@ -191,6 +191,29 @@ bool Studio::check (const commands::EditResult& result)
     return result.ok;
 }
 
+engine::Engine::Meter Studio::takeMeter (const Id& trackId, const void* reader)
+{
+    const auto m = eng->takeMeter (trackId);
+    auto& readers = unreadMeters[trackId];
+    readers.try_emplace (reader);
+    for (auto& [who, kept] : readers)
+    {
+        kept.output = std::max (kept.output, m.output);
+        kept.input = std::max (kept.input, m.input);
+    }
+    auto out = readers[reader];
+    out.rms = m.rms;
+    out.clip = m.clip;
+    readers[reader] = {};
+    return out;
+}
+
+void Studio::forgetMeterReader (const void* reader)
+{
+    for (auto& [id, readers] : unreadMeters)
+        readers.erase (reader);
+}
+
 void Studio::selectTrack (const Id& trackId)
 {
     local.selectedTrack = trackId;

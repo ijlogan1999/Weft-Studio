@@ -187,7 +187,7 @@ private:
     ReadOnlyBanner readOnly;
     PreviewBanner preview;
     Gutter inspectorEdge { true }, sideEdge { true }, bottomEdge { false };
-    static constexpr int minInspector = 184, maxInspector = 424, minSide = 224, maxSide = 520, minBottom = 160;
+    static constexpr int minInspector = 224, maxInspector = 424, minSide = 224, maxSide = 520, minBottom = 160;
     int maxBottom() const;
     int dragFrom = 0;    // the panel size when a gutter drag started
     int restoreHeight = 0; // the bottom area's height before a double-click maximised it

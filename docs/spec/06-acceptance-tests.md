@@ -484,6 +484,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-UI-8** [UI] · F-UI-14 · First launch (no settings file) shows Audio Setup; Test plays a tone (captured on the null device: 1 kHz at −18 dBFS for 1 s); Continue saves settings; second launch skips the dialog. With no openable device, the app opens in No-audio mode with a banner.
 
+**AT-UI-9** [UI] · F-UI-1 · Selecting a track shows, in the inspector, its channel strip beside the strip of its output (Master, or the bus it outputs to); with no track selected neither shows. Volume, pan, mute, inserts and sends changed in the inspector change the mixer's strip and the reverse, and undo reverts either. The EQ thumbnail is flat with no EQ; clicking it adds a Weft EQ and opens it; its curve peaks at +12 dB at 1 kHz for a +12 dB peak band there, and is flat when the EQ is bypassed. The inspector's and the mixer's meters both see a channel's peak (D-UI-16).
+
 **AT-UI-10** [UI] · F-UI-1, D-UI-22 · With two MIDI regions selected whose transpose differs (0 and +5) the inspector's name reads "2 regions", Transpose shows "—" and Velocity shows its value; setting Transpose to −12 sets both and undoes in one step; Mute mutes both. With an audio region and a MIDI region selected, the gain and transpose controls are hidden and setting Delay to 20 ms sets both.
 
 **AT-UI-11** [UI] · F-TRN-8, D-UI-21 · In a 1400 px window the control bar shows the More button; its menu lists the three count-in choices and a CPU line, and choosing "2-bar count-in" sets the count-in to 2 bars. At 2200 px the More button is hidden. Navigate › Count-in lists Off, 1 Bar and 2 Bars; Shift+K turns a 2-bar count-in off and back on at 2 bars.
@@ -617,7 +619,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-TRK-10 | AT-TRK-8, 9, 19, AT-MIX-16 | | F-EXP-11 | AT-EXP-9 |
 | F-TRK-11 | AT-TRK-10 | | F-LIB-1 | AT-LIB-1 |
 | F-TRK-12 | AT-TRK-11 | | F-LIB-2 | AT-LIB-2 |
-| F-TRK-16 | AT-COL-20 to 23 | | F-UI-1 | AT-UI-1 |
+| F-TRK-16 | AT-COL-20 to 23 | | F-UI-1 | AT-UI-1, 9 |
 | F-TRK-17 | AT-TRK-13 | | F-UI-3 | AT-UI-2 |
 | F-ARR-1 | AT-ARR-1 | | F-UI-4 | AT-UI-3 |
 | F-ARR-2 | AT-ARR-2, 3 | | F-UI-7 | AT-UI-4, 5 |

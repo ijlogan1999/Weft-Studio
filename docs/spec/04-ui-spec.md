@@ -67,6 +67,7 @@ Shows properties of the current selection in collapsible sections:
 1. **Region section** (when regions are selected): name, color, mute, gain (audio), fades and curves (audio), quantize/strength/swing (MIDI), loop on/off, transpose and velocity offset (MIDI; v2 UI). Multi-selection shows mixed values as "—"; editing sets all. **Decision D-UI-22:** with several regions selected the name reads "N regions"; an edit is one undo step; a control that only audio regions have (gain, fades) shows only when no MIDI region is selected, and the MIDI controls only when every selected region is MIDI; mute, loop, delay and the name apply to any mix.
 2. **Track section** (selected track): name, color, input, output, monitor mode, automation mode, lock state.
 3. **Channel strips:** two compact channel strips side by side: the selected track's strip, and the strip of its output destination (Master or a bus). Each has instrument slot (instrument tracks), insert slots, send slots, output button, pan, fader, meter, mute/solo. These are the same controls as the mixer (§8) and edit the same data.
+   - **Decision D-UI-16:** the channel section sits below the Track section under a "Channel" header. Above the two strips an EQ thumbnail (48 px, full width) draws the response of the selected track's first Weft EQ insert, 20 Hz–20 kHz on a log scale and ±18 dB, flat when there is none or it is bypassed; clicking it opens that EQ, or adds a Weft EQ in the first free insert slot and opens it. The strips are the mixer's own strip component, so every edit is the mixer's edit (one undo history); they share one slot-row count so their faders line up, and fill the panel's remaining height (the inspector scrolls when the sections need more). Clicking the output strip edits it without moving the selection. Inspector and mixer meters read the same channel independently (each sees every peak). The inspector is at least 224 px wide so two strips fit.
 4. **Note section** (in piano roll focus with notes selected): pitch, velocity, length, position, channel.
 
 ## 5. D · Global tracks
@@ -264,6 +265,7 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-13 | Design tokens, 8 px grid, IBM Plex type scale, one accent, depth; lanes 56 px. |
 | D-UI-14 | Waveform overview pyramid and crisp outline drawing. |
 | D-UI-15 | Mixer meters (RMS and peak, shared fader scale), reset gestures, value tag. |
+| D-UI-16 | Inspector channel section: EQ thumbnail, the mixer's strips for the track and its output, independent meters. |
 | D-UI-17 | Stop while stopped goes to the cycle start, then the project start; Play starts at the cycle start when Cycle is on; Count-in command (Shift+K). |
 | D-UI-18 | Deselect All (Ctrl+Shift+A) and Invert Selection (Ctrl+Shift+I), for regions or, in the piano roll, notes. |
 | D-UI-19 | New Audio Track / New Instrument Track without the dialog; keys for the selected track's Mute, Solo and Record-enable. |

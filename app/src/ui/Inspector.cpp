@@ -2,6 +2,7 @@
 
 #include "PianoRoll.h"
 
+#include "weft/engine/dsp/BuiltinEffects.h"
 #include "weft/time/Position.h"
 
 namespace weft::ui
@@ -20,9 +21,161 @@ int curveIndex (const std::string& id)
 }
 } // namespace
 
-Inspector::Inspector (Studio& s) : studio (s)
+// EQ thumbnail ------------------------------------------------------------------------------
+
+EqThumbnail::EqThumbnail (Studio& s) : studio (s)
+{
+    setTitle ("EQ");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void EqThumbnail::setTrack (const Id& trackId)
+{
+    track = trackId;
+    shownValues.clear();
+    repaint();
+}
+
+Id EqThumbnail::eqId() const
+{
+    if (const auto* t = studio.model().track (track))
+        for (const auto& p : t->strip.inserts)
+            if (p.pluginUid == engine::WeftEq::pluginUid)
+                return p.id;
+    return {};
+}
+
+std::vector<double> EqThumbnail::parameterValues() const
+{
+    std::vector<double> out;
+    if (const auto id = eqId(); ! id.empty())
+        if (const auto proc = studio.processor (id))
+            for (std::size_t i = 0; i < proc->parameters().size(); ++i)
+                out.push_back (proc->parameter (static_cast<int> (i)));
+    return out;
+}
+
+std::vector<double> EqThumbnail::curve (int points) const
+{
+    std::vector<double> out (static_cast<std::size_t> (std::max (points, 0)), 0.0);
+    const auto id = eqId();
+    const auto eqProc = id.empty() ? nullptr : std::dynamic_pointer_cast<engine::WeftEq> (studio.processor (id));
+    const auto* t = studio.model().track (track);
+    bool bypassed = false;
+    if (t != nullptr)
+        for (const auto& p : t->strip.inserts)
+            if (p.id == id)
+                bypassed = p.bypass;
+    if (eqProc == nullptr || bypassed)
+        return out;
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        const auto x = out.size() == 1 ? 0.0 : static_cast<double> (i) / static_cast<double> (out.size() - 1);
+        out[i] = eqProc->responseDb (lowHz * std::pow (highHz / lowHz, x));
+    }
+    return out;
+}
+
+void EqThumbnail::open()
+{
+    const auto* t = studio.model().track (track);
+    if (t == nullptr)
+        return;
+    if (const auto id = eqId(); ! id.empty())
+    {
+        if (studio.openPluginEditor)
+            studio.openPluginEditor (id);
+        return;
+    }
+    if (t->strip.inserts.size() >= static_cast<std::size_t> (model::maxInserts))
+    {
+        studio.setStatus ("No free insert slot for an EQ.");
+        return;
+    }
+    for (const auto& choice : studio.pluginChoices (false))
+        if (choice.plugin.pluginUid == engine::WeftEq::pluginUid)
+        {
+            studio.addPlugin (track, choice);
+            return;
+        }
+}
+
+void EqThumbnail::poll()
+{
+    if (parameterValues() != shownValues)
+        repaint();
+}
+
+void EqThumbnail::mouseUp (const juce::MouseEvent& e)
+{
+    if (isEnabled() && getLocalBounds().contains (e.getPosition()))
+        open();
+}
+
+void EqThumbnail::paint (juce::Graphics& g)
+{
+    shownValues = parameterValues();
+    const auto area = getLocalBounds().toFloat().reduced (0.5f);
+    // An inset well, like the meters: the curve is a readout, not a control surface.
+    depth::well (g, area, radius::r2);
+    const auto plot = area.reduced (space::half, space::half);
+    const auto yFor = [&plot] (double db) {
+        return plot.getCentreY() - static_cast<float> (std::clamp (db, -rangeDb, rangeDb) / rangeDb) * plot.getHeight() / 2.0f;
+    };
+    const auto xFor = [&plot] (double hz) { return plot.getX() + plot.getWidth() * static_cast<float> (std::log (hz / lowHz) / std::log (highHz / lowHz)); };
+    // Grid: 100 Hz, 1 kHz and 10 kHz, and the 0 dB line.
+    g.setColour (colour (Token::lineSubtle));
+    for (const auto hz : { 100.0, 1000.0, 10000.0 })
+        g.fillRect (juce::Rectangle<float> (std::round (xFor (hz)), plot.getY(), 1.0f, plot.getHeight()));
+    g.fillRect (juce::Rectangle<float> (plot.getX(), std::round (yFor (0.0)), plot.getWidth(), 1.0f));
+
+    const auto id = eqId();
+    if (id.empty())
+    {
+        g.setColour (colour (Token::textDim));
+        g.setFont (font (Type::small));
+        g.drawText ("EQ  +", getLocalBounds().reduced (space::s1, 0), juce::Justification::centred);
+        setTooltip ("EQ: click to add a Weft EQ to this track");
+        return;
+    }
+    const auto points = std::max (2, static_cast<int> (plot.getWidth()));
+    const auto values = curve (points);
+    juce::Path line;
+    for (int i = 0; i < points; ++i)
+    {
+        const auto x = plot.getX() + plot.getWidth() * static_cast<float> (i) / static_cast<float> (points - 1);
+        const auto y = yFor (values[static_cast<std::size_t> (i)]);
+        if (i == 0)
+            line.startNewSubPath (x, y);
+        else
+            line.lineTo (x, y);
+    }
+    auto fill = line;
+    fill.lineTo (plot.getRight(), yFor (0.0));
+    fill.lineTo (plot.getX(), yFor (0.0));
+    fill.closeSubPath();
+    const auto* t = studio.model().track (track);
+    const auto tint = t != nullptr ? colourFor (t->color.palette, t->color.rgb) : colour (Token::accent);
+    g.setColour (tint.withAlpha (0.25f));
+    g.fillPath (fill);
+    g.setColour (tint);
+    g.strokePath (line, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour (colour (Token::textDim));
+    g.setFont (font (Type::caption));
+    g.drawText ("EQ", area.reduced (space::half + 2.0f, 2.0f), juce::Justification::topLeft, false);
+    setTooltip ("EQ: click to open");
+}
+
+// Inspector ---------------------------------------------------------------------------------
+
+Inspector::Inspector (Studio& s) : eq (s), studio (s)
 {
     setTitle ("Inspector");
+    viewport.setViewedComponent (&body, false);
+    viewport.setScrollBarsShown (true, false);
+    viewport.setScrollBarThickness (space::s1);
+    addAndMakeVisible (viewport);
+    body.addChildComponent (eq);
     regionName.setEditable (false, true, true);
     regionName.setFont (font (Type::strong));
     regionName.setBorderSize ({});
@@ -254,13 +407,81 @@ Inspector::Inspector (Studio& s) : studio (s)
         if (dynamic_cast<juce::Label*> (c) == nullptr)
             c->setMouseClickGrabsKeyboardFocus (false);
         c->setHasFocusOutline (true);
-        addChildComponent (c);
+        body.addChildComponent (c);
     }
     studio.addChangeListener (this);
     refresh();
+    startTimerHz (30);
 }
 
-Inspector::~Inspector() { studio.removeChangeListener (this); }
+Inspector::~Inspector()
+{
+    studio.removeChangeListener (this);
+    viewport.setViewedComponent (nullptr, false);
+}
+
+void Inspector::timerCallback()
+{
+    if (! isShowing())
+        return;
+    const auto now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    for (auto* strip : { trackStrip.get(), outputStrip.get() })
+        if (strip != nullptr && strip->isVisible())
+        {
+            strip->updateMeter (now);
+            strip->followAutomation();
+        }
+    if (eq.isVisible())
+        eq.poll();
+}
+
+void Inspector::refreshStrips()
+{
+    const auto& m = studio.model();
+    const auto* t = m.track (studio.selectedTrack());
+    Id outputId;
+    if (t != nullptr && t->kind != model::TrackKind::master)
+        outputId = t->output.busId.empty() ? m.info.masterTrackId : t->output.busId;
+    if (m.track (outputId) == nullptr)
+        outputId.clear();
+    const auto place = [this] (std::unique_ptr<ChannelStrip>& strip, const Id& id) {
+        if (id.empty())
+        {
+            strip.reset();
+            return;
+        }
+        if (strip == nullptr || strip->trackId() != id)
+        {
+            strip = std::make_unique<ChannelStrip> (studio, id);
+            body.addAndMakeVisible (*strip);
+        }
+        strip->insertRows = strip->sendRows = 1;
+        strip->refresh();
+    };
+    place (trackStrip, t != nullptr ? t->id : Id());
+    place (outputStrip, outputId);
+    if (trackStrip != nullptr)
+        trackStrip->highlightSelection = false;
+    if (outputStrip != nullptr)
+    {
+        // Clicking the output's strip edits it without moving the selection off the track.
+        outputStrip->selectsOnClick = false;
+        outputStrip->highlightSelection = false;
+        // The two strips' slot rows match, so their faders line up.
+        const auto inserts = std::max (trackStrip->shownInsertRows(), outputStrip->shownInsertRows());
+        const auto sendRows = std::max (trackStrip->shownSendRows(), outputStrip->shownSendRows());
+        for (auto* strip : { trackStrip.get(), outputStrip.get() })
+        {
+            strip->insertRows = inserts;
+            strip->sendRows = sendRows;
+        }
+    }
+    eq.setVisible (t != nullptr);
+    if (t != nullptr && eq.trackId() != t->id)
+        eq.setTrack (t->id);
+    eq.setEnabled (t != nullptr && ! studio.lockedByOther (t->id));
+    eq.repaint();
+}
 
 const model::Region* Inspector::region() const
 {
@@ -446,8 +667,9 @@ void Inspector::refresh()
         monitor.setSelectedItemIndex (t->monitor == "on" ? 1 : t->monitor == "off" ? 2 : 0, juce::dontSendNotification);
         monitor.setVisible (commands::LocalView::canArm (*t));
     }
+    refreshStrips();
     resized();
-    repaint();
+    body.repaint();
 }
 
 namespace
@@ -455,13 +677,13 @@ namespace
 constexpr int labelX = space::s2, labelWidth = 72, controlX = labelX + labelWidth + space::s1;
 }
 
-void Inspector::paint (juce::Graphics& g)
+void Inspector::paintBody (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surface));
-    // Section headers: a caption on a slightly raised band, so Region, Note and Track read as
+    // Section headers: a caption on a slightly raised band, so Region, Note, Track and Channel read as
     // separate groups at a glance.
     auto header = [&] (int top, const juce::String& text) {
-        const auto band = juce::Rectangle<int> (0, top, getWidth(), size::panelHeader);
+        const auto band = juce::Rectangle<int> (0, top, body.getWidth(), size::panelHeader);
         g.setColour (colour (Token::surfaceRaised));
         g.fillRect (band);
         depth::highlight (g, band.toFloat(), 0.0f);
@@ -469,7 +691,7 @@ void Inspector::paint (juce::Graphics& g)
         g.fillRect (band.withTop (band.getBottom() - 1));
         g.setColour (colour (Token::textDim));
         g.setFont (font (Type::caption));
-        g.drawText (captionText (text), labelX, top, getWidth() - 2 * labelX, size::panelHeader, juce::Justification::centredLeft);
+        g.drawText (captionText (text), labelX, top, body.getWidth() - 2 * labelX, size::panelHeader, juce::Justification::centredLeft);
     };
     if (regionName.isVisible())
         header (regionTop, "Region");
@@ -477,11 +699,13 @@ void Inspector::paint (juce::Graphics& g)
         header (noteTop, "Note");
     if (trackName.isVisible())
         header (trackTop, "Track");
+    if (channelTop >= 0)
+        header (channelTop, "Channel");
     if (! regionName.isVisible() && ! trackName.isVisible())
     {
         g.setColour (colour (Token::textDim));
         g.setFont (font (Type::body));
-        g.drawText ("Select a track or region.", getLocalBounds().reduced (space::s2), juce::Justification::centredTop);
+        g.drawText ("Select a track or region.", body.getLocalBounds().reduced (space::s2), juce::Justification::centredTop);
     }
     g.setFont (font (Type::body));
     g.setColour (colour (Token::textDim));
@@ -509,7 +733,18 @@ void Inspector::paint (juce::Graphics& g)
 
 void Inspector::resized()
 {
-    auto r = getLocalBounds();
+    viewport.setBounds (getLocalBounds());
+    const auto visible = getHeight();
+    auto width = getWidth();
+    auto height = layout (width, visible);
+    if (height > visible)
+        height = layout (width -= viewport.getScrollBarThickness(), visible);
+    body.setSize (width, height);
+}
+
+int Inspector::layout (int width, int visibleHeight)
+{
+    auto r = juce::Rectangle<int> (0, 0, width, 1 << 20);
     auto row = [&r] {
         auto out = r.removeFromTop (size::control).withTrimmedLeft (labelX).withTrimmedRight (space::s2);
         r.removeFromTop (space::half);
@@ -558,6 +793,27 @@ void Inspector::resized()
     trackTop = header();
     trackName.setBounds (row());
     trackColour.setBounds (withLabel (row()));
-    monitor.setBounds (withLabel (row()));
+    if (monitor.isVisible())
+        monitor.setBounds (withLabel (row()));
+    if (trackStrip == nullptr)
+    {
+        channelTop = -1;
+        return std::max (visibleHeight, r.getY());
+    }
+    // Channel: the EQ curve, then the two strips side by side filling the rest of the panel
+    // (taller than that when their slots need it; the panel scrolls).
+    r.removeFromTop (space::s1);
+    channelTop = header();
+    eq.setBounds (r.removeFromTop (space::s6).reduced (space::s1, 0));
+    r.removeFromTop (space::s1);
+    const auto preferred = std::max (trackStrip->preferredHeight(), outputStrip != nullptr ? outputStrip->preferredHeight() : 0);
+    const auto stripHeight = std::max (preferred, visibleHeight - r.getY() - space::s1);
+    auto strips = r.removeFromTop (stripHeight).reduced (space::s1, 0);
+    const auto stripWidth = (strips.getWidth() - space::s1) / 2;
+    trackStrip->setBounds (strips.removeFromLeft (stripWidth));
+    strips.removeFromLeft (space::s1);
+    if (outputStrip != nullptr)
+        outputStrip->setBounds (strips.withWidth (stripWidth));
+    return r.getY() + space::s1;
 }
 } // namespace weft::ui
