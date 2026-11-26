@@ -73,6 +73,77 @@ void GenericPluginEditor::timerCallback()
         }
 }
 
+// Frame -----------------------------------------------------------------------------------------
+
+PluginFrame::PluginFrame (Studio& s, const Id& id, juce::Component* editorToOwn) : studio (s), pluginId (id), content (editorToOwn)
+{
+    describe (bypass, "Bypass", "Bypass this effect: the sound passes through unprocessed");
+    setRole (bypass, ButtonRole::mute);
+    bypass.setClickingTogglesState (false);
+    bypass.setMouseClickGrabsKeyboardFocus (false);
+    bypass.onClick = [this] {
+        Id trackId;
+        if (const auto* p = insert (&trackId))
+            studio.check (studio.session().setInsertBypass (trackId, pluginId, ! p->bypass));
+        refresh();
+    };
+    addAndMakeVisible (bypass);
+    addAndMakeVisible (*content);
+    content->addComponentListener (this);
+    setSize (std::max (content->getWidth(), 160), content->getHeight() + headerHeight);
+    refresh();
+}
+
+PluginFrame::~PluginFrame()
+{
+    content->removeComponentListener (this);
+    content.reset(); // the editor goes before the plug-in it edits
+}
+
+const model::PluginInstance* PluginFrame::insert (Id* trackId) const
+{
+    Id owner;
+    const auto* p = studio.pluginInstance (pluginId, &owner);
+    const auto* t = studio.model().track (owner);
+    if (p == nullptr || t == nullptr)
+        return nullptr;
+    const auto& inserts = t->strip.inserts;
+    if (std::none_of (inserts.begin(), inserts.end(), [&] (const model::PluginInstance& i) { return i.id == pluginId; }))
+        return nullptr; // the track's instrument: it has no bypass
+    if (trackId != nullptr)
+        *trackId = owner;
+    return p;
+}
+
+void PluginFrame::refresh()
+{
+    const auto* p = insert();
+    bypass.setVisible (p != nullptr);
+    bypass.setEnabled (! studio.previewing());
+    bypass.setToggleState (p != nullptr && p->bypass, juce::dontSendNotification);
+}
+
+void PluginFrame::paint (juce::Graphics& g)
+{
+    g.fillAll (colour (Token::surface));
+    g.setColour (colour (Token::surfaceRaised));
+    g.fillRect (0, 0, getWidth(), headerHeight);
+    g.setColour (colour (Token::border));
+    g.fillRect (0, headerHeight - 1, getWidth(), 1);
+}
+
+void PluginFrame::resized()
+{
+    bypass.setBounds (space::s1, (headerHeight - size::control) / 2, 72, size::control);
+    content->setTopLeftPosition (0, headerHeight);
+}
+
+void PluginFrame::componentMovedOrResized (juce::Component&, bool, bool resized)
+{
+    if (resized)
+        setSize (std::max (content->getWidth(), 160), content->getHeight() + headerHeight);
+}
+
 // Window ----------------------------------------------------------------------------------------
 
 PluginWindow::PluginWindow (Studio& s, PluginWindows& owner, const Id& id)
@@ -93,7 +164,7 @@ PluginWindow::PluginWindow (Studio& s, PluginWindows& owner, const Id& id)
         content = hosted->instance().createEditorIfNeeded();
     if (content == nullptr)
         content = new GenericPluginEditor (proc, name);
-    setContentOwned (content, true);
+    setContentOwned (new PluginFrame (studio, pluginId, content), true);
     setResizable (false, false);
     if (proc != nullptr && ! proc->isPlaceholder())
     {
@@ -111,7 +182,20 @@ PluginWindow::~PluginWindow()
     clearContentComponent(); // the editor goes before the plug-in it edits
 }
 
-GenericPluginEditor* PluginWindow::generic() const { return dynamic_cast<GenericPluginEditor*> (getContentComponent()); }
+PluginFrame* PluginWindow::frame() const { return dynamic_cast<PluginFrame*> (getContentComponent()); }
+
+GenericPluginEditor* PluginWindow::generic() const
+{
+    auto* f = frame();
+    return f == nullptr ? nullptr : dynamic_cast<GenericPluginEditor*> (&f->editor());
+}
+
+void PluginWindow::timerCallback()
+{
+    pollParameters();
+    if (auto* f = frame())
+        f->refresh();
+}
 
 void PluginWindow::pollParameters()
 {

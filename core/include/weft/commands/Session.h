@@ -370,6 +370,8 @@ public:
     std::optional<Id> addMarker (Ticks pos, const std::string& name);
     EditResult moveMarker (const Id& markerId, Ticks pos);
     EditResult renameMarker (const Id& markerId, const std::string& name);
+    /** A palette colour for the marker's chip, or none (04 §5); step "Marker Color". */
+    EditResult setMarkerColor (const Id& markerId, std::optional<model::Color> color);
     EditResult deleteMarker (const Id& markerId);
 
     // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------

@@ -180,6 +180,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-17** [UI] · D-UI-19 · With a track selected, Shift+M mutes it (undo step "Mute Track") and unmutes it, S solos and unsolos it, Shift+R record-enables it and back. Ctrl+Alt+I adds one instrument track below the selected track and selects it; Ctrl+Alt+A adds an audio track the same way; each is one undo step; the Track menu lists all five commands.
 
+**AT-TRK-18** [UI] · W-5, D-UI-19 · The + button above the track headers (inside the ruler's height, tooltip naming New Track and its shortcut) opens the New Track dialog; so does a double-click in the header column below the last track; a double-click on a header does not.
+
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
 ## 5. Arrange (ARR)
@@ -253,6 +255,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-ARR-34** [UI] · D-W3-9 · The right-click menu of an empty audio lane has Import Audio... and no Create MIDI Region; an instrument lane has Create MIDI Region and no Import Audio...; choosing Create MIDI Region at bar 3 makes a one-bar MIDI region there, selected.
 
 **AT-ARR-35** [UI] · D-UI-20 · With markers at bars 3 and 7 and the global tracks shown, the ruler has no flags; hidden, it has one flag per marker at the marker's position inside the ruler, and clicking the second moves the playhead to bar 7.
+
+**AT-ARR-36** [U][UI] · F-ARR-28, D-UI-23 · A marker's right-click menu is Rename Marker..., Color, Delete Marker; choosing the third swatch stores palette colour 2 (undo step "Marker Color"), No Color clears it, a palette index outside 0–23 is refused, Delete removes the marker. Empty marker-lane space offers Add Marker Here and adds at the snapped position. In the tempo lane empty space offers Add Tempo Change Here; a change offers Set Tempo... and Delete Tempo Change, with Delete disabled on the first tempo. In the signature lane a change offers Edit and Delete (Delete disabled on the first), empty space Add Time Signature Here.... There is no menu on the ruler itself.
 
 ## 6. Audio editor (EDA)
 
@@ -361,6 +365,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-PLG-10** [E] · F-PLG-14 · An automation lane for `TestGain`'s gain parameter changes the plugin's output over time per the lane values (see AT-AUT-6).
 
 **AT-PLG-11** [E] · F-PLG-15 · Opening a project referencing a VST3 class ID not installed creates a placeholder that passes audio unchanged, shows the plugin's name, and on save writes the original state bytes unchanged (byte-identical).
+
+**AT-PLG-12** [UI] · F-PLG-4, D-UI-24 · An insert effect's window has a Bypass button in a strip above the editor: pressing it bypasses the insert and lights the button; bypassing from the mixer slot's menu puts the button out again.
 
 ## 11. Automation (AUT)
 

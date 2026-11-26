@@ -209,13 +209,12 @@ TEST_CASE ("AT-ARR-21 markers in the ruler: add, rename, move snapped, delete, c
     ruler.pointerUp();
     CHECK (ui.studio.playhead() == 3 * bar);
 
-    // Double-click on an empty part of the lane adds one; right-click deletes.
+    // Double-click on an empty part of the lane adds one; the right-click menu deletes.
     const auto emptyX = static_cast<float> (ui.studio.view.tickToX (8.0 * bar)) + 2.0f;
     ruler.mouseDoubleClick (mouse (ruler, { emptyX, laneY }, {}, 2));
     ui.settle();
     CHECK (ui.m().markers.size() == 2);
-    ruler.pointerDown ({ x0, laneY }, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
-    ruler.pointerUp();
+    ruler.pickContext (Ruler::contextDelete, { x0, laneY });
     ui.settle();
     CHECK (ui.m().markers.size() == 1);
     CHECK (ui.m().markers.find (id) == ui.m().markers.end());
@@ -638,17 +637,15 @@ TEST_CASE ("AT-TMP-3 Ctrl+click in the tempo lane adds a change; dragging it cha
     // The first tempo can't be deleted or moved.
     const auto x0 = static_cast<float> (ui.studio.view.tickToX (0.0)) + 1.0f;
     const auto y0 = ruler.tempoY (ui.m().tempo.points()[0].bpm);
-    ruler.pointerDown ({ x0, y0 }, juce::ModifierKeys::rightButtonModifier);
-    ruler.pointerUp();
+    ruler.pickContext (Ruler::contextDelete, { x0, y0 });
     CHECK (ui.m().tempo.points().size() == 2);
     ruler.pointerDown ({ x0, y0 }, {});
     ruler.pointerDrag ({ x0 + 300.0f, y0 });
     ruler.pointerUp();
     CHECK (ui.m().tempo.points()[0].pos == 0);
 
-    // Right-click deletes a later change.
-    ruler.pointerDown ({ bar5, ruler.tempoY (added.bpm) }, juce::ModifierKeys::rightButtonModifier);
-    ruler.pointerUp();
+    // The right-click menu deletes a later change.
+    ruler.pickContext (Ruler::contextDelete, { bar5, ruler.tempoY (added.bpm) });
     CHECK (ui.m().tempo.points().size() == 1);
 }
 
@@ -778,8 +775,7 @@ TEST_CASE ("W-11 signature lane: a change at a bar start from text; right-click 
 
     const auto x = static_cast<float> (ui.studio.view.tickToX (static_cast<double> (ui.m().signatures.barStart (2)))) + 4.0f;
     CHECK (ruler.nearestBar (x) == 2);
-    ruler.pointerDown ({ x, static_cast<float> (Ruler::signatureTop + 5) }, juce::ModifierKeys::rightButtonModifier);
-    ruler.pointerUp();
+    ruler.pickContext (Ruler::contextDelete, { x, static_cast<float> (Ruler::signatureTop + 5) });
     CHECK (ui.m().signatures.points().size() == 1);
 }
 
@@ -1346,4 +1342,128 @@ TEST_CASE ("AT-TRK-17 keys for the selected track's Mute, Solo and Record-enable
         items.add (it.getItem().text);
     for (const auto* name : { "New Audio Track", "New Instrument Track", "Mute Track", "Solo Track", "Record-Enable Track" })
         CHECK (items.contains (name));
+}
+
+TEST_CASE ("AT-ARR-36 right-click menus in the marker, tempo and signature lanes", "[UI][AT-ARR-36]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto marker = s.addMarker (2 * bar, "Verse").value();
+    ui.studio.layout.globalTracks = true;
+    ui.studio.snapEnabled = true;
+    ui.studio.edited();
+    ui.settle();
+    auto& ruler = ui.ruler();
+    struct Entry
+    {
+        juce::String text;
+        bool enabled;
+    };
+    const auto entries = [] (const juce::PopupMenu& menu) {
+        std::vector<Entry> out;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (! it.getItem().isSeparator)
+                out.push_back ({ it.getItem().text, it.getItem().isEnabled });
+        return out;
+    };
+    const auto xAt = [&] (double tick) { return static_cast<float> (ui.studio.view.tickToX (tick)) + 2.0f; };
+    const float markerY = Ruler::rulerHeight + 5.0f, signatureY = Ruler::signatureTop + 5.0f;
+
+    // Outside the lanes there is no menu.
+    CHECK (entries (ruler.contextMenu ({ xAt (2.0 * bar), 12.0f })).empty());
+
+    // A marker: Rename, Color, Delete.
+    const juce::Point<float> onMarker (xAt (2.0 * bar), markerY);
+    auto items = entries (ruler.contextMenu (onMarker));
+    REQUIRE (items.size() == 3);
+    CHECK (items[0].text == "Rename Marker...");
+    CHECK (items[1].text == "Color");
+    CHECK (items[2].text == "Delete Marker");
+    ruler.pickContext (Ruler::contextColour + 3, onMarker);
+    ui.settle();
+    REQUIRE (ui.m().markers.at (marker)->color);
+    CHECK (ui.m().markers.at (marker)->color->palette == 2);
+    CHECK (s.undoName() == "Marker Color");
+    ruler.pickContext (Ruler::contextColour, onMarker);
+    ui.settle();
+    CHECK_FALSE (ui.m().markers.at (marker)->color);
+    // Empty lane space: Add Marker Here, at the snapped position.
+    const juce::Point<float> emptyLane (xAt (6.0 * bar), markerY);
+    items = entries (ruler.contextMenu (emptyLane));
+    REQUIRE (items.size() == 1);
+    CHECK (items[0].text == "Add Marker Here");
+    ruler.pickContext (Ruler::contextAdd, emptyLane);
+    ui.settle();
+    REQUIRE (ui.m().markers.size() == 2);
+    CHECK (arrange::markersInOrder (ui.m())[1]->pos == 6 * bar);
+    ruler.pickContext (Ruler::contextDelete, onMarker);
+    ui.settle();
+    CHECK (ui.m().markers.find (marker) == ui.m().markers.end());
+
+    // Tempo lane: add on empty space; a change has Set Tempo and Delete, and the first can't be deleted.
+    const juce::Point<float> emptyTempo (xAt (4.0 * bar), ruler.tempoY (ui.m().tempo.points()[0].bpm) + 8.0f);
+    items = entries (ruler.contextMenu (emptyTempo));
+    REQUIRE (items.size() == 1);
+    CHECK (items[0].text == "Add Tempo Change Here");
+    ruler.pickContext (Ruler::contextAdd, emptyTempo);
+    ui.settle();
+    REQUIRE (ui.m().tempo.points().size() == 2);
+    const auto added = ui.m().tempo.points()[1];
+    CHECK (added.pos == 4 * bar);
+    const juce::Point<float> onTempo (xAt (4.0 * bar) - 2.0f, ruler.tempoY (added.bpm));
+    items = entries (ruler.contextMenu (onTempo));
+    REQUIRE (items.size() == 2);
+    CHECK (items[0].text == "Set Tempo...");
+    CHECK (items[1].text == "Delete Tempo Change");
+    CHECK (items[1].enabled);
+    const juce::Point<float> firstTempo (xAt (0.0) - 1.0f, ruler.tempoY (ui.m().tempo.points()[0].bpm));
+    items = entries (ruler.contextMenu (firstTempo));
+    REQUIRE (items.size() == 2);
+    CHECK_FALSE (items[1].enabled);
+    ruler.pickContext (Ruler::contextDelete, onTempo);
+    ui.settle();
+    CHECK (ui.m().tempo.points().size() == 1);
+
+    // Signature lane: Edit and Delete on a change (not the first), Add elsewhere.
+    REQUIRE (s.addSignaturePoint (2, 3, 4));
+    ui.studio.edited();
+    ui.settle();
+    const juce::Point<float> onSignature (xAt (static_cast<double> (ui.m().signatures.barStart (2))) + 2.0f, signatureY);
+    items = entries (ruler.contextMenu (onSignature));
+    REQUIRE (items.size() == 2);
+    CHECK (items[0].text == "Edit Time Signature...");
+    CHECK (items[1].text == "Delete Time Signature");
+    CHECK (items[1].enabled);
+    items = entries (ruler.contextMenu ({ xAt (0.0), signatureY }));
+    REQUIRE (items.size() == 2);
+    CHECK_FALSE (items[1].enabled);
+    items = entries (ruler.contextMenu ({ xAt (static_cast<double> (ui.m().signatures.barStart (5))) + 60.0f, signatureY }));
+    REQUIRE (items.size() == 1);
+    CHECK (items[0].text == "Add Time Signature Here...");
+    ruler.pickContext (Ruler::contextDelete, onSignature);
+    ui.settle();
+    CHECK (ui.m().signatures.points().size() == 1);
+}
+
+TEST_CASE ("AT-TRK-18 the Add Track button and a double-click below the headers open New Track", "[UI][AT-TRK-18]")
+{
+    Ui ui;
+    auto& tracks = ui.main->tracks();
+    std::vector<Cmd> asked;
+    ui.studio.uiCommand = [&] (Cmd c) { asked.push_back (c); };
+    REQUIRE (tracks.addTrackButton().isVisible());
+    CHECK (tracks.addTrackButton().getTooltip().contains ("New Track"));
+    CHECK (tracks.addTrackButton().getBottom() <= Ruler::rulerHeight);
+    tracks.addTrackButton().onClick();
+    CHECK (asked == std::vector<Cmd> { Cmd::newTrack });
+
+    // Below the last header the column is empty: a double-click there asks for a new track too.
+    auto& column = tracks.headerArea();
+    const auto below = juce::Point<float> (40.0f, static_cast<float> (tracks.headers().back()->getBottom() + 30));
+    REQUIRE (column.getComponentAt (below.toInt()) == &column);
+    column.mouseDoubleClick (mouse (column, below, {}, 2));
+    CHECK (asked.size() == 2);
+    // On a header it's the header's own double-click (rename), not a new track.
+    CHECK (column.getComponentAt (tracks.headers().front()->getBounds().getCentre()) != &column);
+    ui.studio.uiCommand = nullptr;
 }

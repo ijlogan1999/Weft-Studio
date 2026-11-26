@@ -395,21 +395,21 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         dragFrom = t;
         return;
     }
-    if (p.y >= signatureTop && studio.layout.globalTracks)
+    if (mods.isPopupMenu() && p.y >= rulerHeight && studio.layout.globalTracks)
     {
-        if (const auto* sig = signatureAt (p.x); sig != nullptr && mods.isPopupMenu())
-            studio.check (studio.session().deleteSignaturePoint (sig->id));
+        juce::Component::SafePointer<Ruler> self (this);
+        contextMenu (p).showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self, p] (int item) {
+            if (self != nullptr)
+                self->pickContext (item, p);
+        });
         return;
     }
+    if (p.y >= signatureTop && studio.layout.globalTracks)
+        return;
     if (p.y >= tempoTop && studio.layout.globalTracks)
     {
         if (const auto* point = tempoPointAt (p.x))
         {
-            if (mods.isPopupMenu())
-            {
-                studio.check (studio.session().deleteTempoPoint (point->id));
-                return;
-            }
             dragRange = tempoRange();
             drag = Drag::tempo;
             draggedTempo = point->id;
@@ -438,11 +438,6 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         }
         if (const auto* marker = markerAt (p.x))
         {
-            if (mods.isPopupMenu())
-            {
-                studio.check (studio.session().deleteMarker (marker->id));
-                return;
-            }
             studio.locate (marker->pos);
             drag = Drag::marker;
             draggedMarker = marker->id;
@@ -535,22 +530,77 @@ void Ruler::mouseUp (const juce::MouseEvent& e)
     pointerUp();
 }
 
-void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
+juce::PopupMenu Ruler::contextMenu (juce::Point<float> p) const
 {
-    if (e.position.y < rulerHeight || ! studio.layout.globalTracks)
-        return;
-    if (e.position.y >= signatureTop)
+    juce::PopupMenu menu;
+    if (p.y < rulerHeight || ! studio.layout.globalTracks)
+        return menu;
+    const bool editable = ! studio.previewing();
+    if (p.y >= signatureTop)
     {
-        const auto* sig = signatureAt (e.position.x);
-        const auto bar = sig != nullptr ? sig->bar : nearestBar (e.position.x);
-        const auto& now = studio.model().signatures.signatureAtBar (bar);
-        askForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
-                    [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+        const auto* sig = signatureAt (p.x);
+        menu.addItem (contextEdit, sig != nullptr ? "Edit Time Signature..." : "Add Time Signature Here...", editable);
+        if (sig != nullptr)
+            menu.addItem (contextDelete, "Delete Time Signature", editable && sig->bar > 0);
+    }
+    else if (p.y >= tempoTop)
+    {
+        if (const auto* point = tempoPointAt (p.x))
+        {
+            menu.addItem (contextEdit, "Set Tempo...", editable);
+            menu.addItem (contextDelete, "Delete Tempo Change", editable && point->pos > 0);
+        }
+        else
+            menu.addItem (contextAdd, "Add Tempo Change Here", editable);
+    }
+    else if (const auto* marker = markerAt (p.x))
+    {
+        menu.addItem (contextRename, "Rename Marker...", editable);
+        auto colours = colourMenu (contextColour, marker->color && marker->color->rgb.empty() ? marker->color->palette : -1);
+        colours.addSeparator();
+        colours.addItem (contextColour, "No Color", true, ! marker->color.has_value());
+        menu.addSubMenu ("Color", colours, editable);
+        menu.addSeparator();
+        menu.addItem (contextDelete, "Delete Marker", editable);
+    }
+    else
+        menu.addItem (contextAdd, "Add Marker Here", editable);
+    return menu;
+}
+
+void Ruler::pickContext (int item, juce::Point<float> p)
+{
+    if (item <= 0 || p.y < rulerHeight || ! studio.layout.globalTracks)
+        return;
+    auto& s = studio.session();
+    const auto at = std::max<Ticks> (0, studio.snapped (static_cast<Ticks> (studio.view.xToTick (p.x))));
+    if (p.y >= signatureTop)
+    {
+        const auto* sig = signatureAt (p.x);
+        if (item == contextDelete && sig != nullptr)
+            studio.check (s.deleteSignaturePoint (sig->id));
+        else if (item == contextEdit)
+        {
+            const auto bar = sig != nullptr ? sig->bar : nearestBar (p.x);
+            const auto& now = studio.model().signatures.signatureAtBar (bar);
+            askForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
+                        [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+        }
         return;
     }
-    if (e.position.y >= tempoTop)
+    if (p.y >= tempoTop)
     {
-        if (const auto* point = tempoPointAt (e.position.x))
+        const auto* point = tempoPointAt (p.x);
+        if (item == contextAdd && point == nullptr)
+        {
+            if (s.addTempoPoint (at, bpmAtY (p.y)))
+                studio.edited();
+            else
+                studio.setStatus (juce::String (s.lastError()));
+        }
+        else if (item == contextDelete && point != nullptr)
+            studio.check (s.deleteTempoPoint (point->id));
+        else if (item == contextEdit && point != nullptr)
         {
             const auto id = point->id;
             const auto pos = point->pos;
@@ -560,17 +610,42 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
         }
         return;
     }
-    if (const auto* marker = markerAt (e.position.x))
+    const auto* marker = markerAt (p.x);
+    if (marker == nullptr)
     {
-        const auto id = marker->id;
+        if (item == contextAdd)
+        {
+            s.addMarker (at, "");
+            studio.edited();
+        }
+        return;
+    }
+    const auto id = marker->id;
+    if (item == contextDelete)
+        studio.check (s.deleteMarker (id));
+    else if (item == contextRename)
         askForText ("Rename marker", juce::String (marker->name), [this, id] (juce::String name) {
             if (name.isNotEmpty())
                 studio.check (studio.session().renameMarker (id, name.toStdString()));
         });
+    else if (item == contextColour)
+        studio.check (s.setMarkerColor (id, std::nullopt));
+    else if (item > contextColour && item <= contextColour + paletteSize)
+        studio.check (s.setMarkerColor (id, model::Color { item - contextColour - 1, {} }));
+}
+
+void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // Double-click is the quick way to the menu's first entry: edit what's there, or add a marker.
+    const auto p = e.position;
+    if (p.y < rulerHeight || ! studio.layout.globalTracks)
         return;
-    }
-    studio.session().addMarker (studio.snapped (static_cast<Ticks> (studio.view.xToTick (e.position.x))), "");
-    studio.edited();
+    if (p.y >= signatureTop)
+        pickContext (contextEdit, p);
+    else if (p.y >= tempoTop)
+        pickContext (contextEdit, p);
+    else
+        pickContext (markerAt (p.x) != nullptr ? contextRename : contextAdd, p);
 }
 
 // Track header ------------------------------------------------------------------------------
@@ -2337,6 +2412,11 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
     addAndMakeVisible (lanes);
     addAndMakeVisible (headerColumn);
     headerColumn.setTitle ("Track headers");
+    // The headers take their own clicks, so this is the empty space under the last track (04 §6.1).
+    headerColumn.onDoubleClick = [this] { studio.perform (Cmd::newTrack); };
+    addTrack.setMouseClickGrabsKeyboardFocus (false);
+    addTrack.onClick = [this] { studio.perform (Cmd::newTrack); };
+    addAndMakeVisible (addTrack);
     addAndMakeVisible (vertical);
     addAndMakeVisible (horizontal);
     vertical.addListener (this);
@@ -2460,6 +2540,7 @@ void TracksArea::resized()
     horizontal.setBounds (r.removeFromBottom (bar).withTrimmedLeft (headerWidth).withTrimmedRight (bar));
     vertical.setBounds (r.removeFromRight (bar));
     headerColumn.setBounds (r.removeFromLeft (headerWidth));
+    addTrack.setBounds (headerWidth - space::s1 - size::control, (Ruler::rulerHeight - size::control) / 2, size::control, size::control);
     lanes.setBounds (r);
     layoutHeaders();
     vertical.setRangeLimits (0.0, std::max<double> (lanes.contentHeight() + defaultTrackHeight, lanes.getHeight()), juce::dontSendNotification);

@@ -1583,6 +1583,15 @@ EditResult Session::renameMarker (const Id& markerId, const std::string& name)
     return run ("Rename Marker", [&] (TxnWriter& w) { return wrote (w.put (markerPath (markerId) / "name", Value (name))); });
 }
 
+EditResult Session::setMarkerColor (const Id& markerId, std::optional<model::Color> color)
+{
+    if (! projection.markers.contains (markerId))
+        return reject ("That marker no longer exists.");
+    if (color && color->rgb.empty() && (color->palette < 0 || color->palette > 23))
+        return reject ("Pick one of the palette colors.");
+    return run ("Marker Color", [&] (TxnWriter& w) { return wrote (w.put (markerPath (markerId) / "color", color ? color->toValue() : Value())); });
+}
+
 EditResult Session::deleteMarker (const Id& markerId)
 {
     if (! projection.markers.contains (markerId))

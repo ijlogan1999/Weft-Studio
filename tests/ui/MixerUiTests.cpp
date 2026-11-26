@@ -417,6 +417,23 @@ TEST_CASE ("AT-PLG-5 a plug-in without an editor gets sliders that change its pa
     ui.settle();
     CHECK_FALSE (ui.m().track (id)->strip.inserts[0].params.contains (paramId));
 
+    // The window's Bypass button is the insert's bypass (AT-PLG-12, D-UI-24), and follows it when it changes elsewhere.
+    auto* frame = window->frame();
+    REQUIRE (frame != nullptr);
+    REQUIRE (frame->bypass.isVisible());
+    CHECK_FALSE (frame->bypass.getToggleState());
+    CHECK (editor->getY() == PluginFrame::headerHeight);
+    CHECK (frame->getHeight() == editor->getHeight() + PluginFrame::headerHeight);
+    frame->bypass.onClick();
+    ui.settle();
+    CHECK (ui.m().track (id)->strip.inserts[0].bypass);
+    CHECK (frame->bypass.getToggleState());
+    strip->pickInsert (0, ChannelStrip::itemBypass);
+    ui.settle();
+    frame->refresh();
+    CHECK_FALSE (ui.m().track (id)->strip.inserts[0].bypass);
+    CHECK_FALSE (frame->bypass.getToggleState());
+
     // Closing the window writes the state chunk (D-DM-5).
     editor->rows[g].slider->setValue (0.3, juce::sendNotificationSync);
     window->pollParameters();

@@ -52,8 +52,21 @@ public:
     /** Pointer actions, also used by tests: click in the ruler moves the playhead; in the cycle strip drags the cycle;
         on a marker jumps to it (AT-ARR-21). With Autopunch on, dragging an end of the punch range in the strip moves it and
         Shift+drag sets a new one (W-1d). In the tempo lane Ctrl+click (or the pencil) adds a change, dragging a point
-        changes its BPM (vertical) and position (horizontal), right-click deletes; right-click deletes a signature change. */
+        changes its BPM (vertical) and position (horizontal). Right-click in a global lane opens contextMenu(). */
     void pointerDown (juce::Point<float> p, juce::ModifierKeys mods);
+    /** Right-click in the global tracks (D-UI-23): a marker gets Rename, Color and Delete; a tempo change or a time
+        signature gets Edit and Delete (the first of each can't be deleted); empty space offers to add one there.
+        Empty outside the lanes. pickContext acts on whatever is under p. */
+    juce::PopupMenu contextMenu (juce::Point<float> p) const;
+    void pickContext (int item, juce::Point<float> p);
+    enum ContextItem
+    {
+        contextRename = 1,
+        contextDelete,
+        contextEdit,
+        contextAdd,
+        contextColour = 1000 // the marker back to no colour; + 1 .. paletteSize: a swatch
+    };
     void pointerDrag (juce::Point<float> p);
     void pointerUp();
 
@@ -269,6 +282,10 @@ public:
 
     Ruler& ruler() noexcept { return rulerComponent; }
     Timeline& timeline() noexcept { return lanes; }
+    /** "+" above the headers: opens the New Track dialog (04 §6.1). */
+    juce::Button& addTrackButton() noexcept { return addTrack; }
+    /** The column the headers sit in; a double-click on its empty part below the last track opens the New Track dialog. */
+    juce::Component& headerArea() noexcept { return headerColumn; }
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
@@ -286,7 +303,16 @@ private:
     Ruler rulerComponent;
     Timeline lanes;
     bool hadCollaborators = false;
-    juce::Component headerColumn;
+    struct HeaderColumn final : juce::Component
+    {
+        std::function<void()> onDoubleClick;
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            if (onDoubleClick)
+                onDoubleClick();
+        }
+    } headerColumn;
+    CommandButton addTrack { "+", Cmd::newTrack };
     std::vector<std::unique_ptr<TrackHeader>> trackHeaders;
     std::vector<Id> shownTracks;
     juce::ScrollBar vertical { true }, horizontal { false };

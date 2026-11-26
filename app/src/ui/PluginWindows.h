@@ -33,6 +33,31 @@ private:
     std::vector<engine::ParameterInfo> infos;
 };
 
+/** What a plug-in window shows (D-UI-24): a header strip with the Bypass button (insert effects only), and the
+    editor under it. The frame follows the editor's size when the plug-in resizes itself. */
+class PluginFrame final : public juce::Component, private juce::ComponentListener
+{
+public:
+    PluginFrame (Studio& studio, const Id& pluginId, juce::Component* editorToOwn);
+    ~PluginFrame() override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    /** Shows the insert's bypass state (the window's timer calls it). */
+    void refresh();
+
+    juce::TextButton bypass { "Bypass" };
+    juce::Component& editor() noexcept { return *content; }
+    static constexpr int headerHeight = 36;
+
+private:
+    void componentMovedOrResized (juce::Component&, bool moved, bool resized) override;
+    /** The track and insert this window edits, or nothing for an instrument or a removed plug-in. */
+    const model::PluginInstance* insert (Id* trackId = nullptr) const;
+    Studio& studio;
+    const Id pluginId;
+    std::unique_ptr<juce::Component> content;
+};
+
 class PluginWindows;
 
 class PluginWindow final : public juce::DocumentWindow, private juce::Timer
@@ -45,11 +70,13 @@ public:
     const Id pluginId;
     /** The generic editor, when the plug-in has no editor of its own. */
     GenericPluginEditor* generic() const;
+    /** The header strip and editor (D-UI-24). */
+    PluginFrame* frame() const;
     /** Reports parameters the editor changed to the session (the window's timer calls it). */
     void pollParameters();
 
 private:
-    void timerCallback() override { pollParameters(); }
+    void timerCallback() override;
     Studio& studio;
     PluginWindows& windows;
     std::shared_ptr<engine::Processor> proc; // keeps the plug-in alive while its editor is open
