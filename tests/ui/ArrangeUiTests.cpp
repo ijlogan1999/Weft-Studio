@@ -2276,3 +2276,115 @@ TEST_CASE ("AT-ARR-41 zoom sliders, vertical zoom, saved zooms, navigation back 
     ui.settle();
     CHECK (ui.studio.trackHeight (ui.m().trackOrder[5]) == before + 20);
 }
+
+TEST_CASE ("AT-ARR-42 region selection commands, move and trim to the playhead, split at the cycle, Up/Down through tracks", "[UI][AT-ARR-42]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto bass = s.createTrack (model::TrackKind::instrument, "Bass").value();
+    const Ticks bar = 3840;
+    const auto a = s.createMidiRegion (keys, 0, bar).value();
+    const auto b = s.createMidiRegion (keys, 2 * bar, bar).value();
+    const auto c = s.createMidiRegion (keys, 4 * bar, bar).value();
+    const auto d = s.createMidiRegion (bass, 2 * bar, 2 * bar).value();
+    REQUIRE (s.setRegionMuted (b, true));
+    REQUIRE (s.setRegionColor (d, model::Color { 5, {} }));
+    REQUIRE (s.setRegionColor (a, model::Color { 5, {} }));
+    ui.studio.edited();
+    ui.settle();
+    auto& sel = ui.studio.selection;
+    const auto selected = [&] {
+        auto ids = sel.ids();
+        std::sort (ids.begin(), ids.end());
+        return ids;
+    };
+    const auto sorted = [] (std::vector<Id> ids) {
+        std::sort (ids.begin(), ids.end());
+        return ids;
+    };
+
+    // Select All Following: from the earliest selected region.
+    sel.set ({ b });
+    REQUIRE (ui.key ('F', juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ b, c, d }));
+    // Inside the cycle, muted, same colour, first and last.
+    REQUIRE (s.setCycle (false, 2 * bar, 4 * bar));
+    ui.studio.edited();
+    REQUIRE (ui.key ('L', juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ b, d }));
+    REQUIRE (ui.studio.perform (Cmd::selectMutedRegions));
+    CHECK (selected() == std::vector<Id> { b });
+    sel.set ({ d });
+    REQUIRE (ui.studio.perform (Cmd::selectSameColor));
+    CHECK (selected() == sorted ({ a, d }));
+    ui.studio.selectTrack (keys);
+    REQUIRE (ui.studio.perform (Cmd::selectLast));
+    CHECK (selected() == std::vector<Id> { c });
+    REQUIRE (ui.studio.perform (Cmd::selectFirst));
+    CHECK (selected() == std::vector<Id> { a });
+    // Shift+Right adds the next region on the track; Shift+Left from there the previous.
+    REQUIRE (ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ a, b }));
+    sel.set ({ c });
+    REQUIRE (ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ b, c }));
+
+    // Up and Down in the arrange view select the previous and next track.
+    ui.studio.selectTrack (keys);
+    REQUIRE (ui.key (juce::KeyPress::downKey));
+    CHECK (ui.studio.selectedTrack() == bass);
+    REQUIRE (ui.key (juce::KeyPress::upKey));
+    CHECK (ui.studio.selectedTrack() == keys);
+
+    // Move Region to Playhead (and Select Next).
+    sel.set ({ b });
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::moveToPlayheadSelectNext));
+    ui.settle();
+    CHECK (ui.m().region (b)->start == 3 * bar);
+    CHECK (selected() == std::vector<Id> { c });
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().region (b)->start == 2 * bar);
+
+    // Set Region Start / End to Playhead trims the selected regions the playhead is inside.
+    sel.set ({ d });
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::regionEndToPlayhead));
+    ui.settle();
+    CHECK (ui.m().region (d)->length == bar);
+    CHECK (s.undoName() == "Set Region End");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::regionStartToPlayhead));
+    ui.settle();
+    CHECK (ui.m().region (d)->start == 3 * bar);
+    CHECK (ui.m().region (d)->length == bar);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    ui.studio.locate (10 * bar);
+    CHECK_FALSE (ui.studio.perform (Cmd::regionStartToPlayhead));
+
+    // Split Regions at Cycle: a region crossing both locators becomes three, one undo step.
+    REQUIRE (s.setCycle (false, 2 * bar + bar / 2, 3 * bar + bar / 2));
+    ui.studio.edited();
+    sel.set ({ d });
+    const auto before = ui.m().regions.size();
+    REQUIRE (ui.studio.perform (Cmd::splitAtCycle));
+    ui.settle();
+    CHECK (ui.m().regions.size() == before + 2);
+    CHECK (s.undoName() == "Split at Cycle");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().regions.size() == before);
+
+    // Scroll to Selection brings a region far to the right into view.
+    const auto far = s.createMidiRegion (bass, 200 * bar, bar).value();
+    ui.studio.edited();
+    sel.set ({ far });
+    ui.studio.view.originTick = 0;
+    REQUIRE (ui.studio.perform (Cmd::scrollToSelection));
+    CHECK (ui.studio.view.tickToX (200.0 * bar) >= 0.0);
+    CHECK (ui.studio.view.tickToX (200.0 * bar) < ui.studio.timelineWidth);
+}

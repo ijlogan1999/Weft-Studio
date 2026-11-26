@@ -233,7 +233,8 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Input Monitoring Track | Shift+I | | Zoom Vertical In / Out | Ctrl+Down / Ctrl+Up |
 | Save as Zoom 1-3 / Recall Zoom 1-3 | Ctrl+Alt+Shift+1-3 / Ctrl+Alt+1-3 | | Navigation: Back / Forward | Ctrl+[ / Ctrl+] |
 | Page Up / Down | Page Up / Page Down | | Page Left / Right | Alt+Page Up / Alt+Page Down |
-| Zoom Selected Track | Ctrl+Alt+Z | | | |
+| Zoom Selected Track | Ctrl+Alt+Z | | Select All Inside Cycle | Shift+L |
+| Add Previous / Next Region to Selection | Shift+Left / Shift+Right | | Select Previous / Next Track (arrange) | Up / Down |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 

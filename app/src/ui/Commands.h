@@ -78,7 +78,10 @@ enum class Cmd
     cycleMixerMode,
     // D-UI-38: zoom and navigation
     zoomVerticalIn, zoomVerticalOut, saveZoom1, saveZoom2, saveZoom3, recallZoom1, recallZoom2, recallZoom3, navigateBack, navigateForward,
-    pageUp, pageDown, pageLeft, pageRight, zoomTrack
+    pageUp, pageDown, pageLeft, pageRight, zoomTrack,
+    // D-W3-12: region selection and edit commands
+    selectPreviousTrack, selectNextTrack, selectInsideCycle, selectMutedRegions, selectSameColor, selectFirst, selectLast, togglePreviousRegion, toggleNextRegion,
+    scrollToSelection, moveToPlayhead, moveToPlayheadSelectNext, regionStartToPlayhead, regionEndToPlayhead, splitAtCycle
 };
 
 struct CommandInfo

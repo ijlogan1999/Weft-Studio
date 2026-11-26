@@ -679,7 +679,7 @@ private:
     std::optional<bool> performNotes (Cmd command);
     void zoomToFit();
     /** Left/Right in the tracks area (D-UI-28): the previous or next region on the same track. */
-    bool stepRegion (int direction);
+    bool stepRegion (int direction, bool add = false);
     /** Z fitted the selection to this view; Z again with nothing changed fits the whole project (D-UI-27). */
     struct FittedSelection
     {

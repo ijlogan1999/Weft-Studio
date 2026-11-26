@@ -978,7 +978,7 @@ void Studio::zoomToFit()
     view.fit (span->first, span->second, timelineWidth, 0.9);
 }
 
-bool Studio::stepRegion (int direction)
+bool Studio::stepRegion (int direction, bool add)
 {
     const auto& m = model();
     const model::Region* anchor = nullptr;
@@ -1014,7 +1014,14 @@ bool Studio::stepRegion (int direction)
     }
     if (to == nullptr)
         return false;
-    selection.set ({ to->id });
+    if (add) // Add Previous/Next Region to Selection (D-W3-12)
+    {
+        auto now = selection.ids();
+        now.push_back (to->id);
+        selection.set (now);
+    }
+    else
+        selection.set ({ to->id });
     sendChangeMessage();
     return true;
 }
@@ -1339,6 +1346,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff: case Cmd::togglePluginWindows:
         case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip: case Cmd::cycleMixerMode:
         case Cmd::zoomVerticalIn: case Cmd::zoomVerticalOut: case Cmd::saveZoom1: case Cmd::saveZoom2: case Cmd::saveZoom3: case Cmd::recallZoom1: case Cmd::recallZoom2: case Cmd::recallZoom3: case Cmd::navigateBack: case Cmd::navigateForward: case Cmd::pageUp: case Cmd::pageDown: case Cmd::pageLeft: case Cmd::pageRight: case Cmd::zoomTrack:
+        case Cmd::selectPreviousTrack: case Cmd::selectNextTrack: case Cmd::selectInsideCycle: case Cmd::selectMutedRegions: case Cmd::selectSameColor: case Cmd::selectFirst: case Cmd::selectLast: case Cmd::togglePreviousRegion: case Cmd::toggleNextRegion: case Cmd::scrollToSelection: case Cmd::moveToPlayhead: case Cmd::moveToPlayheadSelectNext: case Cmd::regionStartToPlayhead: case Cmd::regionEndToPlayhead: case Cmd::splitAtCycle:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1916,6 +1924,7 @@ bool Studio::perform (Cmd command)
         case Cmd::searchTracks:
         case Cmd::configureTrackHeader:
         case Cmd::togglePluginWindows:
+        case Cmd::scrollToSelection:
         case Cmd::goToPosition:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
@@ -2008,9 +2017,149 @@ bool Studio::perform (Cmd command)
             edited();
             return bus.has_value();
         }
+        case Cmd::selectAllFollowing:
+        {
+            // D-W3-12: in the arrange view, every region starting at or after the earliest selected one, or the playhead.
+            Ticks from = playhead();
+            bool any = false;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && (! any || r->start < from))
+                    from = r->start, any = true;
+            std::vector<Id> picked;
+            for (const auto& [rid, r] : m.regions)
+                if (r->start >= from)
+                    picked.push_back (rid);
+            selection.set (picked);
+            sendChangeMessage();
+            return ! picked.empty();
+        }
+        case Cmd::selectInsideCycle:
+        case Cmd::selectMutedRegions:
+        case Cmd::selectSameColor:
+        {
+            std::set<std::pair<int, std::string>> colours;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id))
+                {
+                    const auto* t = m.track (m.effectiveTrackId (*r));
+                    const auto c = r->color ? *r->color : t != nullptr ? t->color : model::Color {};
+                    colours.insert ({ c.palette, c.rgb });
+                }
+            if (command == Cmd::selectSameColor && colours.empty())
+            {
+                setStatus ("Select a region first.");
+                return false;
+            }
+            const auto& cyc = m.info.cycle;
+            std::vector<Id> picked;
+            for (const auto& [rid, r] : m.regions)
+            {
+                bool take = false;
+                if (command == Cmd::selectInsideCycle)
+                    take = cyc.end > cyc.start && r->start >= cyc.start && m.regionEndTick (*r) <= static_cast<double> (cyc.end);
+                else if (command == Cmd::selectMutedRegions)
+                    take = r->muted;
+                else
+                {
+                    const auto* t = m.track (m.effectiveTrackId (*r));
+                    const auto c = r->color ? *r->color : t != nullptr ? t->color : model::Color {};
+                    take = colours.contains ({ c.palette, c.rgb });
+                }
+                if (take)
+                    picked.push_back (rid);
+            }
+            selection.set (picked);
+            sendChangeMessage();
+            return ! picked.empty();
+        }
+        case Cmd::selectFirst:
+        case Cmd::selectLast:
+        {
+            // On the selected track, or across every track when none is selected.
+            const model::Region* pick = nullptr;
+            for (const auto& [rid, r] : m.regions)
+                if (local.selectedTrack.empty() || m.effectiveTrackId (*r) == local.selectedTrack)
+                    if (pick == nullptr || (command == Cmd::selectFirst ? r->start < pick->start : r->start > pick->start))
+                        pick = &*r;
+            if (pick == nullptr)
+                return false;
+            selection.set ({ pick->id });
+            sendChangeMessage();
+            return true;
+        }
+        case Cmd::togglePreviousRegion:
+        case Cmd::toggleNextRegion: return stepRegion (command == Cmd::toggleNextRegion ? 1 : -1, true);
+        case Cmd::moveToPlayhead:
+        case Cmd::moveToPlayheadSelectNext:
+        {
+            Ticks earliest = 0;
+            bool any = false;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && (! any || r->start < earliest))
+                    earliest = r->start, any = true;
+            if (! any)
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            if (playhead() != earliest && ! check (s.moveRegions (ids, playhead() - earliest, 0)))
+                return false;
+            if (command == Cmd::moveToPlayheadSelectNext)
+                stepRegion (1);
+            return true;
+        }
+        case Cmd::regionStartToPlayhead:
+        case Cmd::regionEndToPlayhead:
+        {
+            // D-W3-12: each selected region the playhead is inside is trimmed to it, as one undo step.
+            const auto now = playhead();
+            std::vector<Id> inside;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && r->start < now && static_cast<double> (now) < m.regionEndTick (*r))
+                    inside.push_back (id);
+            if (inside.empty())
+            {
+                setStatus ("The playhead isn't inside a selected region.");
+                return false;
+            }
+            s.beginGesture (command == Cmd::regionStartToPlayhead ? "Set Region Start" : "Set Region End");
+            for (const auto& id : inside)
+            {
+                if (command == Cmd::regionStartToPlayhead)
+                    s.trimRegionStart (id, now);
+                else if (const auto* r = s.model().region (id))
+                    s.trimRegionLength (id, now - r->start);
+            }
+            s.endGesture();
+            edited();
+            return true;
+        }
+        case Cmd::splitAtCycle:
+        {
+            const auto& cyc = m.info.cycle;
+            if (cyc.end <= cyc.start || ids.empty())
+            {
+                setStatus (ids.empty() ? "Select regions first." : "Set a cycle range first.");
+                return false;
+            }
+            const auto start = cyc.start, end = cyc.end;
+            s.beginGesture ("Split at Cycle");
+            auto pieces = s.splitRegionsAt (ids, start);
+            std::vector<Id> all = ids;
+            all.insert (all.end(), pieces.begin(), pieces.end());
+            const auto more = s.splitRegionsAt (all, end);
+            if (pieces.empty() && more.empty())
+            {
+                s.cancelGesture();
+                setStatus ("The cycle doesn't cross a selected region.");
+                return false;
+            }
+            s.endGesture();
+            edited();
+            return true;
+        }
         case Cmd::muteNotes:
         case Cmd::quantize:
-        case Cmd::selectAllFollowing:
         case Cmd::legato:
         case Cmd::removeOverlaps:
         case Cmd::noteStartToPlayhead:
@@ -2219,13 +2368,34 @@ bool Studio::perform (Cmd command)
             edited();
             return ok && any;
         }
-        case Cmd::transposeUp:
+        case Cmd::transposeUp: // Up and Down step through the tracks in the arrange view (D-W3-12)
+        case Cmd::selectPreviousTrack:
         case Cmd::transposeDown:
+        case Cmd::selectNextTrack:
+        {
+            const auto& rows = m.rows;
+            if (rows.empty())
+                return false;
+            const bool up = command == Cmd::transposeUp || command == Cmd::selectPreviousTrack;
+            const auto at = std::find (rows.begin(), rows.end(), local.selectedTrack);
+            std::size_t next = 0;
+            if (at == rows.end())
+                next = up ? rows.size() - 1 : 0;
+            else
+            {
+                const auto i = static_cast<std::size_t> (at - rows.begin());
+                if (up ? i == 0 : i + 1 >= rows.size())
+                    return false;
+                next = up ? i - 1 : i + 1;
+            }
+            selectTrack (rows[next]);
+            return true;
+        }
         case Cmd::octaveUp:
         case Cmd::octaveDown:
         case Cmd::notesLeft:
         case Cmd::notesRight:
-            return false; // arrows do nothing in the arrange view
+            return false; // these arrows do nothing in the arrange view
         case Cmd::applyQuantize:
         {
             bool any = false;
@@ -3775,7 +3945,8 @@ bool Studio::changesDocument (Cmd command)
         Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
         Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
-        Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip,
+        Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip, Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext,
+        Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

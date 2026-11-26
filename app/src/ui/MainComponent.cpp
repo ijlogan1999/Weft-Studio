@@ -427,6 +427,33 @@ void MainComponent::handleUiCommand (Cmd command)
         tracks().showHeaderOptions();
     else if (command == Cmd::togglePluginWindows)
         plugins.toggleAll();
+    else if (command == Cmd::scrollToSelection)
+    {
+        // D-W3-12: the selection's start comes into view (a tenth in from the left) and its first track's row.
+        const auto span = studio.selection.span (studio.model());
+        if (! span)
+            studio.setStatus ("Select regions first.");
+        else
+        {
+            auto& view = studio.view;
+            const auto x0 = view.tickToX (span->first), x1 = view.tickToX (span->second);
+            if (x0 < 0 || x1 > studio.timelineWidth)
+                view.originTick = std::max (0.0, span->first - studio.timelineWidth * 0.1 / view.pixelsPerTick);
+            for (const auto& id : studio.model().rows)
+            {
+                bool has = false;
+                for (const auto& rid : studio.selection.ids())
+                    if (const auto* r = studio.model().region (rid); r != nullptr && studio.model().effectiveTrackId (*r) == id)
+                        has = true;
+                if (has)
+                {
+                    tracks().revealTrack (id);
+                    break;
+                }
+            }
+            tracks().repaint();
+        }
+    }
     else if (command == Cmd::searchTracks)
     {
         if (auto* search = TrackSearch::show (studio, this))
@@ -849,6 +876,24 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll, Cmd::deselectAll, Cmd::invertSelection, Cmd::selectPrevious,
                             Cmd::selectNext })
                 add (c);
+            {
+                // D-W3-12: more ways to select regions, and edits at the playhead or the cycle.
+                juce::PopupMenu more, edits;
+                const auto addTo = [] (juce::PopupMenu& to, Cmd c) {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    to.addItem (item);
+                };
+                for (auto c : { Cmd::selectAllFollowing, Cmd::selectInsideCycle, Cmd::selectMutedRegions, Cmd::selectSameColor, Cmd::selectFirst, Cmd::selectLast,
+                                Cmd::togglePreviousRegion, Cmd::toggleNextRegion, Cmd::selectPreviousTrack, Cmd::selectNextTrack, Cmd::scrollToSelection })
+                    addTo (more, c);
+                menu.addSubMenu ("Select", more);
+                for (auto c : { Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext, Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle })
+                    addTo (edits, c);
+                menu.addSubMenu ("Playhead and Cycle", edits);
+            }
             menu.addSeparator();
             for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
                             Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight })
