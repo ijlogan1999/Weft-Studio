@@ -133,6 +133,9 @@ juce::Path record();
 juce::Path cycle();
 juce::Path metronome();
 juce::Path lock();
+/** A track kind's icon (Track Icons, D-UI-37): 0 audio (a waveform), 1 instrument (keys), 2 bus (merging lines),
+    3 master (a level bar). */
+juce::Path track (int kind);
 } // namespace icon
 
 /** WCAG 2 contrast ratio of two opaque colours (1..21). */

@@ -61,12 +61,15 @@ juce::String toolName (Tool t);
 std::optional<Tool> toolForKey (juce::juce_wchar key);
 juce::String toolKey (Tool t);
 
-/** A track's Mute, Solo and Record buttons (header and mixer strip). */
+/** A track's Mute, Solo and Record buttons (header and mixer strip), and the header's optional
+    On/Off and Input Monitoring buttons (D-UI-37). */
 enum class TrackSwitch
 {
     mute,
     solo,
-    arm
+    arm,
+    on,     // the track is on (not off, L-TRH-7)
+    monitor // input monitoring forced on, rather than auto
 };
 
 enum class BottomTab
@@ -176,6 +179,25 @@ public:
     Ticks nudgeDelta (Ticks from, int direction) const;
     /** View › Grid Lines (D-W3-11): the arrange grid shows. */
     bool gridLines = true;
+    /** Configure Track Header (D-UI-37): which parts the track headers show, and the column's width. Local, not saved. */
+    struct HeaderOptions
+    {
+        bool monitor = false, onOff = false, hide = false; // optional buttons
+        bool volume = true, pan = true, numbers = true, colorBars = true, icons = false;
+        int width = 208;
+    };
+    static constexpr int defaultHeaderWidth = 208, minHeaderWidth = 160, maxHeaderWidth = 480;
+    HeaderOptions header;
+    enum HeaderOption { headerMonitor = 1, headerOnOff, headerHide, headerVolume, headerPan, headerNumbers, headerColorBars, headerIcons };
+    /** The Configure Track Header menu: item ids are `base` + HeaderOption. */
+    juce::PopupMenu headerOptionsMenu (int base) const;
+    void toggleHeaderOption (int option);
+    void setHeaderWidth (int width);
+    /** Turn All Tracks On/Off (D-UI-37): with any audio or instrument track off, all go on; otherwise all go off.
+        One undo step; a track someone else has locked stays as it is. */
+    bool toggleAllTracksOff();
+    /** Sets every audio and instrument track on or off, as one undo step (Alt+click on an On/Off button). */
+    bool setAllTracksOff (bool off);
     Ticks lastLocatePosition() const noexcept { return lastLocate; }
     /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
     bool moveTrackTo (const Id& trackId, std::size_t index);
@@ -193,6 +215,8 @@ public:
     void clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::ModifierKeys mods);
     /** Around a swipe down a column of buttons (D-UI-25): the mutes it sets are one undo step. */
     void beginSwitchSwipe (TrackSwitch which);
+    /** Mute, On/Off and Input Monitoring are saved in the project; Solo and Record are this machine's. */
+    static bool documentSwitch (TrackSwitch which) noexcept;
     void endSwitchSwipe();
     /** True when a solo elsewhere silences the track (it isn't soloed, and isn't fed by or feeding a soloed one). */
     bool silencedBySolo (const Id& trackId) const;

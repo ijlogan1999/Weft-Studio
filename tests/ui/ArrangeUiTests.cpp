@@ -406,7 +406,7 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
             items.add (it.getItem().text);
     CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "New Track with Next Input", "Duplicate Track",
                                         "Duplicate Track with Regions", "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down",
-                                        "Mute Track", "Solo Track", "Record-Enable Track", "Search and Select Track...", "Lock/Unlock Track" });
+                                        "Mute Track", "Solo Track", "Record-Enable Track", "Search and Select Track...", "Lock/Unlock Track", "Turn All Tracks On/Off", "Configure Track Header..." });
 
     // Color › swatch 7 from the menu bar.
     ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);
@@ -424,7 +424,7 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
         if (! it.getItem().isSeparator)
             headerItems.add (it.getItem().text);
     CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
-                                              "Delete Track", "Turn Track Off", "Hide Track", "Lock Track", "Add Comment" });
+                                              "Delete Track", "Turn Track Off", "Hide Track", "Lock Track", "Add Comment", "Configure Track Header" });
     header->pickMenu (TrackHeader::itemTrackOff); // L-TRH-7
     CHECK (ui.m().track (audio)->off);
     header->pickMenu (TrackHeader::itemTrackOff);
@@ -2028,11 +2028,11 @@ TEST_CASE ("AT-TRK-20 New Track dialog: input, output, monitoring, record enable
 
     // Right-click below the headers: the new-track commands and Delete Unused Tracks.
     juce::StringArray items;
-    const auto menu = TracksArea::headerAreaMenu();
+    const auto menu = ui.main->tracks().headerAreaMenu();
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (it.getItem().itemID != 0)
             items.add (it.getItem().text);
-    CHECK (items.joinIntoString ("|") == "New Track|New Audio Track|New Instrument Track|Delete Unused Tracks");
+    CHECK (items.joinIntoString ("|") == "New Track|New Audio Track|New Instrument Track|Delete Unused Tracks|Turn All Tracks On/Off");
     const auto before = ui.m().trackOrder.size();
     ui.main->tracks().pickHeaderAreaMenu (static_cast<int> (Cmd::newInstrumentTrack) + 1);
     ui.settle();
@@ -2055,4 +2055,141 @@ TEST_CASE ("AT-TRK-20 New Track dialog: input, output, monitoring, record enable
     REQUIRE (ui.studio.perform (Cmd::undo));
     ui.settle();
     CHECK (ui.m().track (first) != nullptr);
+}
+
+TEST_CASE ("AT-TRK-22 Configure Track Header: optional buttons, hidden parts, column width, all tracks on/off", "[UI][AT-TRK-22]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    REQUIRE (s.createTrack (model::TrackKind::audio, "Two"));
+    REQUIRE (s.createTrack (model::TrackKind::instrument, "Keys"));
+    ui.studio.edited();
+    ui.settle();
+    std::vector<Id> t;
+    for (const auto& id : ui.m().trackOrder)
+        if (const auto* track = ui.m().track (id); track->kind == model::TrackKind::audio || track->kind == model::TrackKind::instrument)
+            t.push_back (id);
+    REQUIRE (t.size() == 3);
+    const auto off = [&] (std::size_t i) { return ui.m().track (t[i])->off; };
+
+    // By default the optional buttons don't show; the header's menu and the column's offer the options.
+    auto* first = headerFor (ui, t[0]);
+    REQUIRE (first != nullptr);
+    CHECK_FALSE (first->onOff.isVisible());
+    CHECK_FALSE (first->monitor.isVisible());
+    CHECK_FALSE (first->hide.isVisible());
+    juce::StringArray subMenus;
+    const auto headerMenu = first->menu();
+    for (juce::PopupMenu::MenuItemIterator it (headerMenu); it.next();)
+        if (it.getItem().subMenu != nullptr)
+            subMenus.add (it.getItem().text);
+    CHECK (subMenus.contains ("Configure Track Header"));
+    CHECK (commandInfo (Cmd::configureTrackHeader).shortcut == "Alt+T");
+
+    first->pickMenu (static_cast<int> (TrackHeader::itemHeaderOption) + Studio::headerOnOff);
+    ui.main->tracks().pickHeaderAreaMenu (TracksArea::headerOptionBase + Studio::headerMonitor);
+    ui.studio.toggleHeaderOption (Studio::headerHide);
+    ui.settle();
+    first = headerFor (ui, t[0]);
+    CHECK (first->onOff.isVisible());
+    CHECK (first->monitor.isVisible());
+    CHECK (first->hide.isVisible());
+    CHECK (first->onOff.getToggleState());
+    CHECK_FALSE (headerFor (ui, t[2])->monitor.isVisible()); // input monitoring is for audio tracks
+    CHECK (headerFor (ui, t[2])->onOff.isVisible());
+    // Left to right: On, M, S, R, I, H; the name keeps the rest.
+    CHECK (first->onOff.getRight() < first->mute.getX());
+    CHECK (first->arm.getRight() < first->monitor.getX());
+    CHECK (first->monitor.getRight() < first->hide.getX());
+    CHECK (first->name.getRight() <= first->onOff.getX());
+
+    // On/Off: a click turns the track off; Ctrl+click turns only this one on; Alt+click sets them all.
+    const auto ctrl = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+    const auto alt = juce::ModifierKeys (juce::ModifierKeys::altModifier);
+    clickWith (ui, headerFor (ui, t[0])->onOff, {});
+    CHECK (off (0));
+    CHECK (s.undoName() == "Turn Track Off");
+    CHECK_FALSE (headerFor (ui, t[0])->onOff.getToggleState());
+    clickWith (ui, headerFor (ui, t[1])->onOff, ctrl);
+    CHECK ((off (0) && ! off (1) && off (2)));
+    CHECK (s.undoName() == "Turn On Only");
+    clickWith (ui, headerFor (ui, t[1])->onOff, alt);
+    CHECK ((off (0) && off (1) && off (2)));
+    CHECK (s.undoName() == "Turn All Tracks Off");
+
+    // Track › Turn All Tracks On/Off: any off turns them all on; then all go off.
+    REQUIRE (ui.studio.perform (Cmd::toggleAllTracksOff));
+    ui.settle();
+    CHECK_FALSE ((off (0) || off (1) || off (2)));
+    CHECK (s.undoName() == "Turn All Tracks On");
+    REQUIRE (ui.studio.perform (Cmd::toggleAllTracksOff));
+    ui.settle();
+    CHECK ((off (0) && off (1) && off (2)));
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK_FALSE ((off (0) || off (1) || off (2)));
+
+    // A swipe across the On/Off column is one undo step.
+    {
+        auto& from = headerFor (ui, t[0])->onOff;
+        from.swipeOver (&headerFor (ui, t[1])->onOff);
+        from.swipeOver (&headerFor (ui, t[2])->onOff);
+        from.swipeOver (&headerFor (ui, t[1])->mute); // another kind of button is ignored
+        CHECK (from.endSwipe());
+        ui.settle();
+    }
+    CHECK ((off (0) && off (1) && off (2)));
+    CHECK_FALSE (ui.m().track (t[1])->mute);
+    CHECK (s.undoName() == "Turn Tracks On/Off");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+
+    // Input monitoring: on, then back to auto.
+    clickWith (ui, headerFor (ui, t[0])->monitor, {});
+    CHECK (ui.m().track (t[0])->monitor == "on");
+    CHECK (headerFor (ui, t[0])->monitor.getToggleState());
+    clickWith (ui, headerFor (ui, t[0])->monitor, {});
+    CHECK (ui.m().track (t[0])->monitor == "auto");
+
+    // Hide: the track goes (until Show Hidden Tracks).
+    clickWith (ui, headerFor (ui, t[1])->hide, {});
+    CHECK (ui.m().track (t[1])->hidden);
+    CHECK (headerFor (ui, t[1]) == nullptr);
+
+    // Volume, pan, numbers, icons.
+    first = headerFor (ui, t[0]);
+    const auto nameX = first->name.getX();
+    CHECK (first->volume.isVisible());
+    ui.studio.toggleHeaderOption (Studio::headerVolume);
+    ui.settle();
+    first = headerFor (ui, t[0]);
+    CHECK_FALSE (first->volume.isVisible());
+    CHECK (first->pan.isVisible());
+    ui.studio.toggleHeaderOption (Studio::headerNumbers);
+    ui.settle();
+    CHECK (headerFor (ui, t[0])->name.getX() < nameX);
+    ui.studio.toggleHeaderOption (Studio::headerNumbers);
+    ui.studio.toggleHeaderOption (Studio::headerIcons);
+    ui.settle();
+    CHECK (headerFor (ui, t[0])->name.getX() > nameX);
+    CHECK_FALSE (icon::track (0).isEmpty());
+    CHECK_FALSE (icon::track (1).isEmpty());
+
+    // The column's width: drag its edge, within limits; double-click for the default.
+    auto& tracks = ui.main->tracks();
+    auto& edge = tracks.headerResizer();
+    CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth);
+    const auto start = edge.getLocalBounds().getCentre().toFloat();
+    edge.mouseDown (mouse (edge, start));
+    edge.mouseDrag (mouse (edge, start + juce::Point<float> (60.0f, 0.0f), {}, 1, start));
+    ui.settle();
+    CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth + 60);
+    CHECK (headerFor (ui, t[0])->getWidth() == Studio::defaultHeaderWidth + 60);
+    CHECK (tracks.timeline().getX() == Studio::defaultHeaderWidth + 60);
+    edge.mouseDrag (mouse (edge, start + juce::Point<float> (2000.0f, 0.0f), {}, 1, start));
+    ui.settle();
+    CHECK (tracks.headerWidth() == Studio::maxHeaderWidth);
+    edge.mouseDoubleClick (mouse (edge, start, {}, 2));
+    ui.settle();
+    CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth);
 }

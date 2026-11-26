@@ -423,6 +423,8 @@ void MainComponent::handleUiCommand (Cmd command)
         PluginSearch::show (studio, this);
     else if (command == Cmd::goToPosition)
         control.positionDisplay().showEditor();
+    else if (command == Cmd::configureTrackHeader)
+        tracks().showHeaderOptions();
     else if (command == Cmd::searchTracks)
     {
         if (auto* search = TrackSearch::show (studio, this))
@@ -904,6 +906,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::searchTracks);
             add (Cmd::lockTrack);
+            menu.addSeparator();
+            add (Cmd::toggleAllTracksOff);
+            add (Cmd::configureTrackHeader);
             break;
         }
         case 3:

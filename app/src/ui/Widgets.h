@@ -113,7 +113,7 @@ public:
     /** The pointer is over `other` during a drag from this button. Tests call it directly. */
     void swipeOver (SwipeButton* other)
     {
-        if (other == nullptr || other == this || ! setTrackState || roleOf (*other) != roleOf (*this) || ! other->isEnabled() || ! other->isVisible())
+        if (other == nullptr || other == this || ! setTrackState || roleOf (*other) != roleOf (*this) || other->getButtonText() != getButtonText() || ! other->isEnabled() || ! other->isVisible())
             return;
         for (const auto& done : swiped)
             if (done == other)

@@ -100,6 +100,9 @@ public:
     const Id trackId;
     juce::Label name;
     SwipeButton mute { "M" }, solo { "S" }, arm { "R" };
+    /** Optional buttons (Configure Track Header, D-UI-37): On/Off, Input Monitoring and Hide. */
+    SwipeButton onOff { "On" }, monitor { "I" };
+    juce::TextButton hide { "H" };
     /** Volume and pan on the header's second line (L-TRH-3), shown when the track is tall enough. */
     juce::Slider volume, pan;
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
@@ -120,7 +123,8 @@ public:
         itemDelete,
         itemTrackOff,
         itemHide,
-        itemColour = 100 // + 1 .. paletteSize
+        itemColour = 100, // + 1 .. paletteSize
+        itemHeaderOption = 200 // + Studio::HeaderOption
     };
     /** The header the pointer is over while this one is dragged to reorder; nullptr when not dragging. */
     const TrackHeader* dropTarget() const noexcept { return reorderOver; }
@@ -137,6 +141,7 @@ public:
 private:
     void rebuildAutomation();
     void lockClicked();
+    int nameLeft() const;
     Studio& studio;
     juce::SharedResourcePointer<KnobLook> knobs;
     bool liveVolume = false, livePan = false;
@@ -299,13 +304,17 @@ public:
     juce::Component& headerArea() noexcept { return headerColumn; }
     /** Right-click below the last header (D-UI-32): the new-track commands and Delete Unused Tracks. Item ids are
         command ids + 1; pickHeaderAreaMenu runs the command. */
-    static juce::PopupMenu headerAreaMenu();
+    juce::PopupMenu headerAreaMenu() const;
     void pickHeaderAreaMenu (int item);
+    static constexpr int headerOptionBase = 20000; // header-area menu ids for Configure Track Header
+    /** Configure Track Header (Alt+T, D-UI-37): the options menu, shown at the header column. */
+    void showHeaderOptions();
+    /** The header column's width (Studio::header.width); drag its right edge to resize, double-click for the default. */
+    int headerWidth() const noexcept { return studio.header.width; }
+    juce::Component& headerResizer() noexcept { return resizer; }
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
-
-    static constexpr int headerWidth = 208;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -332,6 +341,15 @@ private:
                 onPopupMenu();
         }
     } headerColumn;
+    struct Resizer final : juce::Component
+    {
+        explicit Resizer (Studio& s) : studio (s) { setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); }
+        void mouseDown (const juce::MouseEvent&) override { from = studio.header.width; }
+        void mouseDrag (const juce::MouseEvent& e) override { studio.setHeaderWidth (from + e.getDistanceFromDragStartX()); }
+        void mouseDoubleClick (const juce::MouseEvent&) override { studio.setHeaderWidth (Studio::defaultHeaderWidth); }
+        Studio& studio;
+        int from = 0;
+    } resizer { studio };
     CommandButton addTrack { "+", Cmd::newTrack };
     std::vector<std::unique_ptr<TrackHeader>> trackHeaders;
     std::vector<Id> shownTracks;

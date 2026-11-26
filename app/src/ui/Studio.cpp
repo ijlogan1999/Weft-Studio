@@ -299,6 +299,16 @@ bool Studio::trackSwitch (TrackSwitch which, const Id& trackId) const
         }
         case TrackSwitch::solo: return local.soloed.contains (trackId);
         case TrackSwitch::arm: return local.armed.contains (trackId);
+        case TrackSwitch::on:
+        {
+            const auto* t = model().track (trackId);
+            return t != nullptr && ! t->off;
+        }
+        case TrackSwitch::monitor:
+        {
+            const auto* t = model().track (trackId);
+            return t != nullptr && t->monitor == "on";
+        }
     }
     return false;
 }
@@ -316,6 +326,16 @@ void Studio::setTrackSwitch (TrackSwitch which, const Id& trackId, bool on)
             if (! local.setArm (model(), trackId, on))
                 return;
             break;
+        case TrackSwitch::on:
+            if (t->kind != model::TrackKind::audio && t->kind != model::TrackKind::instrument)
+                return;
+            check (sess->setTrackOff (trackId, ! on));
+            return;
+        case TrackSwitch::monitor:
+            if (t->kind != model::TrackKind::audio)
+                return;
+            check (sess->setTrackMonitor (trackId, on ? "on" : "auto"));
+            return;
     }
     edited();
 }
@@ -329,6 +349,8 @@ void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::Modif
             case TrackSwitch::mute: toggleMute (trackId); break;
             case TrackSwitch::solo: toggleSolo (trackId); break;
             case TrackSwitch::arm: toggleArm (trackId); break;
+            case TrackSwitch::on:
+            case TrackSwitch::monitor: setTrackSwitch (which, trackId, ! trackSwitch (which, trackId)); break;
         }
         return;
     }
@@ -339,9 +361,14 @@ void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::Modif
     for (const auto& id : model().trackOrder)
         if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master)
             ids.push_back (id); // by value: a mute edit rebuilds the model
-    const bool own = which == TrackSwitch::mute && ! sess->inGesture();
+    // The switches saved in the project make one undo step; solo and record are local.
+    const bool own = documentSwitch (which) && ! sess->inGesture();
     if (own)
-        sess->beginGesture (only ? "Mute Only" : target ? "Mute All" : "Unmute All");
+        sess->beginGesture (which == TrackSwitch::on    ? (only ? "Turn On Only" : target ? "Turn All Tracks On" : "Turn All Tracks Off")
+                            : which == TrackSwitch::monitor ? "Input Monitoring"
+                            : only                          ? "Mute Only"
+                            : target                        ? "Mute All"
+                                                            : "Unmute All");
     for (const auto& id : ids)
         setTrackSwitch (which, id, only ? id == trackId : target);
     if (own)
@@ -351,9 +378,9 @@ void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::Modif
 
 void Studio::beginSwitchSwipe (TrackSwitch which)
 {
-    swipeGesture = which == TrackSwitch::mute && ! sess->inGesture();
+    swipeGesture = documentSwitch (which) && ! sess->inGesture();
     if (swipeGesture)
-        sess->beginGesture ("Mute Tracks");
+        sess->beginGesture (which == TrackSwitch::on ? "Turn Tracks On/Off" : which == TrackSwitch::monitor ? "Input Monitoring" : "Mute Tracks");
 }
 
 void Studio::endSwitchSwipe()
@@ -361,6 +388,86 @@ void Studio::endSwitchSwipe()
     if (std::exchange (swipeGesture, false))
         sess->endGesture();
     edited();
+}
+
+bool Studio::documentSwitch (TrackSwitch which) noexcept
+{
+    return which == TrackSwitch::mute || which == TrackSwitch::on || which == TrackSwitch::monitor;
+}
+
+bool Studio::setAllTracksOff (bool off)
+{
+    std::vector<Id> ids; // by value: each edit rebuilds the model
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id);
+            t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument) && t->off != off && ! lockedByOther (id))
+            ids.push_back (id);
+    if (ids.empty())
+        return false;
+    sess->beginGesture (off ? "Turn All Tracks Off" : "Turn All Tracks On");
+    for (const auto& id : ids)
+        sess->setTrackOff (id, off);
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+bool Studio::toggleAllTracksOff()
+{
+    bool anyOff = false;
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); t != nullptr && t->off)
+            anyOff = true;
+    if (! setAllTracksOff (! anyOff))
+    {
+        setStatus ("No audio or instrument tracks to turn on or off.");
+        return false;
+    }
+    return true;
+}
+
+juce::PopupMenu Studio::headerOptionsMenu (int base) const
+{
+    juce::PopupMenu m;
+    const auto& h = header;
+    m.addSectionHeader ("Buttons");
+    m.addItem (base + headerOnOff, "On/Off", true, h.onOff);
+    m.addItem (base + headerMonitor, "Input Monitoring", true, h.monitor);
+    m.addItem (base + headerHide, "Hide", true, h.hide);
+    m.addSectionHeader ("Show");
+    m.addItem (base + headerVolume, "Volume", true, h.volume);
+    m.addItem (base + headerPan, "Pan", true, h.pan);
+    m.addItem (base + headerNumbers, "Track Numbers", true, h.numbers);
+    m.addItem (base + headerColorBars, "Color Bars", true, h.colorBars);
+    m.addItem (base + headerIcons, "Track Icons", true, h.icons);
+    return m;
+}
+
+void Studio::toggleHeaderOption (int option)
+{
+    auto& h = header;
+    switch (option)
+    {
+        case headerMonitor: h.monitor = ! h.monitor; break;
+        case headerOnOff: h.onOff = ! h.onOff; break;
+        case headerHide: h.hide = ! h.hide; break;
+        case headerVolume: h.volume = ! h.volume; break;
+        case headerPan: h.pan = ! h.pan; break;
+        case headerNumbers: h.numbers = ! h.numbers; break;
+        case headerColorBars: h.colorBars = ! h.colorBars; break;
+        case headerIcons: h.icons = ! h.icons; break;
+        default: return;
+    }
+    sendChangeMessage();
+}
+
+void Studio::setHeaderWidth (int width)
+{
+    width = std::clamp (width, minHeaderWidth, maxHeaderWidth);
+    if (width == header.width)
+        return;
+    header.width = width;
+    sendChangeMessage();
 }
 
 bool Studio::silencedBySolo (const Id& trackId) const
@@ -1093,7 +1200,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
         case Cmd::nudgeByGrid: case Cmd::nudgeByBar: case Cmd::nudgeByBeat: case Cmd::nudgeByDivision: case Cmd::nudgeByTick: case Cmd::slipLeft: case Cmd::slipRight: case Cmd::shuffleLeft: case Cmd::shuffleRight: case Cmd::gridLines:
         case Cmd::nextTool: case Cmd::previousTool:
-        case Cmd::newTrackNextInput: case Cmd::searchTracks:
+        case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -1598,6 +1705,7 @@ bool Studio::perform (Cmd command)
         case Cmd::about:
         case Cmd::searchPlugins:
         case Cmd::searchTracks:
+        case Cmd::configureTrackHeader:
         case Cmd::goToPosition:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
@@ -1706,6 +1814,7 @@ bool Studio::perform (Cmd command)
         case Cmd::nudgeByDivision: nudgeValue = NudgeValue::division; break;
         case Cmd::nudgeByTick: nudgeValue = NudgeValue::tick; break;
         case Cmd::gridLines: gridLines = ! gridLines; break;
+        case Cmd::toggleAllTracksOff: return toggleAllTracksOff();
         case Cmd::lengthenNotes:
         case Cmd::shortenNotes:
         case Cmd::slipLeft:
@@ -3288,6 +3397,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
         Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
+        Cmd::toggleAllTracksOff,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

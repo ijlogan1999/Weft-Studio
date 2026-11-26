@@ -701,6 +701,26 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
+    // The optional buttons (D-UI-37): the same click, Ctrl/Alt-click and swipe as Mute.
+    describe (onOff, "On/Off", "Turn the track on or off (Ctrl+click: only this one on; Alt+click: all; drag across tracks to set them too)");
+    describe (monitor, "Input monitoring", "Input monitoring on, or back to auto (Alt+click: all; drag across tracks to set them too)");
+    describe (hide, "Hide", "Hide the track (View > Show Hidden Tracks brings it back)");
+    for (auto [b, which] : { std::pair { &onOff, TrackSwitch::on }, std::pair { &monitor, TrackSwitch::monitor } })
+    {
+        b->setClickingTogglesState (false);
+        b->onClick = [this, which] { studio.clickTrackSwitch (which, trackId, juce::ModifierKeys::currentModifiers); };
+        b->setTrackState = [this, which] (bool on) { studio.setTrackSwitch (which, trackId, on); };
+        b->onSwipeStart = [this, which] { studio.beginSwitchSwipe (which); };
+        b->onSwipeEnd = [this] { studio.endSwitchSwipe(); };
+    }
+    hide.onClick = [this] { pickMenu (itemHide); };
+    for (juce::Button* b : { static_cast<juce::Button*> (&onOff), static_cast<juce::Button*> (&monitor), static_cast<juce::Button*> (&hide) })
+    {
+        b->setWantsKeyboardFocus (true);
+        b->setMouseClickGrabsKeyboardFocus (false);
+        b->setHasFocusOutline (true);
+        addChildComponent (b);
+    }
     for (auto* b : { &mute, &solo, &arm })
     {
         b->setWantsKeyboardFocus (true);
@@ -841,6 +861,8 @@ juce::PopupMenu TrackHeader::menu() const
         m.addItem (itemBreakLock, "Break Lock (" + lockText + ")...");
     m.addSeparator();
     m.addItem (itemComment, "Add Comment", ! studio.previewing());
+    m.addSeparator();
+    m.addSubMenu ("Configure Track Header", studio.headerOptionsMenu (itemHeaderOption));
     return m;
 }
 
@@ -861,9 +883,9 @@ void TrackHeader::pickMenu (int item)
         case itemHide:
             if (const auto* t = studio.model().track (trackId))
             {
-                const bool hide = ! t->hidden;
-                studio.check (studio.session().setTrackHidden (trackId, hide));
-                if (hide && ! studio.model().info.showHiddenTracks)
+                const bool hiding = ! t->hidden;
+                studio.check (studio.session().setTrackHidden (trackId, hiding));
+                if (hiding && ! studio.model().info.showHiddenTracks)
                     studio.setStatus ("Track hidden. View > Show Hidden Tracks brings it back.");
             }
             break;
@@ -881,7 +903,9 @@ void TrackHeader::pickMenu (int item)
             break;
         }
         default:
-            if (item > itemColour && item <= itemColour + paletteSize)
+            if (item > itemHeaderOption)
+                studio.toggleHeaderOption (item - itemHeaderOption);
+            else if (item > itemColour && item <= itemColour + paletteSize)
                 studio.check (studio.session().setTrackColor (trackId, model::Color { item - itemColour - 1, {} }));
             break;
     }
@@ -947,6 +971,14 @@ void TrackHeader::refresh()
     solo.setToggleState (studio.localView().soloed.contains (trackId), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (trackId), juce::dontSendNotification);
     arm.setVisible (commands::LocalView::canArm (*t));
+    const auto& options = studio.header;
+    const bool switchable = t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument;
+    onOff.setVisible (options.onOff && switchable);
+    onOff.setToggleState (! t->off, juce::dontSendNotification);
+    monitor.setVisible (options.monitor && t->kind == model::TrackKind::audio);
+    monitor.setToggleState (t->monitor == "on", juce::dontSendNotification);
+    hide.setVisible (options.hide && t->kind != model::TrackKind::master);
+    hide.setToggleState (t->hidden, juce::dontSendNotification);
     if (! volume.isMouseButtonDown())
         volume.setValue (std::clamp (t->strip.volumeDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
     if (! pan.isMouseButtonDown())
@@ -961,7 +993,7 @@ void TrackHeader::refresh()
     lock.setColours (lockColour, lockColour.brighter (0.3f), lockColour.darker (0.2f));
     lock.setTooltip (lockTip.isEmpty() ? juce::String() : lockTip + (locked ? juce::String() : juce::String (" (click to unlock)")));
     name.setEditable (false, ! locked, true);
-    std::vector<juce::Component*> shared { &name, &mute, &mode, &volume, &pan };
+    std::vector<juce::Component*> shared { &name, &mute, &mode, &volume, &pan, &onOff, &monitor, &hide };
     for (auto& p : parameters)
         shared.push_back (p.get());
     for (auto& b : addLane)
@@ -1004,7 +1036,8 @@ void TrackHeader::paint (juce::Graphics& g)
     }
     depth::highlight (g, trackPart, 0.0f);
     // The track's colour runs down the left edge; selection adds an accent rule beside it.
-    if (t != nullptr)
+    const auto& options = studio.header;
+    if (t != nullptr && options.colorBars)
     {
         g.setColour (colourFor (t->color.palette, t->color.rgb));
         g.fillRect (trackPart.withWidth (static_cast<float> (space::half)));
@@ -1016,12 +1049,24 @@ void TrackHeader::paint (juce::Graphics& g)
     }
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::monoSmall));
-    g.drawText (juce::String (number), space::s1, space::s1, space::s3 - space::half, size::control, juce::Justification::centredRight);
-    if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible())
+    const auto row = juce::Rectangle<int> (0, name.getY(), 0, size::control);
+    if (options.numbers)
+        g.drawText (juce::String (number), space::s1, row.getY(), space::s3 - space::half, size::control, juce::Justification::centredRight);
+    if (t != nullptr && options.icons)
     {
+        // Track Icons (D-UI-37): the kind's glyph, left of the name.
+        const auto box = juce::Rectangle<float> (static_cast<float> (nameLeft() - size::icon - space::half), static_cast<float> (row.getY() + (size::control - size::icon) / 2),
+                                                 static_cast<float> (size::icon), static_cast<float> (size::icon));
+        const auto glyph = icon::track (static_cast<int> (t->kind));
+        g.setColour (colourFor (t->color.palette, t->color.rgb));
+        g.fillPath (glyph, glyph.getTransformToScaleToFit (box.reduced (1.0f), true));
+    }
+    if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible() && ! pan.isVisible())
+    {
+        g.setColour (colour (Token::textDim));
         g.setFont (font (Type::body));
         const auto kind = t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
-        g.drawText (kind, space::s4, space::s1 + size::control, 120, 16, juce::Justification::centredLeft);
+        g.drawText (kind, nameLeft(), space::s1 + size::control, 120, 16, juce::Justification::centredLeft);
     }
     // Collaborators working on this track (04 §6.1): a badge each, red while they record on it.
     auto badge = juce::Rectangle<float> (static_cast<float> (getWidth() - space::s1 - 16), static_cast<float> (space::s1 + size::control + 2), 16.0f, 16.0f);
@@ -1069,35 +1114,50 @@ std::vector<const collab::RemotePresence*> TrackHeader::badges() const
     return out;
 }
 
+int TrackHeader::nameLeft() const
+{
+    // Number, then the icon, then the name (D-UI-37); with neither, the name keeps clear of the colour bar.
+    const auto& options = studio.header;
+    int left = options.numbers ? space::s4 : space::s1 + space::half;
+    if (options.icons)
+        left += size::icon + space::half;
+    return left;
+}
+
 void TrackHeader::resized()
 {
     // Colour edge and number on the left; name, then M S R on the top line (8 px grid).
     const auto trackPart = getLocalBounds().withHeight (studio.trackHeight (trackId));
-    auto r = trackPart.withTrimmedLeft (space::s4).withTrimmedRight (space::s1);
+    auto r = trackPart.withTrimmedLeft (nameLeft()).withTrimmedRight (space::s1);
     auto row = r.withTrimmedTop (std::min (space::s1, std::max (0, (trackPart.getHeight() - size::control) / 2))).withHeight (size::control);
     if (lock.isVisible())
     {
         lock.setBounds (row.removeFromRight (size::icon).withSizeKeepingCentre (size::icon, size::icon));
         row.removeFromRight (space::half);
     }
-    for (auto* b : { &arm, &solo, &mute })
+    // Right to left: Hide, I, R, S, M, On (D-UI-37); a button that doesn't apply leaves no gap.
+    for (juce::Button* b : { static_cast<juce::Button*> (&hide), static_cast<juce::Button*> (&monitor), static_cast<juce::Button*> (&arm),
+                             static_cast<juce::Button*> (&solo), static_cast<juce::Button*> (&mute), static_cast<juce::Button*> (&onOff) })
     {
-        if (b == &arm && ! arm.isVisible())
+        if (! b->isVisible())
             continue;
-        b->setBounds (row.removeFromRight (size::control));
+        b->setBounds (row.removeFromRight (b == &onOff ? size::control + space::half : size::control));
         row.removeFromRight (space::half);
     }
     name.setBounds (row.withTrimmedRight (space::half));
     // Second line: volume, then pan; collaborator badges keep the right end (painted).
     const auto second = juce::Rectangle<int> (r.getX(), space::s1 + size::control + 2, r.getWidth(), 16);
     const bool roomy = trackPart.getHeight() >= 48;
-    volume.setVisible (roomy);
-    pan.setVisible (roomy);
+    volume.setVisible (roomy && studio.header.volume);
+    pan.setVisible (roomy && studio.header.pan);
     if (roomy)
     {
         auto line = second.withTrimmedRight (static_cast<int> (badges().size()) * 20);
-        pan.setBounds (line.removeFromRight (18).withSizeKeepingCentre (18, 18));
-        line.removeFromRight (space::half);
+        if (pan.isVisible())
+        {
+            pan.setBounds (line.removeFromRight (18).withSizeKeepingCentre (18, 18));
+            line.removeFromRight (space::half);
+        }
         volume.setBounds (line.withSizeKeepingCentre (line.getWidth(), 12));
     }
     // Automation lanes: the parameter and "+" on each; the track's mode on the first (W-8 step 1).
@@ -2526,7 +2586,7 @@ void Timeline::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
 
 // Tracks area -------------------------------------------------------------------------------
 
-juce::PopupMenu TracksArea::headerAreaMenu()
+juce::PopupMenu TracksArea::headerAreaMenu() const
 {
     juce::PopupMenu menu;
     const auto add = [&menu] (Cmd c) {
@@ -2540,13 +2600,32 @@ juce::PopupMenu TracksArea::headerAreaMenu()
         add (c);
     menu.addSeparator();
     add (Cmd::deleteUnusedTracks);
+    menu.addSeparator();
+    add (Cmd::toggleAllTracksOff);
+    menu.addSubMenu ("Configure Track Header", studio.headerOptionsMenu (headerOptionBase));
     return menu;
 }
 
 void TracksArea::pickHeaderAreaMenu (int item)
 {
-    if (item > 0)
+    if (item > headerOptionBase)
+        studio.toggleHeaderOption (item - headerOptionBase);
+    else if (item > 0)
         studio.perform (static_cast<Cmd> (item - 1));
+}
+
+void TracksArea::showHeaderOptions()
+{
+    juce::Component::SafePointer<TracksArea> self (this);
+    const auto at = headerColumn.getScreenBounds().withHeight (size::control).withWidth (headerWidth());
+    studio.headerOptionsMenu (headerOptionBase)
+        .showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (at), [self] (int item) {
+            if (self != nullptr && item > headerOptionBase)
+            {
+                self->studio.toggleHeaderOption (item - headerOptionBase);
+                self->showHeaderOptions(); // stays open while options are ticked, like a popover
+            }
+        });
 }
 
 TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
@@ -2555,6 +2634,9 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
     addAndMakeVisible (lanes);
     addAndMakeVisible (headerColumn);
     headerColumn.setTitle ("Track headers");
+    addAndMakeVisible (resizer);
+    resizer.setTitle ("Track header width");
+    resizer.setHelpText ("Drag to resize the track headers; double-click for the default width");
     // The headers take their own clicks, so this is the empty space under the last track (04 §6.1).
     headerColumn.onDoubleClick = [this] { studio.perform (Cmd::newTrack); };
     headerColumn.onPopupMenu = [this] {
@@ -2605,7 +2687,7 @@ void TracksArea::rebuildHeaders()
 void TracksArea::layoutHeaders()
 {
     for (std::size_t i = 0; i < trackHeaders.size(); ++i)
-        trackHeaders[i]->setBounds (lanes.rowBounds (static_cast<int> (i)).withX (0).withWidth (static_cast<float> (headerWidth)).toNearestInt());
+        trackHeaders[i]->setBounds (lanes.rowBounds (static_cast<int> (i)).withX (0).withWidth (static_cast<float> (headerWidth())).toNearestInt());
 }
 
 void TracksArea::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -2665,7 +2747,7 @@ void TracksArea::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surface));
     // The corner over the track headers: the panel's caption, level with the ruler.
-    const auto corner = juce::Rectangle<int> (0, 0, headerWidth, rulerComponent.getHeight());
+    const auto corner = juce::Rectangle<int> (0, 0, headerWidth(), rulerComponent.getHeight());
     g.setGradientFill (juce::ColourGradient::vertical (colour (Token::surfaceRaised), 0.0f, colour (Token::surface), static_cast<float> (Ruler::rulerHeight)));
     g.fillRect (corner);
     depth::highlight (g, corner.toFloat(), 0.0f);
@@ -2690,7 +2772,7 @@ void TracksArea::paint (juce::Graphics& g)
 void TracksArea::paintOverChildren (juce::Graphics& g)
 {
     // The header column sits above the canvas: a short shadow falls onto the lanes.
-    const auto x = static_cast<float> (headerWidth);
+    const auto x = static_cast<float> (headerWidth());
     const auto a = depth::shade (0.3f, 0.1f);
     g.setGradientFill (juce::ColourGradient::horizontal (a, x, a.withAlpha (0.0f), x + 5.0f));
     g.fillRect (x, static_cast<float> (rulerComponent.getY()), 5.0f, static_cast<float> (getHeight()));
@@ -2702,13 +2784,14 @@ void TracksArea::resized()
 {
     auto r = getLocalBounds();
     auto top = r.removeFromTop (rulerComponent.preferredHeight());
-    top.removeFromLeft (headerWidth);
+    top.removeFromLeft (headerWidth());
     const auto bar = getLookAndFeel().getDefaultScrollbarWidth();
     rulerComponent.setBounds (top.withTrimmedRight (bar));
-    horizontal.setBounds (r.removeFromBottom (bar).withTrimmedLeft (headerWidth).withTrimmedRight (bar));
+    horizontal.setBounds (r.removeFromBottom (bar).withTrimmedLeft (headerWidth()).withTrimmedRight (bar));
     vertical.setBounds (r.removeFromRight (bar));
-    headerColumn.setBounds (r.removeFromLeft (headerWidth));
-    addTrack.setBounds (headerWidth - space::s1 - size::control, (Ruler::rulerHeight - size::control) / 2, size::control, size::control);
+    headerColumn.setBounds (r.removeFromLeft (headerWidth()));
+    resizer.setBounds (headerWidth() - space::half, headerColumn.getY(), space::s1, headerColumn.getHeight());
+    addTrack.setBounds (headerWidth() - space::s1 - size::control, (Ruler::rulerHeight - size::control) / 2, size::control, size::control);
     lanes.setBounds (r);
     layoutHeaders();
     vertical.setRangeLimits (0.0, std::max<double> (lanes.contentHeight() + defaultTrackHeight, lanes.getHeight()), juce::dontSendNotification);
