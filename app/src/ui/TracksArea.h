@@ -289,6 +289,10 @@ public:
     juce::Button& addTrackButton() noexcept { return addTrack; }
     /** The column the headers sit in; a double-click on its empty part below the last track opens the New Track dialog. */
     juce::Component& headerArea() noexcept { return headerColumn; }
+    /** Right-click below the last header (D-UI-32): the new-track commands and Delete Unused Tracks. Item ids are
+        command ids + 1; pickHeaderAreaMenu runs the command. */
+    static juce::PopupMenu headerAreaMenu();
+    void pickHeaderAreaMenu (int item);
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
@@ -308,11 +312,16 @@ private:
     bool hadCollaborators = false;
     struct HeaderColumn final : juce::Component
     {
-        std::function<void()> onDoubleClick;
+        std::function<void()> onDoubleClick, onPopupMenu;
         void mouseDoubleClick (const juce::MouseEvent&) override
         {
             if (onDoubleClick)
                 onDoubleClick();
+        }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu() && onPopupMenu)
+                onPopupMenu();
         }
     } headerColumn;
     CommandButton addTrack { "+", Cmd::newTrack };

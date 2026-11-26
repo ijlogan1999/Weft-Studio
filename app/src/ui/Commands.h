@@ -55,7 +55,9 @@ enum class Cmd
     renameMarker, deleteMarker, selectPrevious, selectNext,
     marker10, marker11, marker12, marker13, marker14, marker15, marker16, marker17, marker18, marker19,
     // Search and Add Plug-in (D-W6-11)
-    searchPlugins
+    searchPlugins,
+    // Delete Unused Tracks (D-UI-32)
+    deleteUnusedTracks
 };
 
 struct CommandInfo

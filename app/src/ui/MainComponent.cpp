@@ -848,6 +848,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::duplicateTrack);
             add (Cmd::duplicateTrackWithRegions);
             add (Cmd::deleteTrack);
+            add (Cmd::deleteUnusedTracks);
             menu.addSeparator();
             const auto* t = studio.model().track (studio.selectedTrack());
             const bool colourable = t != nullptr && t->kind != model::TrackKind::master;

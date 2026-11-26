@@ -2435,6 +2435,29 @@ void Timeline::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
 
 // Tracks area -------------------------------------------------------------------------------
 
+juce::PopupMenu TracksArea::headerAreaMenu()
+{
+    juce::PopupMenu menu;
+    const auto add = [&menu] (Cmd c) {
+        const auto& info = commandInfo (c);
+        juce::PopupMenu::Item item (info.name);
+        item.itemID = static_cast<int> (c) + 1;
+        item.shortcutKeyDescription = info.shortcut;
+        menu.addItem (item);
+    };
+    for (const auto c : { Cmd::newTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack })
+        add (c);
+    menu.addSeparator();
+    add (Cmd::deleteUnusedTracks);
+    return menu;
+}
+
+void TracksArea::pickHeaderAreaMenu (int item)
+{
+    if (item > 0)
+        studio.perform (static_cast<Cmd> (item - 1));
+}
+
 TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
 {
     addAndMakeVisible (rulerComponent);
@@ -2443,6 +2466,13 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
     headerColumn.setTitle ("Track headers");
     // The headers take their own clicks, so this is the empty space under the last track (04 §6.1).
     headerColumn.onDoubleClick = [this] { studio.perform (Cmd::newTrack); };
+    headerColumn.onPopupMenu = [this] {
+        juce::Component::SafePointer<TracksArea> self (this);
+        headerAreaMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self] (int item) {
+            if (self != nullptr)
+                self->pickHeaderAreaMenu (item);
+        });
+    };
     addTrack.setMouseClickGrabsKeyboardFocus (false);
     addTrack.onClick = [this] { studio.perform (Cmd::newTrack); };
     addAndMakeVisible (addTrack);

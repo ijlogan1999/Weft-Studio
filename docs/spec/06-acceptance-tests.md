@@ -184,6 +184,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-19** [UI] · F-TRK-10, D-UI-25 · With three audio tracks, Ctrl+click on track 2's Mute mutes it and unmutes tracks 1 and 3 in one undo step ("Mute Only"); Alt+click on track 1's Mute mutes all three ("Mute All") and Alt+click again unmutes them; Alt+click on Solo solos every track and again clears them; Ctrl+click on Record arms only that track. Pressing track 1's Mute and dragging over tracks 2 and 3 mutes all three in one undo step ("Mute Tracks"), and releasing doesn't toggle track 1 back; a swipe from a lit Solo turns the swiped ones off.
 
+**AT-TRK-20** [UI] · F-TRK-6, W-1a, D-UI-32 · With a bus "Drums" and 2 device inputs, the New Track dialog set to 2 mono audio tracks, Input 1, Ascending, output Drums, Input monitoring and Record enable creates tracks on inputs 1 and 2, both out to Drums, monitoring On and record-enabled, as one undo step ("New Tracks"). Stereo lists Input 1-2; for an instrument track the input is disabled and the instrument menu starts with Weft Keys. The header-area menu is New Track, New Audio Track, New Instrument Track, Delete Unused Tracks, and its New Instrument Track adds one. Delete Unused Tracks with one instrument track holding a region leaves just that track and the bus (step "Delete Unused Tracks"); run again it changes nothing and says "No unused tracks."; undo brings the tracks back.
+
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
 ## 5. Arrange (ARR)

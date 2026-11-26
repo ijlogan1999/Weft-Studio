@@ -967,7 +967,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::stop: case Cmd::countIn: case Cmd::muteTrack: case Cmd::soloTrack: case Cmd::armTrack: case Cmd::newAudioTrack:
         case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
-        case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins:
+        case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
             break;
     }
     return std::nullopt;
@@ -1265,6 +1265,43 @@ bool Studio::perform (Cmd command)
         }
         case Cmd::selectPrevious:
         case Cmd::selectNext: return stepRegion (command == Cmd::selectNext ? 1 : -1);
+        case Cmd::deleteUnusedTracks:
+        {
+            // D-UI-32: audio and instrument tracks with no regions, as one undo step; a locked one stays.
+            std::set<Id> used;
+            for (const auto& [rid, r] : m.regions)
+            {
+                used.insert (r->trackId);
+                used.insert (m.effectiveTrackId (*r));
+            }
+            std::vector<Id> unused;
+            for (const auto& tid : m.trackOrder)
+                if (const auto* t = m.track (tid);
+                    t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument) && ! used.contains (tid))
+                    unused.push_back (tid);
+            if (unused.empty())
+            {
+                setStatus ("No unused tracks.");
+                return false;
+            }
+            endPluginGesture();
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture ("Delete Unused Tracks");
+            int deleted = 0;
+            for (const auto& tid : unused)
+                if (s.deleteTrack (tid))
+                {
+                    ++deleted;
+                    if (local.selectedTrack == tid)
+                        local.selectedTrack.clear();
+                }
+            if (own)
+                s.endGesture();
+            edited();
+            setStatus ("Deleted " + juce::String (deleted) + (deleted == 1 ? " unused track." : " unused tracks."));
+            return deleted > 0;
+        }
         case Cmd::deleteMarker:
         case Cmd::renameMarker:
         {
@@ -2762,7 +2799,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
-        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins,
+        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

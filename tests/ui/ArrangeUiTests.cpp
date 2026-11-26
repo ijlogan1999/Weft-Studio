@@ -404,7 +404,7 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
         if (! it.getItem().isSeparator)
             items.add (it.getItem().text);
     CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "Duplicate Track", "Duplicate Track with Regions",
-                                        "Delete Track", "Color", "Move Track Up", "Move Track Down", "Mute Track", "Solo Track", "Record-Enable Track",
+                                        "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down", "Mute Track", "Solo Track", "Record-Enable Track",
                                         "Lock/Unlock Track" });
 
     // Color › swatch 7 from the menu bar.
@@ -1734,4 +1734,84 @@ TEST_CASE ("AT-UI-12 one key picks a tool while the Tool menu is open", "[UI][AT
     CHECK (ui.studio.tool == Tool::mute);
     CHECK (listener.keyPressed (juce::KeyPress ('t', {}, 't'), nullptr));
     CHECK (ui.studio.tool == Tool::pointer);
+}
+
+TEST_CASE ("AT-TRK-20 New Track dialog: input, output, monitoring, record enable; header-area menu; Delete Unused Tracks",
+           "[UI][AT-TRK-20]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto first = ui.m().trackOrder.front();
+    const auto bus = s.createTrack (model::TrackKind::bus, "Drums").value();
+    ui.studio.selectTrack (first);
+    ui.studio.edited();
+    ui.settle();
+
+    NewTrackDialog dialog (ui.studio);
+    dialog.kind.setSelectedItemIndex (0, juce::sendNotificationSync);
+    dialog.channels.setSelectedItemIndex (0, juce::sendNotificationSync); // mono: Input 1, Input 2
+    CHECK (dialog.input.getNumItems() == 3);
+    CHECK (dialog.input.getSelectedId() == NewTrackDialog::firstInput); // Input 1 by default
+    dialog.count.setValue (2);
+    dialog.ascending.setToggleState (true, juce::dontSendNotification);
+    dialog.output.setSelectedItemIndex (1, juce::dontSendNotification); // the bus
+    dialog.monitoring.setToggleState (true, juce::dontSendNotification);
+    dialog.recordEnable.setToggleState (true, juce::dontSendNotification);
+    const auto ids = dialog.create();
+    ui.settle();
+    REQUIRE (ids.size() == 2);
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+        const auto* t = ui.m().track (ids[i]);
+        INFO ("track " << i);
+        CHECK (t->channels == 1);
+        CHECK (t->input.kind == model::InputAssignment::Kind::audio);
+        CHECK (t->input.firstChannel == static_cast<int> (i)); // ascending: inputs 1 and 2
+        CHECK (t->output.busId == bus);
+        CHECK (t->monitor == "on");
+        CHECK (ui.studio.localView().armed.contains (ids[i]));
+    }
+    CHECK (s.undoName() == "New Tracks");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().track (ids[0]) == nullptr);
+    CHECK (ui.m().track (ids[1]) == nullptr);
+
+    // Stereo offers pairs; an instrument track offers the instruments, Weft Keys first.
+    dialog.channels.setSelectedItemIndex (1, juce::sendNotificationSync);
+    CHECK (dialog.input.getItemText (1) == "Input 1-2");
+    dialog.kind.setSelectedItemIndex (1, juce::sendNotificationSync);
+    CHECK_FALSE (dialog.input.isEnabled());
+    CHECK (dialog.instrument.isEnabled());
+    CHECK (dialog.instrument.getItemText (0) == "Weft Keys (default)");
+
+    // Right-click below the headers: the new-track commands and Delete Unused Tracks.
+    juce::StringArray items;
+    const auto menu = TracksArea::headerAreaMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().itemID != 0)
+            items.add (it.getItem().text);
+    CHECK (items.joinIntoString ("|") == "New Track|New Audio Track|New Instrument Track|Delete Unused Tracks");
+    const auto before = ui.m().trackOrder.size();
+    ui.main->tracks().pickHeaderAreaMenu (static_cast<int> (Cmd::newInstrumentTrack) + 1);
+    ui.settle();
+    CHECK (ui.m().trackOrder.size() == before + 1);
+
+    // Delete Unused Tracks: audio and instrument tracks without regions go, in one step; the bus stays.
+    const auto keys = ui.instrumentTracks (1).front();
+    REQUIRE (s.createMidiRegion (keys, 0, bar));
+    ui.studio.edited();
+    ui.settle();
+    REQUIRE (ui.studio.perform (Cmd::deleteUnusedTracks));
+    ui.settle();
+    std::vector<Id> left;
+    for (const auto& id : ui.m().trackOrder)
+        left.push_back (id);
+    CHECK (left == std::vector<Id> { bus, keys });
+    CHECK (s.undoName() == "Delete Unused Tracks");
+    CHECK_FALSE (ui.studio.perform (Cmd::deleteUnusedTracks));
+    CHECK (ui.studio.status == "No unused tracks.");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().track (first) != nullptr);
 }

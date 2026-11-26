@@ -233,6 +233,7 @@ Shown in the bottom area (MVP; detachable window in v2).
 - **Decision D-UI-29:** while the Tool menu (T) is open one key picks a tool: T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute. The menu shows each key. The keys mean this only inside the menu.
 - **Decision D-UI-30:** Shift during a tempo-change drag keeps it to the direction it set off in once it has gone 4 px: sideways keeps the tempo, up and down keep the position (as D-W3-10 for regions).
 - **Decision D-UI-31:** while anything is soloed, the Mute button of every track the solo silences (not soloed, and not feeding or fed by a soloed track) shows a faint mute tint. It doesn't flash, so it stays readable for long sessions.
+- **Decision D-UI-32:** the New Track dialog has, besides type, count and channels: **Input** (No input, or the device's inputs in the chosen format; Input 1 or 1-2 by default) with **Ascending** (several tracks take the next inputs in turn; a track whose input would be past the device's last gets none), **Output** (Master or an existing bus), **Instrument** (instrument tracks; Weft Keys by default), **Input monitoring** (audio: monitoring On instead of Auto) and **Record enable**. Everything but record enable, which is local, is in the tracks' one undo step. Right-click in the header column below the last track offers New Track..., New Audio Track, New Instrument Track and **Delete Unused Tracks**, which deletes every audio and instrument track that has no regions (buses and the master stay; a track locked by someone else stays) as one undo step; it is also in the Track menu.
 
 ## 12. Dialogs and windows (MVP list)
 
@@ -282,3 +283,4 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-29 | One-key tool picks while the Tool menu is open. |
 | D-UI-30 | Shift locks a tempo-change drag to one direction. |
 | D-UI-31 | Mute buttons of tracks a solo silences show a faint tint. |
+| D-UI-32 | New Track dialog input/output/instrument/monitoring/record-enable; header-area menu; Delete Unused Tracks. |
