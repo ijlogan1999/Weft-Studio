@@ -81,7 +81,9 @@ enum class Cmd
     pageUp, pageDown, pageLeft, pageRight, zoomTrack,
     // D-W3-12: region selection and edit commands
     selectPreviousTrack, selectNextTrack, selectInsideCycle, selectMutedRegions, selectSameColor, selectFirst, selectLast, togglePreviousRegion, toggleNextRegion,
-    scrollToSelection, moveToPlayhead, moveToPlayheadSelectNext, regionStartToPlayhead, regionEndToPlayhead, splitAtCycle
+    scrollToSelection, moveToPlayhead, moveToPlayheadSelectNext, regionStartToPlayhead, regionEndToPlayhead, splitAtCycle,
+    // D-W8-7: automation mode commands and lanes
+    automationAllOff, automationAllRead, automationAllTouch, automationAllLatch, automationOffRead, automationLatchRead, cycleAutomationParameter
 };
 
 struct CommandInfo

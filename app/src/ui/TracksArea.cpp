@@ -798,7 +798,13 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
         static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
         const auto i = mode.getSelectedItemIndex();
         if (i >= 0 && i < 5)
-            studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
+        {
+            // Alt while choosing: every track takes the mode (D-W8-7).
+            if (juce::ModifierKeys::currentModifiers.isAltDown())
+                studio.setAllAutomationModes (modes[i]);
+            else
+                studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
+        }
     };
     addChildComponent (mode);
     lock.setShape (icon::lock(), false, true, false);
@@ -915,6 +921,7 @@ void TrackHeader::rebuildAutomation()
         shownChoices = built;
         parameters.clear();
         addLane.clear();
+        removeLane.clear();
         for (std::size_t i = 0; i < lanes.size(); ++i)
         {
             auto box = std::make_unique<juce::ComboBox>();
@@ -938,6 +945,12 @@ void TrackHeader::rebuildAutomation()
             plus->onClick = [this] { studio.addShownLane (trackId); };
             addAndMakeVisible (*plus);
             addLane.push_back (std::move (plus));
+            auto close = std::make_unique<juce::TextButton> (juce::String (juce::CharPointer_UTF8 ("\xc3\x97")));
+            describe (*close, "Close automation lane", "Close this lane; its automation stays");
+            makeFocusable (*close);
+            close->onClick = [this, i] { studio.removeShownLane (trackId, i); };
+            addAndMakeVisible (*close);
+            removeLane.push_back (std::move (close));
         }
     }
     static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
@@ -985,6 +998,8 @@ void TrackHeader::refresh()
     for (auto& p : parameters)
         shared.push_back (p.get());
     for (auto& b : addLane)
+        shared.push_back (b.get());
+    for (auto& b : removeLane)
         shared.push_back (b.get());
     for (auto* c : shared)
     {
@@ -1157,6 +1172,8 @@ void TrackHeader::resized()
                         .withTrimmedLeft (space::s3);
         auto top = lane.removeFromTop (size::control);
         addLane[i]->setBounds (top.removeFromRight (size::control));
+        top.removeFromRight (space::half);
+        removeLane[i]->setBounds (top.removeFromRight (size::control));
         top.removeFromRight (space::half);
         parameters[i]->setBounds (top);
         if (i == 0)

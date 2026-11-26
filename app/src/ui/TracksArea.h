@@ -133,7 +133,7 @@ public:
     // Automation view (W-8): the mode, and per lane the parameter selector and "+".
     juce::ComboBox mode;
     std::vector<std::unique_ptr<juce::ComboBox>> parameters;
-    std::vector<std::unique_ptr<juce::TextButton>> addLane;
+    std::vector<std::unique_ptr<juce::TextButton>> addLane, removeLane;
 
     /** Collaborators whose focus is this track (their badges, AT-COL-12). */
     std::vector<const collab::RemotePresence*> badges() const;

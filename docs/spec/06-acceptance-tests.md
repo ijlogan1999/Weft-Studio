@@ -440,6 +440,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-AUT-13** [E] · F-AUT-11, D-W8-6 · A project with steep volume, pan, send and master volume automation (a 0 dB to −inf fade over 5 ms) bounces identically at block sizes 64, 512 and 2048, and the bounce matches live playback at a 240-sample device buffer to within 1e-6.
 
+**AT-AUT-14** [UI] · D-W8-7 · With two audio tracks: Set All Tracks to Automation Touch sets both ("Automation Mode"), then Latch, Read and Off; Off again does nothing. On the selected track Off/Read goes Read then Off, Latch/Read goes Read then Latch, and the other track stays Off. Choosing Touch in the second header with Alt held sets both to Touch. With two lanes shown, × on the first leaves Pan; closing that leaves Volume. With no automation Cycle Through Used Parameters does nothing; with volume and pan points it shows Pan, then Volume. With two volume points selected Up adds 0.01 to each and Shift+Down takes 0.1 from each, and the selected track doesn't change.
+
 ## 12. Tempo and signature (TMP)
 
 **AT-TMP-1** [U] · F-TMP-1 · Tempo map 120 BPM at tick 0, 60 BPM at tick 3,840: `sample(3,840)` = 96,000; `sample(4,800)` = 96,000 + 960 × 50 = 144,000; the inverse maps back exactly.

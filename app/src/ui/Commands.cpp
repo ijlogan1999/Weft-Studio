@@ -197,6 +197,13 @@ std::vector<CommandInfo> build()
         { Cmd::regionStartToPlayhead, "Set Region Start to Playhead", "", {} },
         { Cmd::regionEndToPlayhead, "Set Region End to Playhead", "", {} },
         { Cmd::splitAtCycle, "Split Regions at Cycle", "", {} },
+        { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
+        { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
+        { Cmd::automationAllTouch, "Set All Tracks to Automation Touch", "", {} },
+        { Cmd::automationAllLatch, "Set All Tracks to Automation Latch", "", {} },
+        { Cmd::automationOffRead, "Toggle Track Automation Off/Read", "Ctrl+Alt+Shift+R", { key ('R', ctrl | alt | shift) } },
+        { Cmd::automationLatchRead, "Toggle Track Automation Latch/Read", "Ctrl+Alt+Shift+L", { key ('L', ctrl | alt | shift) } },
+        { Cmd::cycleAutomationParameter, "Cycle Through Used Automation Parameters", "Ctrl+Alt+Shift+A", { key ('A', ctrl | alt | shift) } },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

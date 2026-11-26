@@ -435,6 +435,14 @@ public:
     void setShownLane (const Id& trackId, std::size_t index, const model::AutomationTarget& target);
     /** "+": another lane, showing the next parameter not yet shown. */
     void addShownLane (const Id& trackId);
+    /** "×" (D-W8-7): closes a lane; with none left the track shows Volume. Its automation stays. */
+    void removeShownLane (const Id& trackId, std::size_t index);
+    /** Cycle Through Used Automation Parameters (D-W8-7): the first lane shows the next parameter with automation. */
+    bool cycleAutomationParameter (const Id& trackId);
+    /** Every track's automation mode, as one undo step ("Automation Mode"). */
+    bool setAllAutomationModes (const std::string& mode);
+    /** Up/Down with points selected: their values by `by` (normalized), one undo step. */
+    bool nudgeAutomationPoints (double by);
     /** A track row: the track lane plus its automation lanes in automation view. */
     int rowHeight (const Id& trackId) const;
     /** What a track can automate (AT-AUT-2); plug-in parameters come from the engine's processors. */

@@ -1040,6 +1040,20 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
+            {
+                // D-W8-7: automation modes for every track, the selected track's toggles, and the used-parameter cycle.
+                juce::PopupMenu modes;
+                for (auto c : { Cmd::automationAllOff, Cmd::automationAllRead, Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead,
+                                Cmd::automationLatchRead, Cmd::cycleAutomationParameter })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    modes.addItem (item);
+                }
+                menu.addSubMenu ("Automation", modes);
+            }
             menu.addSeparator();
             for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::snapZeroCrossings, Cmd::showHiddenTracks, Cmd::keyboardMidi,
                             Cmd::toggleTheme })

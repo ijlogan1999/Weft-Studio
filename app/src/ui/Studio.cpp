@@ -630,6 +630,72 @@ void Studio::setShownLane (const Id& trackId, std::size_t index, const model::Au
     sendChangeMessage();
 }
 
+void Studio::removeShownLane (const Id& trackId, std::size_t index)
+{
+    auto lanes = shownLanes (trackId);
+    if (index >= lanes.size())
+        return;
+    lanes.erase (lanes.begin() + static_cast<std::ptrdiff_t> (index));
+    lanesShown[trackId] = lanes; // the last one closed leaves Volume showing
+    pointSelection = {};
+    sendChangeMessage();
+}
+
+bool Studio::cycleAutomationParameter (const Id& trackId)
+{
+    // D-W8-7: the first lane goes to the next parameter that has automation, in the parameter menu's order.
+    if (model().track (trackId) == nullptr)
+    {
+        setStatus ("Select a track first.");
+        return false;
+    }
+    std::vector<model::AutomationTarget> used;
+    for (const auto& choice : automationTargets (trackId))
+        if (const auto* lane = model().lane (trackId, choice.target); lane != nullptr && ! lane->points.empty())
+            used.push_back (choice.target);
+    if (used.empty())
+    {
+        setStatus ("This track has no automation yet.");
+        return false;
+    }
+    const auto current = shownLanes (trackId).front().key();
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < used.size(); ++i)
+        if (used[i].key() == current)
+            next = (i + 1) % used.size();
+    automationView = true;
+    setShownLane (trackId, 0, used[next]);
+    return true;
+}
+
+bool Studio::setAllAutomationModes (const std::string& mode)
+{
+    std::vector<Id> ids; // by value: each edit rebuilds the model
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); t != nullptr && t->automationMode != mode && ! lockedByOther (id))
+            ids.push_back (id);
+    if (ids.empty())
+        return false;
+    sess->beginGesture ("Automation Mode");
+    for (const auto& id : ids)
+        sess->setTrackAutomationMode (id, mode);
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+bool Studio::nudgeAutomationPoints (double by)
+{
+    const auto* lane = model().automationLanes.contains (pointSelection.laneId) ? &*model().automationLanes.at (pointSelection.laneId) : nullptr;
+    if (lane == nullptr)
+        return false;
+    std::vector<commands::Session::PointMove> moves;
+    for (const auto& id : pointSelection.points)
+        if (const auto it = lane->points.find (id); it != lane->points.end())
+            moves.push_back ({ id, it->second.pos, std::clamp (it->second.value + by, 0.0, 1.0) });
+    return ! moves.empty() && check (sess->moveAutomationPoints (pointSelection.laneId, moves));
+}
+
 void Studio::addShownLane (const Id& trackId)
 {
     auto lanes = shownLanes (trackId);
@@ -1347,6 +1413,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip: case Cmd::cycleMixerMode:
         case Cmd::zoomVerticalIn: case Cmd::zoomVerticalOut: case Cmd::saveZoom1: case Cmd::saveZoom2: case Cmd::saveZoom3: case Cmd::recallZoom1: case Cmd::recallZoom2: case Cmd::recallZoom3: case Cmd::navigateBack: case Cmd::navigateForward: case Cmd::pageUp: case Cmd::pageDown: case Cmd::pageLeft: case Cmd::pageRight: case Cmd::zoomTrack:
         case Cmd::selectPreviousTrack: case Cmd::selectNextTrack: case Cmd::selectInsideCycle: case Cmd::selectMutedRegions: case Cmd::selectSameColor: case Cmd::selectFirst: case Cmd::selectLast: case Cmd::togglePreviousRegion: case Cmd::toggleNextRegion: case Cmd::scrollToSelection: case Cmd::moveToPlayhead: case Cmd::moveToPlayheadSelectNext: case Cmd::regionStartToPlayhead: case Cmd::regionEndToPlayhead: case Cmd::splitAtCycle:
+        case Cmd::automationAllOff: case Cmd::automationAllRead: case Cmd::automationAllTouch: case Cmd::automationAllLatch: case Cmd::automationOffRead: case Cmd::automationLatchRead: case Cmd::cycleAutomationParameter:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -2368,11 +2435,40 @@ bool Studio::perform (Cmd command)
             edited();
             return ok && any;
         }
+        case Cmd::automationAllOff:
+        case Cmd::automationAllRead:
+        case Cmd::automationAllTouch:
+        case Cmd::automationAllLatch:
+        {
+            const auto mode = command == Cmd::automationAllOff ? "off" : command == Cmd::automationAllRead ? "read" : command == Cmd::automationAllTouch ? "touch" : "latch";
+            return setAllAutomationModes (mode);
+        }
+        case Cmd::automationOffRead:
+        case Cmd::automationLatchRead:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr)
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            const std::string other = command == Cmd::automationOffRead ? "off" : "latch";
+            return check (s.setTrackAutomationMode (t->id, t->automationMode == "read" ? other : "read"));
+        }
+        case Cmd::cycleAutomationParameter: return cycleAutomationParameter (local.selectedTrack);
+        case Cmd::octaveUp:
+        case Cmd::octaveDown:
+            if (! pointSelection.points.empty())
+                return nudgeAutomationPoints (command == Cmd::octaveUp ? 0.1 : -0.1);
+            return false;
         case Cmd::transposeUp: // Up and Down step through the tracks in the arrange view (D-W3-12)
         case Cmd::selectPreviousTrack:
         case Cmd::transposeDown:
         case Cmd::selectNextTrack:
         {
+            // With automation points selected, Up/Down nudge their value by 1% instead (Shift: 10%, D-W8-7).
+            if ((command == Cmd::transposeUp || command == Cmd::transposeDown) && ! pointSelection.points.empty())
+                return nudgeAutomationPoints (command == Cmd::transposeUp ? 0.01 : -0.01);
             const auto& rows = m.rows;
             if (rows.empty())
                 return false;
@@ -2391,8 +2487,6 @@ bool Studio::perform (Cmd command)
             selectTrack (rows[next]);
             return true;
         }
-        case Cmd::octaveUp:
-        case Cmd::octaveDown:
         case Cmd::notesLeft:
         case Cmd::notesRight:
             return false; // these arrows do nothing in the arrange view
@@ -3946,7 +4040,8 @@ bool Studio::changesDocument (Cmd command)
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
         Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
         Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip, Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext,
-        Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle,
+        Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle, Cmd::automationAllOff, Cmd::automationAllRead,
+        Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead, Cmd::automationLatchRead,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }
