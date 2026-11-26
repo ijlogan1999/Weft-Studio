@@ -120,7 +120,7 @@ Tabs: **Mixer** (X), **Piano Roll** (P), **Audio Editor** (E). Double-clicking a
 - Bottom: collapsible controller lane(s) with a lane selector (Velocity default).
 - Toolbar: tool selector (pointer, pencil, eraser, velocity, scissors), audition toggle, follow toggle, zoom sliders.
 - Collaborator pointers and note selections appear here too when they have the same region open.
-- **Decision D-UI-7:** the piano roll's keys (arrows, Ctrl+X/C/V, Delete, Ctrl+A, Ctrl+M, Q, Esc) act on notes once the piano roll has been clicked; clicking the tracks area gives them back to regions. Left/Right move the selected notes by the piano roll's grid (1/16 when its snap is off); in the tracks area plain arrow keys do nothing.
+- **Decision D-UI-7:** the piano roll's keys (arrows, Ctrl+X/C/V, Delete, Ctrl+A, Ctrl+M, Q, Esc) act on notes once the piano roll has been clicked; clicking the tracks area gives them back to regions. Alt+Left/Right move the selected notes by the piano roll's grid (1/16 when its snap is off); Left/Right select the previous or next note (D-UI-28, which replaces the earlier "Left/Right move notes" and "arrow keys do nothing in the tracks area").
 - **Decision D-UI-8:** clicking a piano key always sounds it, with audition on or off; the audition toggle governs notes clicked, drawn or moved. Auditioned notes go straight to the track's instrument for their length (at most 1 s), whether or not the transport runs.
 - **Decision D-UI-9:** the Inspector's note Position field sets every selected note to the typed start; Pitch, Length and Channel likewise set all; mixed values show "—", except velocity, which shows its range (W-4 step 9).
 
@@ -215,12 +215,22 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Add marker | ; (semicolon) | | Add comment | Shift+C |
 | Follow playhead | Ctrl+F | | Snap on/off | N |
 | Set cycle to selection | U | | Keyboard MIDI mode | Ctrl+K |
-| Previous / next marker | Alt+, / Alt+. | | Go to marker 1–9 | 1–9 |
+| Previous / next marker | Alt+, / Alt+. (or Ctrl+click Previous/Next Bar) | | Go to marker 1–9 / 10–19 | 1–9 / Ctrl+Numpad 0–9 |
 | Repeat regions | Ctrl+R | | Stop / go to start | Numpad 0 |
 | Count-in on/off | Shift+K | | Deselect all / Invert selection | Ctrl+Shift+A / Ctrl+Shift+I |
 | Mute / Solo / Record-enable track | Shift+M / S / Shift+R | | New audio / instrument track | Ctrl+Alt+A / Ctrl+Alt+I |
+| Rename / Delete marker | Shift+' / Alt+Delete | | Select previous / next region or note | Left / Right |
+| Move notes left / right (piano roll) | Alt+Left / Alt+Right | | Tools, while the Tool menu is open | T P I J E M |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
+
+- **Decision D-UI-25:** a track's Mute, Solo and Record buttons (header and mixer strip) take two modifiers: **Ctrl+click** turns it on for that track and off for every other track ("only this one"), and **Alt+click** gives every track (not the master) the state this one is about to take ("all"). Pressing a button and dragging over the same button of other tracks gives each of them the state the first one took; letting go ends the swipe without a second click. The mutes one Ctrl/Alt click or one swipe sets are one undo step ("Mute Only", "Mute All", "Unmute All", "Mute Tracks"); solo and record enable are local view state and have no undo. Ctrl rather than Alt for "only this one" keeps the solo click it already had (F-TRK-10).
+- **Decision D-UI-26:** markers 10 to 19 are Ctrl with the numeric keypad's 0 to 9. **Rename Marker...** (Shift+') and **Delete Marker** (Alt+Delete) act on the last marker at or before the playhead, since markers have no selection; with none there the status line says so. Ctrl+click on Previous Bar or Next Bar goes to the previous or next marker.
+- **Decision D-UI-27:** Z fits the selected regions; Z again, while the selection and the view are as Z left them, fits the whole project. With nothing selected Z fits the whole project as before.
+- **Decision D-UI-28:** Left and Right select the previous or next region on the same track (the track of the selected regions, or the selected track; from the playhead when no region is selected). In the piano roll they select the previous or next note, in order of time and then pitch, and sound it when audition is on. Moving notes by the grid moves to Alt+Left and Alt+Right, the keys that nudge regions.
+- **Decision D-UI-29:** while the Tool menu (T) is open one key picks a tool: T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute. The menu shows each key. The keys mean this only inside the menu.
+- **Decision D-UI-30:** Shift during a tempo-change drag keeps it to the direction it set off in once it has gone 4 px: sideways keeps the tempo, up and down keep the position (as D-W3-10 for regions).
+- **Decision D-UI-31:** while anything is soloed, the Mute button of every track the solo silences (not soloed, and not feeding or fed by a soloed track) shows a faint mute tint. It doesn't flash, so it stays readable for long sessions.
 
 ## 12. Dialogs and windows (MVP list)
 
@@ -245,7 +255,7 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-4 | Region handles: lower corners trim; upper-left fades in (audio) or trims (MIDI); upper-right in the name bar fades out (audio), below it loops; the "Take n/m" label switches takes. |
 | D-UI-5 | The audio editor's start trim sets the source offset to the exact sample and keeps the region's end; the region start moves to the nearest tick. |
 | D-UI-6 | Z with nothing selected fits the project from its start to the end of the last region. |
-| D-UI-7 | Piano roll keys act on notes after the piano roll is clicked; Left/Right move notes by its grid. |
+| D-UI-7 | Piano roll keys act on notes after the piano roll is clicked; Alt+Left/Right move notes by its grid (D-UI-28). |
 | D-UI-8 | Piano keys always sound; audition plays notes up to 1 s on the track's instrument. |
 | D-UI-9 | Inspector note fields set every selected note; velocity shows a range when mixed. |
 | D-UI-10 | Strip details: Monitor cycles Auto/On/Off; empty instrument slot shows Weft Keys; fader law and typed levels. |
@@ -262,3 +272,10 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-22 | Inspector with several regions selected: "N regions", one undo step per edit, controls limited to what every selected region has. |
 | D-UI-23 | Right-click menus in the marker, tempo and signature lanes (rename, colour, edit, delete, add here) replace delete-on-right-click. |
 | D-UI-24 | Plug-in windows have a header strip with a Bypass button for insert effects. |
+| D-UI-25 | Ctrl+click on Mute, Solo or Record: only this track; Alt+click: all tracks; drag across a column to set several. |
+| D-UI-26 | Markers 10–19 on Ctrl+keypad; Rename and Delete Marker act on the marker at or before the playhead; Ctrl+click Previous/Next Bar goes by marker. |
+| D-UI-27 | Z toggles between fitting the selection and fitting the whole project. |
+| D-UI-28 | Left/Right select the previous or next region or note; Alt+Left/Right move notes. |
+| D-UI-29 | One-key tool picks while the Tool menu is open. |
+| D-UI-30 | Shift locks a tempo-change drag to one direction. |
+| D-UI-31 | Mute buttons of tracks a solo silences show a faint tint. |

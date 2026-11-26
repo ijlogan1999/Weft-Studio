@@ -383,7 +383,13 @@ juce::PopupMenu MainComponent::toolMenu() const
 {
     juce::PopupMenu menu;
     for (const auto t : { Tool::pointer, Tool::pencil, Tool::scissors, Tool::glue, Tool::eraser, Tool::mute })
-        menu.addItem (static_cast<int> (t) + 1, toolName (t), true, studio.tool == t);
+    {
+        juce::PopupMenu::Item item (toolName (t));
+        item.itemID = static_cast<int> (t) + 1;
+        item.isTicked = studio.tool == t;
+        item.shortcutKeyDescription = toolKey (t); // one key picks it while the menu is open (D-UI-29)
+        menu.addItem (item);
+    }
     return menu;
 }
 
@@ -394,7 +400,23 @@ void MainComponent::handleUiCommand (Cmd command)
     else if (command == Cmd::about)
         AboutPanel::show (this);
     else if (command == Cmd::toolMenu)
+    {
         toolMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [this] (int chosen) { pickTool (chosen); });
+        // The menu ignores letters; the tool keys reach this listener on its window (D-UI-29).
+        auto& desktop = juce::Desktop::getInstance();
+        for (int i = desktop.getNumComponents(); --i >= 0;)
+            if (auto* window = desktop.getComponent (i); window != nullptr && window->getName() == "menu")
+            {
+                window->removeKeyListener (&toolKeys);
+                window->addKeyListener (&toolKeys);
+                break;
+            }
+    }
+    else if (command == Cmd::renameMarker)
+    {
+        if (const auto* marker = studio.markerAtPlayhead())
+            tracks().ruler().renameMarker (marker->id);
+    }
     else if (command == Cmd::pluginManager)
         PluginManager::show (studio, this);
     else if (command == Cmd::deleteTrack)
@@ -726,6 +748,18 @@ void MainComponent::answer (bool confirmed)
         studio.deleteTrack (id);
 }
 
+bool MainComponent::ToolKeys::keyPressed (const juce::KeyPress& key, juce::Component*)
+{
+    if (key.getModifiers().isAnyModifierKeyDown())
+        return false;
+    const auto tool = toolForKey (key.getTextCharacter() != 0 ? key.getTextCharacter() : static_cast<juce::juce_wchar> (key.getKeyCode()));
+    if (! tool)
+        return false;
+    juce::PopupMenu::dismissAllActiveMenus();
+    main.pickTool (static_cast<int> (*tool) + 1);
+    return true;
+}
+
 void MainComponent::pickTool (int menuItemId)
 {
     if (menuItemId < 1 || menuItemId > static_cast<int> (Tool::mute) + 1)
@@ -791,7 +825,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::undo, Cmd::redo })
                 add (c);
             menu.addSeparator();
-            for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll, Cmd::deselectAll, Cmd::invertSelection })
+            for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll, Cmd::deselectAll, Cmd::invertSelection, Cmd::selectPrevious,
+                            Cmd::selectNext })
                 add (c);
             menu.addSeparator();
             for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
@@ -832,7 +867,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         case 4:
         {
             for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
-                            Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
+                            Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::renameMarker, Cmd::deleteMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
             const auto settings = studio.engine().settings();
             menu.addSeparator();

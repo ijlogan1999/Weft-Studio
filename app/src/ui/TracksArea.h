@@ -59,6 +59,8 @@ public:
         Empty outside the lanes. pickContext acts on whatever is under p. */
     juce::PopupMenu contextMenu (juce::Point<float> p) const;
     void pickContext (int item, juce::Point<float> p);
+    /** Asks for a marker's new name (its menu, a double-click, or Rename Marker). */
+    void renameMarker (const Id& markerId);
     enum ContextItem
     {
         contextRename = 1,
@@ -67,7 +69,7 @@ public:
         contextAdd,
         contextColour = 1000 // the marker back to no colour; + 1 .. paletteSize: a swatch
     };
-    void pointerDrag (juce::Point<float> p);
+    void pointerDrag (juce::Point<float> p, juce::ModifierKeys mods = {});
     void pointerUp();
 
 private:
@@ -76,6 +78,7 @@ private:
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
+    std::optional<char> tempoLock; // Shift: 'x' keeps the tempo, 'y' keeps the position
     bool copyTempo = false; // Alt-drag: the drag moves a copy, made once it moves sideways (L-TMP-3)
     juce::Point<float> dragStart;
     std::pair<double, double> dragRange;
@@ -96,7 +99,7 @@ public:
 
     const Id trackId;
     juce::Label name;
-    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    SwipeButton mute { "M" }, solo { "S" }, arm { "R" };
     /** Volume and pan on the header's second line (L-TRH-3), shown when the track is tall enough. */
     juce::Slider volume, pan;
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */

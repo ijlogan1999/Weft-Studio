@@ -175,7 +175,7 @@ TEST_CASE ("AT-PRL-4 arrow keys transpose and move the selected notes", "[UI]")
     CHECK (ui.get (a).pitch == 72);
 
     ui.studio.piano.grid = 480;
-    ui.key (juce::KeyPress::rightKey);
+    ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier); // Alt+Right moves; Right selects (D-UI-28)
     CHECK (ui.tickOf (a) == 1440);
 
     ui.studio.piano.selection = { high };
@@ -580,4 +580,38 @@ TEST_CASE ("Screenshot of the piano roll", "[.screenshot-pianoroll]")
     out.deleteFile();
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+}
+
+TEST_CASE ("AT-PRL-19 Left/Right select the previous or next note; Alt+Left/Right move it", "[UI][AT-PRL-19]")
+{
+    RollUi ui;
+    const auto first = ui.note (0, 60);
+    const auto high = ui.note (480, 64);
+    const auto low = ui.note (480, 60);
+    ui.open (ui.midi);
+    ui.press (ui.at (0 + 100, 60));
+    REQUIRE (ui.studio.piano.selection == std::set<NoteRef> { first });
+
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { low });
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { high });
+    ui.key (juce::KeyPress::rightKey); // the last: stays
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { high });
+    ui.key (juce::KeyPress::leftKey);
+    ui.key (juce::KeyPress::leftKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { first });
+    CHECK (ui.tickOf (first) == 0); // selecting moves nothing
+
+    ui.studio.piano.selection.clear();
+    ui.studio.locate (240);
+    ui.settle();
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { low });
+
+    ui.studio.piano.grid = 240;
+    ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier);
+    CHECK (ui.tickOf (low) == 720);
+    ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::altModifier);
+    CHECK (ui.tickOf (low) == 480);
 }

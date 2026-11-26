@@ -417,6 +417,7 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
             dragBpm = point->bpm;
             dragStart = p;
             copyTempo = mods.isAltDown();
+            tempoLock.reset();
             studio.session().beginGesture (copyTempo ? "Copy Tempo Change" : "Tempo Change");
             return;
         }
@@ -457,7 +458,7 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
     studio.locate (t);
 }
 
-void Ruler::pointerDrag (juce::Point<float> p)
+void Ruler::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
 {
     const auto t = studio.snapped (std::max<Ticks> (0, static_cast<Ticks> (studio.view.xToTick (p.x))));
     switch (drag)
@@ -502,8 +503,22 @@ void Ruler::pointerDrag (juce::Point<float> p)
                 draggedTempo = *copy;
                 copyTempo = false;
             }
-            const auto pos = draggedTempo == "initial" || ! sideways ? dragFrom : std::max<Ticks> (1, t);
-            studio.check (studio.session().setTempoPoint (draggedTempo, pos, bpm));
+            auto pos = draggedTempo == "initial" || ! sideways ? dragFrom : std::max<Ticks> (1, t);
+            auto value = bpm;
+            // Shift keeps the drag to the direction it set off in once it has gone 4 px (D-UI-30, as D-W3-10).
+            if (mods.isShiftDown())
+            {
+                const auto dx = std::abs (p.x - dragStart.x), dy = std::abs (p.y - dragStart.y);
+                if (! tempoLock && std::max (dx, dy) >= 4.0f)
+                    tempoLock = dx >= dy ? 'x' : 'y';
+                if (tempoLock == 'x')
+                    value = dragBpm;
+                else
+                    pos = dragFrom;
+            }
+            else
+                tempoLock.reset();
+            studio.check (studio.session().setTempoPoint (draggedTempo, pos, value));
             break;
         }
         case Drag::none: break;
@@ -521,7 +536,7 @@ void Ruler::pointerUp()
 }
 
 void Ruler::mouseDown (const juce::MouseEvent& e) { pointerDown (e.position, e.mods); }
-void Ruler::mouseDrag (const juce::MouseEvent& e) { pointerDrag (e.position); }
+void Ruler::mouseDrag (const juce::MouseEvent& e) { pointerDrag (e.position, e.mods); }
 void Ruler::mouseUp (const juce::MouseEvent& e)
 {
     // A click (no drag) in the cycle strip toggles the cycle.
@@ -624,14 +639,23 @@ void Ruler::pickContext (int item, juce::Point<float> p)
     if (item == contextDelete)
         studio.check (s.deleteMarker (id));
     else if (item == contextRename)
-        askForText ("Rename marker", juce::String (marker->name), [this, id] (juce::String name) {
-            if (name.isNotEmpty())
-                studio.check (studio.session().renameMarker (id, name.toStdString()));
-        });
+        renameMarker (id);
     else if (item == contextColour)
         studio.check (s.setMarkerColor (id, std::nullopt));
     else if (item > contextColour && item <= contextColour + paletteSize)
         studio.check (s.setMarkerColor (id, model::Color { item - contextColour - 1, {} }));
+}
+
+void Ruler::renameMarker (const Id& id)
+{
+    const auto& markers = studio.model().markers;
+    const auto it = markers.find (id);
+    if (it == markers.end())
+        return;
+    askForText ("Rename marker", juce::String (it->second->name), [this, id] (juce::String name) {
+        if (name.isNotEmpty())
+            studio.check (studio.session().renameMarker (id, name.toStdString()));
+    });
 }
 
 void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
@@ -664,12 +688,16 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
             studio.check (studio.session().renameTrack (trackId, text.toStdString()));
     };
     addAndMakeVisible (name);
-    describe (mute, "Mute", "Mute track");
-    describe (solo, "Solo", "Solo track (Ctrl+click: solo only this)");
-    describe (arm, "Record enable", "Record enable");
-    mute.onClick = [this] { studio.toggleMute (trackId); };
-    solo.onClick = [this] { studio.toggleSolo (trackId, juce::ModifierKeys::currentModifiers.isCommandDown()); };
-    arm.onClick = [this] { studio.toggleArm (trackId); };
+    describe (mute, "Mute", "Mute track (Ctrl+click: only this; Alt+click: all; drag across tracks to set them too)");
+    describe (solo, "Solo", "Solo track (Ctrl+click: only this; Alt+click: all; drag across tracks to set them too)");
+    describe (arm, "Record enable", "Record enable (Ctrl+click: only this; Alt+click: all)");
+    for (auto [b, which] : { std::pair { &mute, TrackSwitch::mute }, std::pair { &solo, TrackSwitch::solo }, std::pair { &arm, TrackSwitch::arm } })
+    {
+        b->onClick = [this, which] { studio.clickTrackSwitch (which, trackId, juce::ModifierKeys::currentModifiers); };
+        b->setTrackState = [this, which] (bool on) { studio.setTrackSwitch (which, trackId, on); };
+        b->onSwipeStart = [this, which] { studio.beginSwitchSwipe (which); };
+        b->onSwipeEnd = [this] { studio.endSwitchSwipe(); };
+    }
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
@@ -915,6 +943,7 @@ void TrackHeader::refresh()
     name.setText (juce::String (t->name), juce::dontSendNotification);
     setTitle ("Track " + juce::String (number) + ": " + juce::String (t->name));
     mute.setToggleState (t->mute, juce::dontSendNotification);
+    setSilencedBySolo (mute, studio.silencedBySolo (trackId));
     solo.setToggleState (studio.localView().soloed.contains (trackId), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (trackId), juce::dontSendNotification);
     arm.setVisible (commands::LocalView::canArm (*t));

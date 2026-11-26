@@ -136,7 +136,7 @@ public:
     juce::Slider pan, volume;
     juce::Label readout;
     MeterView meter;
-    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, monitor { "I" };
+    SwipeButton mute { "M" }, solo { "S" }, arm { "R" }, monitor { "I" };
     std::vector<std::unique_ptr<InsertSlot>> inserts;
     std::vector<std::unique_ptr<SendSlot>> sends;
 

@@ -100,6 +100,13 @@ public:
     juce::PopupMenu toolMenu() const;
     /** What choosing an item from toolMenu() does. */
     void pickTool (int menuItemId);
+    /** Picks a tool by its key while the Tool menu is open (D-UI-29). */
+    struct ToolKeys final : juce::KeyListener
+    {
+        explicit ToolKeys (MainComponent& m) : main (m) {}
+        bool keyPressed (const juce::KeyPress& key, juce::Component* origin) override;
+        MainComponent& main;
+    } toolKeys { *this };
 
     ControlBar& controlBar() noexcept { return control; }
     Inspector& inspector() noexcept { return inspectorPanel; }

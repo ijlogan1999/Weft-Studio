@@ -19,11 +19,19 @@ ControlBar::ControlBar (Studio& s) : studio (s)
             }
             if (button == &play && studio.playing())
                 return;
+            // Ctrl+click on Previous/Next Bar goes to the previous/next marker (D-UI-26).
+            if ((button == &rewind || button == &forward) && juce::ModifierKeys::currentModifiers.isCommandDown())
+            {
+                studio.perform (button == &rewind ? Cmd::previousMarker : Cmd::nextMarker);
+                return;
+            }
             studio.perform (button->command);
         };
     }
     describe (stop, "Stop", "Stop (Space). Stopped already: go to the start of the cycle or project");
     describe (play, "Play", "Play (Space)");
+    describe (rewind, "Previous Bar", "Previous Bar (,). Ctrl+click: previous marker");
+    describe (forward, "Next Bar", "Next Bar (.). Ctrl+click: next marker");
     // Icons for the transport; the labels stay as the accessible names.
     start.setIcon (icon::goToStart());
     rewind.setIcon (icon::rewind());

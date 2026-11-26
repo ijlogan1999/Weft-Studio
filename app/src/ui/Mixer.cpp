@@ -451,16 +451,20 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
         small (*b);
         addChildComponent (b);
     }
-    describe (mute, "Mute");
-    describe (solo, "Solo", "Solo (Ctrl+click: solo this channel only)");
-    describe (arm, "Record enable");
+    describe (mute, "Mute", "Mute (Ctrl+click: only this; Alt+click: all; drag across channels to set them too)");
+    describe (solo, "Solo", "Solo (Ctrl+click: only this; Alt+click: all; drag across channels to set them too)");
+    describe (arm, "Record enable", "Record enable (Ctrl+click: only this; Alt+click: all)");
     describe (monitor, "Input monitoring", "Input monitoring: auto, on, off");
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
-    mute.onClick = [this] { studio.toggleMute (id); };
-    solo.onClick = [this] { studio.toggleSolo (id, juce::ModifierKeys::currentModifiers.isCommandDown()); };
-    arm.onClick = [this] { studio.toggleArm (id); };
+    for (auto [b, which] : { std::pair { &mute, TrackSwitch::mute }, std::pair { &solo, TrackSwitch::solo }, std::pair { &arm, TrackSwitch::arm } })
+    {
+        b->onClick = [this, which] { studio.clickTrackSwitch (which, id, juce::ModifierKeys::currentModifiers); };
+        b->setTrackState = [this, which] (bool on) { studio.setTrackSwitch (which, id, on); };
+        b->onSwipeStart = [this, which] { studio.beginSwitchSwipe (which); };
+        b->onSwipeEnd = [this] { studio.endSwitchSwipe(); };
+    }
     monitor.onClick = [this] {
         if (const auto* t = track())
             studio.check (studio.session().setTrackMonitor (id, t->monitor == "auto" ? "on" : t->monitor == "on" ? "off" : "auto"));
@@ -636,6 +640,7 @@ void ChannelStrip::refresh()
     arm.setVisible (kind == model::TrackKind::audio || kind == model::TrackKind::instrument);
     monitor.setVisible (kind == model::TrackKind::audio);
     mute.setToggleState (t->mute, juce::dontSendNotification);
+    setSilencedBySolo (mute, ! master && studio.silencedBySolo (id));
     solo.setToggleState (studio.localView().soloed.contains (id), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (id), juce::dontSendNotification);
     monitor.setToggleState (t->monitor == "on", juce::dontSendNotification);

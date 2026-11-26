@@ -51,6 +51,28 @@ juce::String toolName (Tool t)
     return {};
 }
 
+std::optional<Tool> toolForKey (juce::juce_wchar key)
+{
+    switch (juce::CharacterFunctions::toLowerCase (key))
+    {
+        case 't': return Tool::pointer;
+        case 'p': return Tool::pencil;
+        case 'i': return Tool::scissors;
+        case 'j': return Tool::glue;
+        case 'e': return Tool::eraser;
+        case 'm': return Tool::mute;
+        default: return std::nullopt;
+    }
+}
+
+juce::String toolKey (Tool t)
+{
+    for (const auto c : juce::String ("tpijem"))
+        if (toolForKey (c) == t)
+            return juce::String::charToString (juce::CharacterFunctions::toUpperCase (c));
+    return {};
+}
+
 // Layout ---------------------------------------------------------------------------
 
 juce::String PanelLayout::toString() const
@@ -231,6 +253,96 @@ void Studio::toggleSolo (const Id& trackId, bool exclusive)
     else
         local.toggleSolo (trackId);
     edited();
+}
+
+bool Studio::trackSwitch (TrackSwitch which, const Id& trackId) const
+{
+    switch (which)
+    {
+        case TrackSwitch::mute:
+        {
+            const auto* t = model().track (trackId);
+            return t != nullptr && t->mute;
+        }
+        case TrackSwitch::solo: return local.soloed.contains (trackId);
+        case TrackSwitch::arm: return local.armed.contains (trackId);
+    }
+    return false;
+}
+
+void Studio::setTrackSwitch (TrackSwitch which, const Id& trackId, bool on)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr || t->kind == model::TrackKind::master || trackSwitch (which, trackId) == on)
+        return;
+    switch (which)
+    {
+        case TrackSwitch::mute: toggleMute (trackId); return;
+        case TrackSwitch::solo: local.setSolo (trackId, on); break;
+        case TrackSwitch::arm:
+            if (! local.setArm (model(), trackId, on))
+                return;
+            break;
+    }
+    edited();
+}
+
+void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::ModifierKeys mods)
+{
+    if (! mods.isCommandDown() && ! mods.isAltDown())
+    {
+        switch (which)
+        {
+            case TrackSwitch::mute: toggleMute (trackId); break;
+            case TrackSwitch::solo: toggleSolo (trackId); break;
+            case TrackSwitch::arm: toggleArm (trackId); break;
+        }
+        return;
+    }
+    // Ctrl: this one on, the others off. Alt: every track takes the state this one is about to take.
+    const bool only = mods.isCommandDown();
+    const bool target = only || ! trackSwitch (which, trackId);
+    std::vector<Id> ids;
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master)
+            ids.push_back (id); // by value: a mute edit rebuilds the model
+    const bool own = which == TrackSwitch::mute && ! sess->inGesture();
+    if (own)
+        sess->beginGesture (only ? "Mute Only" : target ? "Mute All" : "Unmute All");
+    for (const auto& id : ids)
+        setTrackSwitch (which, id, only ? id == trackId : target);
+    if (own)
+        sess->endGesture();
+    edited();
+}
+
+void Studio::beginSwitchSwipe (TrackSwitch which)
+{
+    swipeGesture = which == TrackSwitch::mute && ! sess->inGesture();
+    if (swipeGesture)
+        sess->beginGesture ("Mute Tracks");
+}
+
+void Studio::endSwitchSwipe()
+{
+    if (std::exchange (swipeGesture, false))
+        sess->endGesture();
+    edited();
+}
+
+bool Studio::silencedBySolo (const Id& trackId) const
+{
+    return ! local.soloed.empty() && ! commands::audibleWithSolo (model(), local.soloed).contains (trackId);
+}
+
+const model::Marker* Studio::markerAtPlayhead() const
+{
+    const model::Marker* at = nullptr;
+    const auto now = playhead();
+    for (const auto* marker : arrange::markersInOrder (model()))
+        if (marker->pos <= now)
+            at = marker;
+    return at;
 }
 
 int Studio::trackHeight (const Id& trackId) const
@@ -568,13 +680,66 @@ void toggleBottom (PanelLayout& l, BottomTab tab) { l.bottom = l.bottom == tab ?
 
 void Studio::zoomToFit()
 {
-    auto span = selection.span (model());
-    if (! span)
-        if (const auto all = arrange::projectSpan (model()))
-            span = std::pair { 0.0, all->second }; // the whole project, from its start (F-ARR-21)
+    const auto close = [] (double a, double b) { return std::abs (a - b) <= 1e-9 * std::max (1.0, std::abs (a)); };
+    const auto selected = selection.span (model());
+    // D-UI-27: Z fits the selection; Z again, with the selection and the view as Z left them, fits everything.
+    const bool again = selected && fittedSelection && close (fittedSelection->span.first, selected->first)
+                       && close (fittedSelection->span.second, selected->second) && close (fittedSelection->originTick, view.originTick)
+                       && close (fittedSelection->pixelsPerTick, view.pixelsPerTick);
+    if (selected && ! again)
+    {
+        view.fit (selected->first, selected->second, timelineWidth, 0.9);
+        fittedSelection = FittedSelection { *selected, view.originTick, view.pixelsPerTick };
+        return;
+    }
+    fittedSelection.reset();
+    std::optional<std::pair<double, double>> span;
+    if (const auto all = arrange::projectSpan (model()))
+        span = std::pair { 0.0, all->second }; // the whole project, from its start (F-ARR-21)
     if (! span)
         span = std::pair { 0.0, 8.0 * 3840.0 };
     view.fit (span->first, span->second, timelineWidth, 0.9);
+}
+
+bool Studio::stepRegion (int direction)
+{
+    const auto& m = model();
+    const model::Region* anchor = nullptr;
+    for (const auto& id : selection.ids())
+        if (const auto* r = m.region (id); r != nullptr && (anchor == nullptr || (direction > 0 ? r->start > anchor->start : r->start < anchor->start)))
+            anchor = r;
+    const auto track = anchor != nullptr ? m.effectiveTrackId (*anchor) : local.selectedTrack;
+    if (track.empty())
+    {
+        setStatus ("Select a region or a track first.");
+        return false;
+    }
+    std::vector<const model::Region*> lane;
+    for (const auto& [id, r] : m.regions)
+        if (m.effectiveTrackId (*r) == track)
+            lane.push_back (&*r);
+    std::sort (lane.begin(), lane.end(), [] (const auto* a, const auto* b) { return std::pair (a->start, a->id) < std::pair (b->start, b->id); });
+    const model::Region* to = nullptr;
+    if (anchor != nullptr)
+    {
+        const auto it = std::find (lane.begin(), lane.end(), anchor);
+        if (direction > 0 && it != lane.end() && it + 1 != lane.end())
+            to = *(it + 1);
+        else if (direction < 0 && it != lane.begin() && it != lane.end())
+            to = *(it - 1);
+    }
+    else
+    {
+        const auto now = playhead();
+        for (const auto* r : lane)
+            if (direction > 0 ? r->start >= now && to == nullptr : r->start < now)
+                to = r;
+    }
+    if (to == nullptr)
+        return false;
+    selection.set ({ to->id });
+    sendChangeMessage();
+    return true;
 }
 
 std::vector<Id> Studio::pianoRollRegions() const
@@ -705,11 +870,55 @@ std::optional<bool> Studio::performNotes (Cmd command)
         }
         case Cmd::notesLeft:
         case Cmd::notesRight:
+        case Cmd::nudgeLeft:
+        case Cmd::nudgeRight:
         {
             if (! needNotes())
                 return false;
             const auto step = piano.grid > 0 ? piano.grid : Ticks (240);
-            return check (s.moveNotes (notes, command == Cmd::notesRight ? step : -step, 0));
+            return check (s.moveNotes (notes, command == Cmd::notesRight || command == Cmd::nudgeRight ? step : -step, 0));
+        }
+        case Cmd::selectPrevious:
+        case Cmd::selectNext:
+        {
+            // D-UI-28: through the shown notes in order of time, then pitch; from the playhead when none is selected.
+            using Entry = std::tuple<Ticks, int, commands::NoteRef>;
+            std::vector<Entry> all;
+            for (const auto& id : regions)
+            {
+                const auto* r = m.region (id);
+                if (const auto* seq = m.sequence (r->midi.sequenceId))
+                    for (const auto& [noteId, n] : seq->notes)
+                        if (n.pos >= r->midi.sequenceOffset && n.pos < r->midi.sequenceOffset + r->length)
+                            all.emplace_back (r->start + n.pos - r->midi.sequenceOffset, n.pitch, commands::NoteRef { id, noteId });
+            }
+            std::sort (all.begin(), all.end());
+            const bool forward = command == Cmd::selectNext;
+            std::optional<Entry> anchor;
+            for (const auto& e : all)
+                if (piano.selection.contains (std::get<2> (e)) && (! anchor || (forward ? *anchor < e : e < *anchor)))
+                    anchor = e;
+            std::optional<Entry> to;
+            if (anchor)
+            {
+                const auto it = std::find (all.begin(), all.end(), *anchor);
+                if (forward && it + 1 != all.end())
+                    to = *(it + 1);
+                else if (! forward && it != all.begin())
+                    to = *(it - 1);
+            }
+            else
+                for (const auto& e : all)
+                    if (forward ? std::get<0> (e) >= playhead() && ! to : std::get<0> (e) < playhead())
+                        to = e;
+            if (! to)
+                return false;
+            piano.selection = { std::get<2> (*to) };
+            piano.point.reset();
+            if (const auto* n = commands::findNote (m, std::get<2> (*to)))
+                auditionNote (std::get<2> (*to).regionId, n->pitch, n->velocity, n->channel, n->length);
+            sendChangeMessage();
+            return true;
         }
         case Cmd::escape:
             if (piano.selection.empty())
@@ -719,7 +928,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
             return true;
         case Cmd::playStop: case Cmd::record: case Cmd::cycle: case Cmd::metronome: case Cmd::goToStart: case Cmd::goToEnd:
         case Cmd::previousBar: case Cmd::nextBar: case Cmd::autopunch: case Cmd::followPlayhead: case Cmd::save: case Cmd::newTrack:
-        case Cmd::undo: case Cmd::redo: case Cmd::split: case Cmd::join: case Cmd::muteRegions: case Cmd::nudgeLeft: case Cmd::nudgeRight:
+        case Cmd::undo: case Cmd::redo: case Cmd::split: case Cmd::join: case Cmd::muteRegions:
         case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::setCycleToSelection: case Cmd::zoomToFit: case Cmd::zoomIn:
         case Cmd::zoomOut: case Cmd::toolMenu: case Cmd::toggleInspector: case Cmd::toggleSidePanel: case Cmd::toggleMixer:
         case Cmd::togglePianoRoll: case Cmd::toggleAudioEditor: case Cmd::toggleGlobalTracks: case Cmd::addMarker: case Cmd::previousMarker:
@@ -733,7 +942,9 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
         case Cmd::reverseRegions: case Cmd::snapZeroCrossings: case Cmd::tapTempo: case Cmd::showHiddenTracks:
         case Cmd::stop: case Cmd::countIn: case Cmd::muteTrack: case Cmd::soloTrack: case Cmd::armTrack: case Cmd::newAudioTrack:
-        case Cmd::newInstrumentTrack:
+        case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
+        case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
+        case Cmd::marker18: case Cmd::marker19:
             break;
     }
     return std::nullopt;
@@ -1029,6 +1240,23 @@ bool Studio::perform (Cmd command)
             edited();
             return id.has_value();
         }
+        case Cmd::selectPrevious:
+        case Cmd::selectNext: return stepRegion (command == Cmd::selectNext ? 1 : -1);
+        case Cmd::deleteMarker:
+        case Cmd::renameMarker:
+        {
+            const auto* marker = markerAtPlayhead();
+            if (marker == nullptr)
+            {
+                setStatus ("No marker at or before the playhead.");
+                return false;
+            }
+            if (command == Cmd::deleteMarker)
+                return check (s.deleteMarker (marker->id));
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        }
         case Cmd::previousMarker:
         case Cmd::nextMarker:
         {
@@ -1189,8 +1417,20 @@ bool Studio::perform (Cmd command)
         case Cmd::marker7:
         case Cmd::marker8:
         case Cmd::marker9:
+        case Cmd::marker10:
+        case Cmd::marker11:
+        case Cmd::marker12:
+        case Cmd::marker13:
+        case Cmd::marker14:
+        case Cmd::marker15:
+        case Cmd::marker16:
+        case Cmd::marker17:
+        case Cmd::marker18:
+        case Cmd::marker19:
         {
-            const auto to = arrange::markerNumber (m, static_cast<int> (command) - static_cast<int> (Cmd::marker1) + 1);
+            const auto number = command >= Cmd::marker10 ? static_cast<int> (command) - static_cast<int> (Cmd::marker10) + 10
+                                                         : static_cast<int> (command) - static_cast<int> (Cmd::marker1) + 1;
+            const auto to = arrange::markerNumber (m, number);
             if (! to)
                 return false;
             locate (*to);
@@ -2498,6 +2738,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
+        Cmd::renameMarker, Cmd::deleteMarker,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

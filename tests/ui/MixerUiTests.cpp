@@ -591,3 +591,46 @@ TEST_CASE ("Screenshot of the mixer", "[.screenshot-mixer]")
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
 }
+
+TEST_CASE ("AT-MIX-16 Mute buttons show which tracks a solo silences; Alt+click mutes every strip", "[UI][AT-MIX-16]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto a = ui.m().trackOrder.front();
+    const auto b = s.createTrack (model::TrackKind::audio, "B").value();
+    const auto bus = s.newBus (a, false).value(); // A's output goes to the bus
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+
+    // The audible set: a solo keeps what it feeds and what feeds it.
+    CHECK (commands::audibleWithSolo (ui.m(), {}).empty());
+    CHECK (commands::audibleWithSolo (ui.m(), { a }) == std::set<Id> { a, bus });
+    CHECK (commands::audibleWithSolo (ui.m(), { bus }) == std::set<Id> { a, bus });
+
+    const auto header = [&] (const Id& id) -> TrackHeader& {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return *h;
+        FAIL ("no header");
+        return *ui.main->tracks().headers().front();
+    };
+    ui.studio.toggleSolo (a);
+    ui.settle();
+    CHECK (silencedBySolo (header (b).mute));
+    CHECK (silencedBySolo (mixer.stripFor (b)->mute));
+    CHECK_FALSE (silencedBySolo (header (a).mute));
+    CHECK_FALSE (silencedBySolo (mixer.stripFor (a)->mute));
+    CHECK_FALSE (silencedBySolo (mixer.stripFor (bus)->mute));
+    ui.studio.toggleSolo (a);
+    ui.settle();
+    CHECK_FALSE (silencedBySolo (header (b).mute));
+    CHECK_FALSE (silencedBySolo (mixer.stripFor (b)->mute));
+
+    juce::ModifierKeys::currentModifiers = juce::ModifierKeys (juce::ModifierKeys::altModifier);
+    mixer.stripFor (b)->mute.onClick();
+    juce::ModifierKeys::currentModifiers = {};
+    ui.settle();
+    for (const auto& id : { a, b, bus })
+        CHECK (ui.m().track (id)->mute);
+    CHECK_FALSE (ui.m().track (ui.m().info.masterTrackId)->mute);
+}

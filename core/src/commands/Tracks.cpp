@@ -1,9 +1,11 @@
 // Track commands beyond the basics in Commands.cpp: the New Track dialog with a count,
 // Duplicate, and colors (spec 02 W-5, F-TRK-6, F-TRK-9).
 
+#include "weft/commands/LocalView.h"
 #include "weft/commands/Session.h"
 
 #include <algorithm>
+#include <map>
 
 namespace weft::commands
 {
@@ -167,5 +169,40 @@ EditResult Session::setRegionColor (const Id& regionId, std::optional<model::Col
         stamp (w, regionId);
         return wrote (good);
     });
+}
+std::set<Id> audibleWithSolo (const model::ProjectModel& model, const std::set<Id>& soloed)
+{
+    std::set<Id> audible;
+    if (soloed.empty())
+        return audible;
+    std::map<Id, std::vector<Id>> feeds, fedBy;
+    for (const auto& edge : model.routingEdges())
+    {
+        if (model.disabledEdges.contains (edge.key()))
+            continue;
+        const auto* to = model.track (edge.toTrackId);
+        if (to == nullptr || to->kind != TrackKind::bus)
+            continue;
+        feeds[edge.fromTrackId].push_back (edge.toTrackId);
+        fedBy[edge.toTrackId].push_back (edge.fromTrackId);
+    }
+    const auto walk = [&] (const std::map<Id, std::vector<Id>>& graph) {
+        std::vector<Id> stack (soloed.begin(), soloed.end());
+        while (! stack.empty())
+        {
+            const auto id = stack.back();
+            stack.pop_back();
+            const auto it = graph.find (id);
+            if (it == graph.end())
+                continue;
+            for (const auto& next : it->second)
+                if (audible.insert (next).second)
+                    stack.push_back (next);
+        }
+    };
+    audible.insert (soloed.begin(), soloed.end());
+    walk (feeds);
+    walk (fedBy);
+    return audible;
 }
 } // namespace weft::commands

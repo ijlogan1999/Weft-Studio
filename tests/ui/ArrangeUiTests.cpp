@@ -1467,3 +1467,271 @@ TEST_CASE ("AT-TRK-18 the Add Track button and a double-click below the headers 
     CHECK (column.getComponentAt (tracks.headers().front()->getBounds().getCentre()) != &column);
     ui.studio.uiCommand = nullptr;
 }
+
+namespace
+{
+TrackHeader* headerFor (Ui& ui, const Id& id)
+{
+    for (const auto& h : ui.main->tracks().headers())
+        if (h->trackId == id)
+            return h.get();
+    return nullptr;
+}
+
+/** A button click as the mouse would deliver it with these modifiers held. */
+void clickWith (Ui& ui, juce::Button& b, juce::ModifierKeys mods)
+{
+    juce::ModifierKeys::currentModifiers = mods;
+    b.onClick();
+    juce::ModifierKeys::currentModifiers = {};
+    ui.settle();
+}
+} // namespace
+
+TEST_CASE ("AT-TRK-19 Ctrl+click: only this track; Alt+click: every track; a swipe sets a column", "[UI][AT-TRK-19]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    REQUIRE (s.createTrack (model::TrackKind::audio, "Two"));
+    REQUIRE (s.createTrack (model::TrackKind::audio, "Three"));
+    ui.studio.edited();
+    ui.settle();
+    std::vector<Id> t;
+    for (const auto& id : ui.m().trackOrder)
+        if (ui.m().track (id)->kind == model::TrackKind::audio)
+            t.push_back (id);
+    REQUIRE (t.size() == 3);
+    const auto ctrl = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+    const auto alt = juce::ModifierKeys (juce::ModifierKeys::altModifier);
+    const auto muted = [&] (std::size_t i) { return ui.m().track (t[i])->mute; };
+
+    clickWith (ui, headerFor (ui, t[0])->mute, {});
+    clickWith (ui, headerFor (ui, t[2])->mute, {});
+    clickWith (ui, headerFor (ui, t[1])->mute, ctrl);
+    CHECK_FALSE (muted (0));
+    CHECK (muted (1));
+    CHECK_FALSE (muted (2));
+    CHECK (s.undoName() == "Mute Only");
+
+    clickWith (ui, headerFor (ui, t[0])->mute, alt);
+    CHECK ((muted (0) && muted (1) && muted (2)));
+    CHECK (s.undoName() == "Mute All");
+    clickWith (ui, headerFor (ui, t[0])->mute, alt);
+    CHECK_FALSE ((muted (0) || muted (1) || muted (2)));
+    CHECK (s.undoName() == "Unmute All");
+
+    clickWith (ui, headerFor (ui, t[1])->solo, alt);
+    CHECK (ui.studio.localView().soloed == std::set<Id> { t.begin(), t.end() });
+    clickWith (ui, headerFor (ui, t[1])->solo, alt);
+    CHECK (ui.studio.localView().soloed.empty());
+
+    clickWith (ui, headerFor (ui, t[0])->arm, {});
+    clickWith (ui, headerFor (ui, t[1])->arm, ctrl);
+    CHECK (ui.studio.localView().armed == std::set<Id> { t[1] });
+
+    // A swipe from track 1's Mute over tracks 2 and 3: all three muted, one undo step.
+    {
+        auto& from = headerFor (ui, t[0])->mute;
+        from.swipeOver (&headerFor (ui, t[1])->mute);
+        from.swipeOver (&headerFor (ui, t[2])->mute);
+        from.swipeOver (&headerFor (ui, t[2])->mute);
+        from.swipeOver (&headerFor (ui, t[1])->solo); // another kind of button is ignored
+        CHECK (from.endSwipe());
+        ui.settle();
+    }
+    CHECK ((muted (0) && muted (1) && muted (2)));
+    CHECK (ui.studio.localView().soloed.empty());
+    CHECK (s.undoName() == "Mute Tracks");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK_FALSE ((muted (0) || muted (1) || muted (2)));
+
+    // The same with the mouse, on Solo: press on track 1's, drag onto track 2's, release there.
+    {
+        auto& from = headerFor (ui, t[0])->solo;
+        auto& over = headerFor (ui, t[1])->solo;
+        const auto centre = from.getLocalBounds().getCentre().toFloat();
+        const auto there = from.getLocalPoint (&over, over.getLocalBounds().getCentre().toFloat());
+        from.mouseDown (mouse (from, centre));
+        from.mouseDrag (mouse (from, there, {}, 1, centre));
+        from.mouseUp (mouse (from, there, {}, 1, centre));
+        ui.settle();
+    }
+    CHECK (ui.studio.localView().soloed == std::set<Id> { t[0], t[1] });
+
+    // From a lit Solo, the swipe turns them off.
+    {
+        auto& from = headerFor (ui, t[0])->solo;
+        from.swipeOver (&headerFor (ui, t[1])->solo);
+        from.swipeOver (&headerFor (ui, t[2])->solo);
+        CHECK (from.endSwipe());
+        ui.settle();
+    }
+    CHECK (ui.studio.localView().soloed.empty());
+}
+
+TEST_CASE ("AT-ARR-37 markers 10 to 19, Rename and Delete Marker, Ctrl+click Previous/Next Bar", "[UI][AT-ARR-37]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    for (int i = 0; i < 12; ++i)
+        REQUIRE (s.addMarker ((i + 2) * bar, "M" + std::to_string (i + 1)));
+    ui.studio.edited();
+    ui.settle();
+    const auto ctrl = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+
+    ui.key (juce::KeyPress::numberPad1, ctrl);
+    CHECK (ui.studio.playhead() == 12 * bar); // the eleventh
+    ui.key (juce::KeyPress::numberPad0, ctrl);
+    CHECK (ui.studio.playhead() == 11 * bar); // the tenth
+    ui.key (juce::KeyPress::numberPad9, ctrl);
+    CHECK (ui.studio.playhead() == 11 * bar); // there is no nineteenth
+
+    juce::Button* previous = nullptr;
+    juce::Button* next = nullptr;
+    for (auto* b : ui.main->controlBar().commandButtons())
+    {
+        if (b->command == Cmd::previousBar)
+            previous = b;
+        if (b->command == Cmd::nextBar)
+            next = b;
+    }
+    REQUIRE (previous != nullptr);
+    REQUIRE (next != nullptr);
+    ui.studio.locate (0);
+    clickWith (ui, *next, ctrl);
+    CHECK (ui.studio.playhead() == 2 * bar);
+    clickWith (ui, *next, ctrl);
+    CHECK (ui.studio.playhead() == 3 * bar);
+    clickWith (ui, *previous, ctrl);
+    CHECK (ui.studio.playhead() == 2 * bar);
+    clickWith (ui, *next, {});
+    CHECK (ui.studio.playhead() == 3 * bar); // a plain click: one bar
+
+    // Delete Marker acts on the marker at or before the playhead.
+    ui.studio.locate (5 * bar + 100);
+    ui.settle();
+    REQUIRE (ui.studio.markerAtPlayhead() != nullptr);
+    CHECK (ui.studio.markerAtPlayhead()->name == "M4");
+    ui.key (juce::KeyPress::deleteKey, juce::ModifierKeys (juce::ModifierKeys::altModifier));
+    CHECK (ui.m().markers.size() == 11);
+    CHECK (s.undoName() == "Delete Marker");
+    CHECK (ui.studio.markerAtPlayhead()->name == "M3");
+    ui.studio.locate (bar);
+    ui.settle();
+    ui.key (juce::KeyPress::deleteKey, juce::ModifierKeys (juce::ModifierKeys::altModifier));
+    CHECK (ui.m().markers.size() == 11);
+    CHECK (ui.studio.status.contains ("No marker"));
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Rename Marker..."));
+    CHECK (items.contains ("Delete Marker"));
+}
+
+TEST_CASE ("AT-ARR-38 Left/Right step through a track's regions; Z toggles selection and project", "[UI][AT-ARR-38]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    auto& s = ui.studio.session();
+    const auto one = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto three = *s.createMidiRegion (tracks[0], 2 * bar, bar);
+    const auto five = *s.createMidiRegion (tracks[0], 4 * bar, bar);
+    const auto far = *s.createMidiRegion (tracks[0], 40 * bar, bar);
+    ui.studio.edited();
+    ui.settle();
+    const auto selected = [&] { return ui.studio.selection.ids(); };
+
+    ui.studio.selection.set ({ three });
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (selected() == std::vector<Id> { five });
+    ui.key (juce::KeyPress::leftKey);
+    ui.key (juce::KeyPress::leftKey);
+    CHECK (selected() == std::vector<Id> { one });
+    ui.key (juce::KeyPress::leftKey);
+    CHECK (selected() == std::vector<Id> { one });
+
+    ui.studio.selection.clear();
+    ui.studio.selectTrack (tracks[0]);
+    ui.studio.locate (bar);
+    ui.settle();
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (selected() == std::vector<Id> { three });
+
+    // Z: the selection, then the whole project, then a new selection.
+    const auto width = static_cast<double> (ui.timeline().getWidth());
+    ui.key ('Z');
+    const auto selectionWidth = ui.studio.view.tickToX (3.0 * bar) - ui.studio.view.tickToX (2.0 * bar);
+    CHECK (selectionWidth / width >= 0.8);
+    ui.key ('Z');
+    CHECK (ui.studio.view.tickToX (0.0) >= -1.0);
+    CHECK (ui.studio.view.tickToX (ui.m().regionEndTick (ui.region (far))) <= width);
+    ui.studio.selection.set ({ five });
+    ui.key ('Z');
+    CHECK ((ui.studio.view.tickToX (5.0 * bar) - ui.studio.view.tickToX (4.0 * bar)) / width >= 0.8);
+}
+
+TEST_CASE ("AT-TMP-10 Shift keeps a tempo-change drag to one direction", "[UI][AT-TMP-10]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    ui.studio.layout.globalTracks = true;
+    REQUIRE (ui.studio.session().addTempoPoint (4 * bar, 90.0));
+    ui.studio.edited();
+    ui.settle();
+    const auto shift = juce::ModifierKeys (juce::ModifierKeys::shiftModifier);
+    const auto x = [&] (int bars) { return static_cast<float> (ui.studio.view.tickToX (static_cast<double> (bars) * bar)); };
+    const auto point = [&] { return ui.m().tempo.points()[1]; };
+
+    auto y = ruler.tempoY (90.0);
+    ruler.pointerDown ({ x (4), y }, {});
+    ruler.pointerDrag ({ x (5), y - 5.0f }, shift);
+    ruler.pointerDrag ({ x (6), y - 20.0f }, shift);
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (point().pos == ui.studio.snapped (6 * bar));
+    CHECK (point().bpm == 90.0);
+
+    y = ruler.tempoY (90.0);
+    ruler.pointerDown ({ x (6), y }, {});
+    ruler.pointerDrag ({ x (6) + 2.0f, y - 10.0f }, shift);
+    ruler.pointerDrag ({ x (7), y - 20.0f }, shift);
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (point().pos == ui.studio.snapped (6 * bar));
+    CHECK (point().bpm > 90.0);
+
+    const auto before = point().bpm;
+    y = ruler.tempoY (before);
+    ruler.pointerDown ({ x (6), y }, {});
+    ruler.pointerDrag ({ x (8), y - 20.0f }, {});
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (point().pos == ui.studio.snapped (8 * bar));
+    CHECK (point().bpm > before);
+}
+
+TEST_CASE ("AT-UI-12 one key picks a tool while the Tool menu is open", "[UI][AT-UI-12]")
+{
+    Ui ui;
+    juce::StringArray keys;
+    const auto menu = ui.main->toolMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        keys.add (it.getItem().shortcutKeyDescription);
+    CHECK (keys.joinIntoString (" ") == "T P I J E M");
+
+    auto& listener = ui.main->toolKeys;
+    CHECK (listener.keyPressed (juce::KeyPress ('p', {}, 'p'), nullptr));
+    ui.settle();
+    CHECK (ui.studio.tool == Tool::pencil);
+    CHECK (listener.keyPressed (juce::KeyPress ('m', {}, 'm'), nullptr));
+    CHECK (ui.studio.tool == Tool::mute);
+    CHECK_FALSE (listener.keyPressed (juce::KeyPress ('q', {}, 'q'), nullptr));
+    CHECK (ui.studio.tool == Tool::mute);
+    CHECK_FALSE (listener.keyPressed (juce::KeyPress ('t', juce::ModifierKeys (juce::ModifierKeys::commandModifier), 't'), nullptr));
+    CHECK (ui.studio.tool == Tool::mute);
+    CHECK (listener.keyPressed (juce::KeyPress ('t', {}, 't'), nullptr));
+    CHECK (ui.studio.tool == Tool::pointer);
+}

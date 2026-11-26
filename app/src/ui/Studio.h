@@ -49,6 +49,17 @@ enum class Tool
     mute
 };
 juce::String toolName (Tool t);
+/** The one-key picks inside the Tool menu (D-UI-29): T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute. */
+std::optional<Tool> toolForKey (juce::juce_wchar key);
+juce::String toolKey (Tool t);
+
+/** A track's Mute, Solo and Record buttons (header and mixer strip). */
+enum class TrackSwitch
+{
+    mute,
+    solo,
+    arm
+};
 
 enum class BottomTab
 {
@@ -151,6 +162,20 @@ public:
     void toggleSolo (const Id& trackId, bool exclusive = false);
     /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */
     void toggleMute (const Id& trackId);
+    /** Whether a track's button is on. */
+    bool trackSwitch (TrackSwitch which, const Id& trackId) const;
+    /** Sets a track's button (no change when it's already so). */
+    void setTrackSwitch (TrackSwitch which, const Id& trackId, bool on);
+    /** A click on a track's Mute, Solo or Record button (D-UI-25): plain toggles it; Ctrl turns it on for this
+        track and off for the others; Alt gives every track the state this one takes. */
+    void clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::ModifierKeys mods);
+    /** Around a swipe down a column of buttons (D-UI-25): the mutes it sets are one undo step. */
+    void beginSwitchSwipe (TrackSwitch which);
+    void endSwitchSwipe();
+    /** True when a solo elsewhere silences the track (it isn't soloed, and isn't fed by or feeding a soloed one). */
+    bool silencedBySolo (const Id& trackId) const;
+    /** The last marker at or before the playhead: what Rename Marker and Delete Marker act on (D-UI-26). */
+    const model::Marker* markerAtPlayhead() const;
 
     int trackHeight (const Id& trackId) const;
     void setTrackHeight (const Id& trackId, int height);
@@ -555,6 +580,16 @@ private:
     void loadViewState();
     std::optional<bool> performNotes (Cmd command);
     void zoomToFit();
+    /** Left/Right in the tracks area (D-UI-28): the previous or next region on the same track. */
+    bool stepRegion (int direction);
+    /** Z fitted the selection to this view; Z again with nothing changed fits the whole project (D-UI-27). */
+    struct FittedSelection
+    {
+        std::pair<double, double> span;
+        double originTick = 0, pixelsPerTick = 0;
+    };
+    std::optional<FittedSelection> fittedSelection;
+    bool swipeGesture = false;
     int countInWhenOn = 1; // what the Count-in command turns back on
 
     std::unique_ptr<engine::AudioDevice> audioDevice;
