@@ -12,6 +12,12 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         addAndMakeVisible (*b);
         auto* button = b;
         b->onClick = [this, button] {
+            // Right-click on Play or Stop: a menu of where to play from or go (D-UI-35).
+            if (button->popupClick && button->popupMenu)
+            {
+                button->showPopup();
+                return;
+            }
             if (button == &stop)
             {
                 studio.perform (Cmd::stop); // stopped already: back to the start (D-UI-17)
@@ -28,8 +34,21 @@ ControlBar::ControlBar (Studio& s) : studio (s)
             studio.perform (button->command);
         };
     }
-    describe (stop, "Stop", "Stop (Space). Stopped already: go to the start of the cycle or project");
-    describe (play, "Play", "Play (Space)");
+    const auto commandMenu = [] (std::initializer_list<Cmd> cmds) {
+        juce::PopupMenu menu;
+        for (auto c : cmds)
+            menu.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+        return menu;
+    };
+    play.popupMenu = [commandMenu] {
+        return commandMenu ({ Cmd::playFromStart, Cmd::playFromCycleStart, Cmd::playFromSelection, Cmd::playFromWindowEdge, Cmd::playFromPreviousBar,
+                              Cmd::playFromLastLocate });
+    };
+    stop.popupMenu = [commandMenu] { return commandMenu ({ Cmd::stopGoToStart, Cmd::stopGoToCycleStart, Cmd::stopGoToLastLocate }); };
+    for (auto* b : { &play, &stop })
+        b->popupPicked = [this] (int item) { studio.perform (static_cast<Cmd> (item - 1)); };
+    describe (stop, "Stop", "Stop (Space). Stopped already: go to the start of the cycle or project. Right-click: stop and go to...");
+    describe (play, "Play", "Play (Space). Right-click: play from...");
     describe (rewind, "Previous Bar", "Previous Bar (,). Ctrl+click: previous marker");
     describe (forward, "Next Bar", "Next Bar (.). Ctrl+click: next marker");
     // Icons for the transport; the labels stay as the accessible names.

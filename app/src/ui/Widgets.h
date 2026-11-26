@@ -71,6 +71,27 @@ public:
     }
 
     const Cmd command;
+    /** Right-click opens this menu instead of running the command (D-UI-35); empty: right-click clicks. */
+    std::function<juce::PopupMenu()> popupMenu;
+    std::function<void (int)> popupPicked;
+    void showPopup()
+    {
+        if (! popupMenu)
+            return;
+        juce::Component::SafePointer<CommandButton> self (this);
+        popupMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [self] (int item) {
+            if (self != nullptr && item != 0 && self->popupPicked)
+                self->popupPicked (item);
+        });
+    }
+    /** The last click came from the popup-menu button (right-click, or Ctrl+click on a Mac). */
+    bool popupClick = false;
+
+    void clicked (const juce::ModifierKeys& mods) override
+    {
+        popupClick = mods.isPopupMenu();
+        juce::TextButton::clicked (mods);
+    }
 
 private:
     juce::Path icon;

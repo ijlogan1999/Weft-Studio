@@ -98,6 +98,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRN-21** [E][UI] · D-W1-11 · At 120 BPM in 4/4 with Division on, clicks fall every 6,000 samples and a division is softer than a beat; with Bar off the click at sample 0 has the pitch of a beat; with only Bar on, clicks fall at 0 and 96,000 only; with Only During Count-in on, a one-bar count-in clicks four times and the bar after it is silent; Tone Low clicks lower than Normal and High higher. The Navigate menu's Metronome Clicks submenu turns each option on and the engine's settings follow.
 
+**AT-TRN-22** [UI] · D-UI-35 · With the cycle at bars 3–4 (off) and a region at bars 5–6: Ctrl+Home goes to bar 3, Ctrl+End to bar 4; with the region selected Shift+Home goes to bar 5 and Shift+End to bar 7; with nothing selected Go to Selection Start says so. Shift+Space plays from bar 5; Stop and Go to Cycle Start stops at bar 3; Play from Previous Bar plays from bar 2; Stop and Go to Beginning stops at tick 0; Play from Left Window Edge plays from the view's left edge and Stop and Go to Last Locate Position returns there. Ctrl+Shift+Right moves the cycle to bars 4–5, Double makes it 4–6, Halve 4–5, Ctrl+Shift+Left back to 3–4, and undo undoes one move. The Navigate menu has Go To, Play From, Stop And and Cycle Range; Play's right-click menu lists Play from Cycle Start and picking it plays from bar 3.
+
 **AT-TRN-18** [UI] · F-TRN-17 · With follow on and zoom showing 4 bars, playing past the right edge scrolls the view so the playhead stays visible; with follow off, the view does not scroll.
 
 ## 3. Recording (REC)

@@ -1185,6 +1185,114 @@ TEST_CASE ("AT-TRN-21 Navigate › Metronome Clicks sets the bar, beat and divis
     CHECK_FALSE (ui.studio.engine().settings().clickBeats);
 }
 
+TEST_CASE ("AT-TRN-22 go-to, play-from and stop-and-go commands, cycle moves, Play and Stop menus", "[UI][AT-TRN-22]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    auto& s = studio.session();
+    const auto run = [&] {
+        ui.renderAudio (512);
+        studio.tick();
+        ui.settle();
+    };
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto region = *s.createMidiRegion (keys, 4 * bar, 2 * bar);
+    REQUIRE (s.setCycle (false, 2 * bar, 3 * bar));
+    studio.edited();
+    ui.settle();
+
+    // Go to.
+    REQUIRE (ui.key (juce::KeyPress::homeKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (studio.playhead() == 2 * bar);
+    REQUIRE (ui.key (juce::KeyPress::endKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (studio.playhead() == 3 * bar);
+    CHECK_FALSE (studio.perform (Cmd::goToSelectionStart)); // nothing selected
+    studio.selection.set ({ region });
+    REQUIRE (ui.key (juce::KeyPress::homeKey, juce::ModifierKeys::shiftModifier));
+    CHECK (studio.playhead() == 4 * bar);
+    REQUIRE (ui.key (juce::KeyPress::endKey, juce::ModifierKeys::shiftModifier));
+    CHECK (studio.playhead() == 6 * bar);
+    studio.locate (7 * bar);
+    REQUIRE (studio.perform (Cmd::goToStart));
+    CHECK (studio.playhead() == 0);
+    // The last locate position is where the playhead was last put before that: going there twice stays.
+    studio.locate (5 * bar);
+    REQUIRE (studio.perform (Cmd::goToLastLocate));
+    CHECK (studio.playhead() == 5 * bar);
+
+    // Play from.
+    REQUIRE (ui.key (juce::KeyPress::spaceKey, juce::ModifierKeys::shiftModifier)); // from the selection
+    run();
+    REQUIRE (studio.playing());
+    CHECK (studio.playhead() >= 4 * bar);
+    CHECK (studio.playhead() < 4 * bar + bar / 2);
+    CHECK (studio.lastLocatePosition() == 4 * bar);
+    REQUIRE (studio.perform (Cmd::stopGoToCycleStart));
+    run();
+    CHECK_FALSE (studio.playing());
+    CHECK (studio.playhead() == 2 * bar);
+    REQUIRE (studio.perform (Cmd::playFromPreviousBar));
+    run();
+    CHECK (studio.playhead() >= bar);
+    CHECK (studio.playhead() < 2 * bar);
+    REQUIRE (studio.perform (Cmd::stopGoToStart));
+    run();
+    CHECK_FALSE (studio.playing());
+    CHECK (studio.playhead() == 0);
+    studio.view.originTick = 8.0 * bar;
+    REQUIRE (studio.perform (Cmd::playFromWindowEdge));
+    run();
+    CHECK (studio.playhead() >= 8 * bar);
+    REQUIRE (studio.perform (Cmd::stopGoToLastLocate));
+    run();
+    CHECK (studio.playhead() == 8 * bar);
+    REQUIRE (studio.perform (Cmd::playFromStart));
+    run();
+    CHECK (studio.playhead() < bar);
+    REQUIRE (studio.perform (Cmd::stop));
+    run();
+
+    // Cycle moves: one undo step each.
+    REQUIRE (ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.m().info.cycle.start == 3 * bar);
+    CHECK (ui.m().info.cycle.end == 4 * bar);
+    REQUIRE (studio.perform (Cmd::doubleCycle));
+    CHECK (ui.m().info.cycle.end == 5 * bar);
+    REQUIRE (studio.perform (Cmd::halveCycle));
+    CHECK (ui.m().info.cycle.end == 4 * bar);
+    REQUIRE (ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.m().info.cycle.start == 2 * bar);
+    REQUIRE (studio.perform (Cmd::undo));
+    CHECK (ui.m().info.cycle.start == 3 * bar);
+
+    // Navigate menu groups; Play and Stop open a menu on right-click.
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    juce::StringArray subs;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().subMenu != nullptr)
+            subs.add (it.getItem().text);
+    for (auto name : { "Go To", "Play From", "Stop And", "Cycle Range" })
+        CHECK (subs.contains (name));
+    auto& controls = ui.main->controlBar();
+    CommandButton* play = nullptr;
+    for (auto* b : controls.commandButtons())
+        if (b->getTitle() == "Play")
+            play = b;
+    REQUIRE (play != nullptr);
+    REQUIRE (play->popupMenu);
+    juce::StringArray items;
+    const auto playMenu = play->popupMenu();
+    for (juce::PopupMenu::MenuItemIterator it (playMenu); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Play from Cycle Start"));
+    play->popupPicked (static_cast<int> (Cmd::playFromCycleStart) + 1);
+    run();
+    CHECK (studio.playing());
+    CHECK (studio.playhead() >= 2 * bar);
+    REQUIRE (studio.perform (Cmd::stop));
+    run();
+}
+
 TEST_CASE ("AT-ARR-31 Deselect All and Invert Selection", "[UI][AT-ARR-31]")
 {
     Ui ui;

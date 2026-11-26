@@ -61,7 +61,9 @@ enum class Cmd
     // D-UI-34: a track like the selected one on the next input; find a track by name
     newTrackNextInput, searchTracks,
     // Piano roll note functions (D-W4-14, D-W4-15)
-    selectAllFollowing, legato, removeOverlaps, noteStartToPlayhead, noteEndToPlayhead, lengthenNotes, shortenNotes, scaleQuantize
+    selectAllFollowing, legato, removeOverlaps, noteStartToPlayhead, noteEndToPlayhead, lengthenNotes, shortenNotes, scaleQuantize,
+    // Transport go-to and play-from commands (D-UI-35)
+    goToCycleStart, goToCycleEnd, goToSelectionStart, goToSelectionEnd, goToLastLocate, goToPosition, playFromStart, playFromCycleStart, playFromSelection, playFromWindowEdge, playFromPreviousBar, playFromLastLocate, stopGoToStart, stopGoToCycleStart, stopGoToLastLocate, cycleForward, cycleBack, doubleCycle, halveCycle
 };
 
 struct CommandInfo

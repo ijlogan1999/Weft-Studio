@@ -507,6 +507,7 @@ void Studio::locate (Ticks t)
     t = std::max<Ticks> (t, 0);
     eng->locate (t);
     locatedAt = t;
+    lastLocate = t;
     locatedFrame = eng->deviceFrames();
     sendChangeMessage();
 }
@@ -1081,6 +1082,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
         case Cmd::newTrackNextInput: case Cmd::searchTracks:
+        case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
     return std::nullopt;
@@ -1107,7 +1109,10 @@ bool Studio::perform (Cmd command)
             if (playing())
                 eng->stop();
             else
-                eng->play (m.info.cycle.enabled ? m.info.cycle.start : playhead()); // D-UI-17: the cycle plays from its start
+            {
+                lastLocate = m.info.cycle.enabled ? m.info.cycle.start : playhead();
+                eng->play (lastLocate); // D-UI-17: the cycle plays from its start
+            }
             locatedAt.reset();
             break;
         case Cmd::stop:
@@ -1241,6 +1246,111 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::goToStart: locate (0); break;
+        case Cmd::goToCycleStart:
+        case Cmd::goToCycleEnd:
+        case Cmd::goToSelectionStart:
+        case Cmd::goToSelectionEnd:
+        case Cmd::goToLastLocate:
+        case Cmd::playFromStart:
+        case Cmd::playFromCycleStart:
+        case Cmd::playFromSelection:
+        case Cmd::playFromWindowEdge:
+        case Cmd::playFromPreviousBar:
+        case Cmd::playFromLastLocate:
+        case Cmd::stopGoToStart:
+        case Cmd::stopGoToCycleStart:
+        case Cmd::stopGoToLastLocate:
+        {
+            // D-UI-35: where each command goes; the play commands start playback there, the stop ones stop first.
+            std::optional<Ticks> to;
+            const auto& cycle = m.info.cycle;
+            const bool hasCycle = cycle.end > cycle.start;
+            switch (command)
+            {
+                case Cmd::goToCycleStart: case Cmd::playFromCycleStart: case Cmd::stopGoToCycleStart:
+                    if (hasCycle)
+                        to = cycle.start;
+                    break;
+                case Cmd::goToCycleEnd:
+                    if (hasCycle)
+                        to = cycle.end;
+                    break;
+                case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::playFromSelection:
+                    to = selectionEdge (command == Cmd::goToSelectionEnd);
+                    break;
+                case Cmd::goToLastLocate: case Cmd::playFromLastLocate: case Cmd::stopGoToLastLocate: to = lastLocate; break;
+                case Cmd::playFromStart: case Cmd::stopGoToStart: to = 0; break;
+                case Cmd::playFromWindowEdge: to = std::max<Ticks> (0, static_cast<Ticks> (std::ceil (view.originTick))); break;
+                case Cmd::playFromPreviousBar:
+                {
+                    const auto pos = m.signatures.barAt (playhead());
+                    to = m.signatures.barStart (std::max (pos.bar - 1, 0));
+                    break;
+                }
+                default: break;
+            }
+            if (! to)
+            {
+                setStatus (command == Cmd::goToSelectionStart || command == Cmd::goToSelectionEnd || command == Cmd::playFromSelection
+                               ? "Select regions or notes first."
+                               : "Set a cycle first.");
+                return false;
+            }
+            const bool startPlaying = command == Cmd::playFromStart || command == Cmd::playFromCycleStart || command == Cmd::playFromSelection
+                                      || command == Cmd::playFromWindowEdge || command == Cmd::playFromPreviousBar || command == Cmd::playFromLastLocate;
+            if (startPlaying)
+            {
+                lastLocate = *to;
+                eng->play (*to);
+                locatedAt.reset();
+            }
+            else
+            {
+                if (playing())
+                {
+                    if (command == Cmd::stopGoToStart || command == Cmd::stopGoToCycleStart || command == Cmd::stopGoToLastLocate)
+                        eng->pause(); // stops where it is; the locate below puts it in place
+                }
+                const auto keep = lastLocate;
+                locate (*to);
+                if (command == Cmd::goToLastLocate || command == Cmd::stopGoToLastLocate)
+                    lastLocate = keep;
+            }
+            break;
+        }
+        case Cmd::cycleForward:
+        case Cmd::cycleBack:
+        case Cmd::doubleCycle:
+        case Cmd::halveCycle:
+        {
+            const auto& cycle = m.info.cycle;
+            const auto length = cycle.end - cycle.start;
+            if (length <= 0)
+            {
+                setStatus ("Set a cycle first.");
+                return false;
+            }
+            Ticks start = cycle.start, end = cycle.end;
+            if (command == Cmd::cycleForward)
+                start += length, end += length;
+            else if (command == Cmd::cycleBack)
+            {
+                const auto by = std::min (length, cycle.start);
+                if (by == 0)
+                {
+                    setStatus ("The cycle is at the start already.");
+                    return false;
+                }
+                start -= by, end -= by;
+            }
+            else if (command == Cmd::doubleCycle)
+                end = start + 2 * length;
+            else if (length < 2)
+                return false;
+            else
+                end = start + length / 2;
+            return check (s.setCycle (cycle.enabled, start, end));
+        }
         case Cmd::goToEnd: locate (commands::projectEndTick (m)); break;
         case Cmd::previousBar:
         case Cmd::nextBar:
@@ -1469,6 +1579,7 @@ bool Studio::perform (Cmd command)
         case Cmd::about:
         case Cmd::searchPlugins:
         case Cmd::searchTracks:
+        case Cmd::goToPosition:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
         case Cmd::bounce:
@@ -1670,6 +1781,30 @@ bool Studio::previewFile (const fs::path& file)
     }
     eng->preview (std::make_shared<const media::AudioData> (std::move (*audio)));
     return true;
+}
+
+std::optional<Ticks> Studio::selectionEdge (bool end) const
+{
+    const auto& m = model();
+    std::optional<Ticks> edge;
+    const auto take = [&] (Ticks from, Ticks to) {
+        const auto t = end ? to : from;
+        if (! edge || (end ? t > *edge : t < *edge))
+            edge = t;
+    };
+    if (notesFocused())
+        for (const auto& ref : piano.selection)
+            if (const auto* n = commands::findNote (m, ref))
+                if (const auto* r = m.region (ref.regionId))
+                {
+                    const auto at = commands::noteTimelineTick (*r, n->pos);
+                    take (at, at + n->length);
+                }
+    if (! edge)
+        for (const auto& id : selection.ids())
+            if (const auto* r = m.region (id))
+                take (r->start, r->start + r->length);
+    return edge;
 }
 
 std::optional<Id> Studio::newTrackNextInput()
@@ -2987,6 +3122,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
         Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
+        Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

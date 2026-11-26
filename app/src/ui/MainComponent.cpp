@@ -420,6 +420,8 @@ void MainComponent::handleUiCommand (Cmd command)
     }
     else if (command == Cmd::searchPlugins)
         PluginSearch::show (studio, this);
+    else if (command == Cmd::goToPosition)
+        control.positionDisplay().showEditor();
     else if (command == Cmd::searchTracks)
     {
         if (auto* search = TrackSearch::show (studio, this))
@@ -901,6 +903,25 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::renameMarker, Cmd::deleteMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
+            // D-UI-35: the go-to, play-from and stop commands, and cycle moves.
+            const auto subMenu = [] (std::initializer_list<Cmd> cmds) {
+                juce::PopupMenu sub;
+                for (auto c : cmds)
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    sub.addItem (item);
+                }
+                return sub;
+            };
+            menu.addSubMenu ("Go To", subMenu ({ Cmd::goToPosition, Cmd::goToCycleStart, Cmd::goToCycleEnd, Cmd::goToSelectionStart, Cmd::goToSelectionEnd,
+                                                 Cmd::goToLastLocate }));
+            menu.addSubMenu ("Play From", subMenu ({ Cmd::playFromStart, Cmd::playFromCycleStart, Cmd::playFromSelection, Cmd::playFromWindowEdge,
+                                                     Cmd::playFromPreviousBar, Cmd::playFromLastLocate }));
+            menu.addSubMenu ("Stop And", subMenu ({ Cmd::stopGoToStart, Cmd::stopGoToCycleStart, Cmd::stopGoToLastLocate }));
+            menu.addSubMenu ("Cycle Range", subMenu ({ Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle }));
             const auto settings = studio.engine().settings();
             menu.addSeparator();
             juce::PopupMenu during;

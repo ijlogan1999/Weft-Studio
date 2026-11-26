@@ -159,6 +159,9 @@ public:
     void selectTrack (const Id& trackId);
     /** New Track with Next Input (D-UI-34): one track like the selected one below it, on the next input; selected. */
     std::optional<Id> newTrackNextInput();
+    /** The start (or end) of the selected notes while the piano roll has the keys, else of the selected regions (D-UI-35). */
+    std::optional<Ticks> selectionEdge (bool end) const;
+    Ticks lastLocatePosition() const noexcept { return lastLocate; }
     /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
     bool moveTrackTo (const Id& trackId, std::size_t index);
     const commands::LocalView& localView() const noexcept { return local; }
@@ -626,6 +629,7 @@ private:
     std::map<std::string, std::vector<float>> peakCache;
     std::map<std::string, WaveSummary> waveCache;
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
+    Ticks lastLocate = 0;           // Go to / Play from Last Locate Position (D-UI-35): the last place located to or played from
     std::int64_t locatedFrame = -1;
     bool audioOk = false;
     engine::DeviceConfig deviceConfig; // what the current device was opened with
