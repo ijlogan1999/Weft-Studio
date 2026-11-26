@@ -445,3 +445,63 @@ TEST_CASE ("Shared folder: each computer keeps its own recovery log", "[U][proje
     CHECK (desktop.open().recoveryAvailable());
     CHECK_FALSE (project::ProjectFolder (root, "aaaaaaaaaaaaaaaa").open().recoveryAvailable());
 }
+
+TEST_CASE ("AT-PRJ-16 project count-in, pan law and MIDI input filter", "[U][project][AT-PRJ-16]")
+{
+    auto s = commands::Session::createNew ({}, "userA").value();
+    CHECK (s.model().info.panLawDb == -3.0);
+    CHECK (s.model().info.midiInputFilter == 0);
+
+    // Count-in: none, 1 to 6 bars, or 1 or 2 beats.
+    model::MetronomeSettings m = s.model().info.metronomeDefaults;
+    for (const int n : { 6, -2, 3 })
+    {
+        m.countInBars = n;
+        CHECK (s.setMetronomeDefaults (m));
+        CHECK (s.model().info.metronomeDefaults.countInBars == n);
+    }
+    for (const int n : { 7, -3 })
+    {
+        m.countInBars = n;
+        CHECK_FALSE (s.setMetronomeDefaults (m));
+    }
+    CHECK (model::countInName (0) == "None");
+    CHECK (model::countInName (1) == "1 bar");
+    CHECK (model::countInName (4) == "4 bars");
+    CHECK (model::countInName (-1) == "1 beat");
+    CHECK (model::countInName (-2) == "2 beats");
+    CHECK (model::countInIndex (-2) == 8);
+    CHECK (model::countInIndex (99) == 0);
+
+    // Pan law: one undo step; only the four laws.
+    CHECK (s.setPanLaw (-6.0));
+    CHECK (s.model().info.panLawDb == -6.0);
+    CHECK (s.undoName() == "Set Pan Law");
+    CHECK_FALSE (s.setPanLaw (-6.0));
+    CHECK_FALSE (s.setPanLaw (-2.0));
+    REQUIRE (s.undo().done);
+    CHECK (s.model().info.panLawDb == -3.0);
+    REQUIRE (s.setPanLaw (-4.5));
+
+    // MIDI input filter: bits of model::midiFilter.
+    using namespace model::midiFilter;
+    CHECK (s.setMidiInputFilter (notes | pitchBend));
+    CHECK (s.undoName() == "Set MIDI Input Filter");
+    CHECK_FALSE (s.setMidiInputFilter (64));
+    CHECK (drops (notes, 0x93, 100));
+    CHECK_FALSE (drops (notes, 0x93, 0)); // a velocity-0 note-on ends a note: it passes
+    CHECK_FALSE (drops (notes, 0x80, 0));
+    CHECK (drops (controllers, 0xb0, 1));
+    CHECK (drops (programChange, 0xc5, 0));
+    CHECK (drops (channelPressure, 0xd0, 0));
+    CHECK (drops (polyPressure, 0xa0, 0));
+    CHECK (drops (pitchBend, 0xe0, 0));
+    CHECK_FALSE (drops (all & ~pitchBend, 0xe0, 0));
+
+    // All three are in the document and survive reopening.
+    const auto bytes = s.document().save();
+    commands::Session reopened (doc::Document::load (bytes).value(), "userB");
+    CHECK (reopened.model().info.metronomeDefaults.countInBars == 3);
+    CHECK (reopened.model().info.panLawDb == -4.5);
+    CHECK (reopened.model().info.midiInputFilter == (notes | pitchBend));
+}

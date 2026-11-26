@@ -1050,9 +1050,15 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSubMenu ("Metronome Clicks", clicks);
             // The count-in lives here as well as in the control bar, which drops its menu in a narrow window (AT-UI-11).
             juce::PopupMenu countIn;
-            countIn.addItem (countInOff, "Off", true, settings.countInBars == 0);
-            countIn.addItem (countInOne, "1 Bar", true, settings.countInBars == 1);
-            countIn.addItem (countInTwo, "2 Bars", true, settings.countInBars == 2);
+            for (std::size_t i = 0; i < model::countInChoices.size(); ++i)
+            {
+                const auto choice = model::countInChoices[i];
+                if (choice == -1)
+                    countIn.addSeparator();
+                // "1 Bar", "2 Beats": the menu's title case.
+                const auto name = choice == 0 ? juce::String ("Off") : juce::String (model::countInName (choice)).replace (" b", " B");
+                countIn.addItem (countInOff + static_cast<int> (i), name, true, settings.countInBars == choice);
+            }
             countIn.addSeparator();
             {
                 juce::PopupMenu::Item toggle ("Count-in On/Off");
@@ -1157,9 +1163,10 @@ void MainComponent::menuItemSelected (int itemId, int)
             case clickDuringPlay: settings.metronomeDuring = engine::ClickDuring::play; break;
             case clickDuringBoth: settings.metronomeDuring = engine::ClickDuring::both; break;
             case returnToStart: settings.returnToStartOnStop = ! settings.returnToStartOnStop; break;
-            case countInOff: settings.countInBars = 0; break;
-            case countInOne: settings.countInBars = 1; break;
-            case countInTwo: settings.countInBars = 2; break;
+            case countInOff: case countInOne: case countInTwo: case countInOff + 3: case countInOff + 4: case countInOff + 5: case countInOff + 6:
+            case countInOff + 7: case countInOff + 8:
+                settings.countInBars = model::countInChoices[static_cast<std::size_t> (itemId - countInOff)];
+                break;
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
             case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;

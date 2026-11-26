@@ -92,8 +92,8 @@ EditResult Session::setSampleRate (int rate)
 
 EditResult Session::setMetronomeDefaults (const model::MetronomeSettings& settings)
 {
-    if (settings.countInBars < 0 || settings.countInBars > 8)
-        return reject ("Count-in is 0 to 8 bars.");
+    if (settings.countInBars < model::minCountIn || settings.countInBars > model::maxCountIn)
+        return reject ("Count-in is none, 1 to 6 bars, or 1 or 2 beats.");
     if (settings.during != "record" && settings.during != "play" && settings.during != "both")
         return reject ("The metronome plays during record, play or both.");
     return run ("Set Metronome Defaults", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "metronomeDefaults" }), settings.toValue())); });
@@ -284,6 +284,24 @@ EditResult Session::setShowHiddenTracks (bool show)
 {
     return run (show ? "Show Hidden Tracks" : "Hide Hidden Tracks",
                 [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "showHiddenTracks" }), Value (show))); });
+}
+
+EditResult Session::setPanLaw (double centreDb)
+{
+    if (! model::isValidPanLaw (centreDb))
+        return reject ("The pan law is 0, -3, -4.5 or -6 dB.");
+    if (model::panLawIndex (model().info.panLawDb) == model::panLawIndex (centreDb))
+        return reject ("The project already uses that pan law.");
+    return run ("Set Pan Law", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "panLaw" }), Value (centreDb))); });
+}
+
+EditResult Session::setMidiInputFilter (int filter)
+{
+    if (filter < 0 || (filter & ~model::midiFilter::all) != 0)
+        return reject ("That isn't a MIDI input filter.");
+    if (model().info.midiInputFilter == filter)
+        return reject ("The project already filters that MIDI input.");
+    return run ("Set MIDI Input Filter", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "midiInputFilter" }), Value (filter))); });
 }
 
 EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)

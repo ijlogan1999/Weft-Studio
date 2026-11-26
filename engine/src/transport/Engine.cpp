@@ -118,7 +118,7 @@ TransportSettings TransportSettings::fromDefaults (const model::MetronomeSetting
     s.metronomeOn = m.enabled;
     s.metronomeLevelDb = m.levelDb;
     s.metronomeDuring = duringFromString (m.during);
-    s.countInBars = std::clamp (m.countInBars, 0, 2);
+    s.countInBars = std::clamp (m.countInBars, model::minCountIn, model::maxCountIn);
     return s;
 }
 
@@ -906,9 +906,11 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
             finishCapture();
             recordStart = c.a == fromPlayhead ? position : c.a;
             const auto recordTick = static_cast<Ticks> (std::llround (snap->tempo.sampleToTick (static_cast<double> (recordStart))));
-            const auto bars = std::clamp<std::int64_t> (c.b, 0, 2);
-            const auto barLength = snap->signatures.barLength (snap->signatures.barAt (recordTick).bar);
-            position = bars > 0 ? snap->tickToSample (recordTick - bars * barLength) : recordStart;
+            // Bars (1 to 6) or beats (-1, -2) of the meter at the record start (D-UI-42).
+            const auto countIn = std::clamp<std::int64_t> (c.b, model::minCountIn, model::maxCountIn);
+            const auto& meter = snap->signatures.signatureAtBar (snap->signatures.barAt (recordTick).bar);
+            const auto lead = countIn > 0 ? countIn * meter.barLength() : -countIn * 4 * ticksPerQuarter / meter.denominator;
+            position = countIn != 0 ? snap->tickToSample (recordTick - lead) : recordStart;
             playStart = recordStart;
             pass = c.pass;
             transport = position < recordStart ? TransportState::countIn : TransportState::recording;
@@ -947,7 +949,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         ackedSerial.store (snap->serial, std::memory_order_release);
     while (auto c = commands.pop())
         apply (*c, snap);
-    takeLiveMidi (numFrames);
+    takeLiveMidi (numFrames, snap != nullptr ? snap->midiInputFilter : 0);
 
     if (snap != nullptr)
     {
@@ -1375,7 +1377,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                 case AutomationKind::pan:
                 {
                     const auto pan = automation::toPan (a.valueAt (rampTo, frames));
-                    std::tie (panLeft, panRight) = mono ? panGains (pan) : balanceGains (pan);
+                    std::tie (panLeft, panRight) = mono ? panGains (pan, snap.panLawDb) : balanceGains (pan);
                     if (timeline && a.followsLane())
                         panLane = &a;
                     break;
@@ -1500,7 +1502,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                 if (panLane != nullptr)
                 {
                     const auto pan = automation::toPan (panLane->laneValue (t));
-                    lr = mono ? panGains (pan) : balanceGains (pan);
+                    lr = mono ? panGains (pan, snap.panLawDb) : balanceGains (pan);
                 }
                 return std::pair { g * lr.first, g * lr.second };
             });
@@ -1709,7 +1711,7 @@ void Engine::renderClicks (const EngineSnapshot& snap, std::int64_t from, int of
     metronome.render (&click, 1, offset, frames, clickOffsets.data(), clickLevels.data(), count, clickGain, clickTone);
 }
 
-void Engine::takeLiveMidi (int numFrames) noexcept
+void Engine::takeLiveMidi (int numFrames, int filter) noexcept
 {
     numLive = 0;
     const auto blockEnd = frameCounter + numFrames;
@@ -1728,6 +1730,8 @@ void Engine::takeLiveMidi (int numFrames) noexcept
             break;
         }
         laterMidi.reset();
+        if (model::midiFilter::drops (filter, in.status, in.data2))
+            continue; // Project Settings › MIDI input filter (W-35)
         const auto at = in.frame < frameCounter ? 0 : static_cast<int> (in.frame - frameCounter);
         liveSources[static_cast<std::size_t> (numLive)] = in.source;
         liveEvents[static_cast<std::size_t> (numLive++)] = { at, in.status, in.data1, in.data2 };

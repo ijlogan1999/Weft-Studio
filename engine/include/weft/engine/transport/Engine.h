@@ -51,7 +51,7 @@ struct TransportSettings
     bool metronomeOn = true;
     double metronomeLevelDb = 0.0;
     ClickDuring metronomeDuring = ClickDuring::record;
-    int countInBars = 1; // 0, 1 or 2
+    int countInBars = 1; // 0 none, 1 to 6 bars, -1 or -2 beats (model::countInChoices)
     /** MIDI recording over an existing region: merge into it, or a new region on top (F-REC-7). */
     bool midiMergeLinear = false;
     bool midiMergeCycle = true;
@@ -290,7 +290,7 @@ private:
     void finishCapture() noexcept;
     void captureSpan (const float* const* inputs, std::int64_t from, int offset, int frames) noexcept;
     void captureWrap (std::int64_t at) noexcept;
-    void takeLiveMidi (int numFrames) noexcept;
+    void takeLiveMidi (int numFrames, int filter) noexcept;
 
     MediaPool& mediaPool;
     InstrumentRack& rack;

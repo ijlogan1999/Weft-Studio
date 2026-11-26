@@ -165,6 +165,8 @@ void readInfo (ProjectModel& m, const Value& root)
     info.metronomeDefaults = MetronomeSettings::fromValue (root["metronomeDefaults"]);
     info.key = KeySignature::fromValue (root["key"]);
     info.showHiddenTracks = root["showHiddenTracks"].asBool();
+    info.panLawDb = root["panLaw"].isNumber() && isValidPanLaw (root["panLaw"].asDouble()) ? root["panLaw"].asDouble() : -3.0;
+    info.midiInputFilter = static_cast<int> (root["midiInputFilter"].asInt (0)) & midiFilter::all;
 
     m.storedTrackOrder.clear();
     for (const auto& item : root["trackOrder"].asList())
@@ -310,7 +312,7 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         // Project fields are small; re-read them all (but not the collections).
         Value root = Value::map();
         for (const char* k : { "schemaVersion", "id", "name", "sampleRate", "recordBitDepth", "createdAt", "createdBy", "masterTrackId", "cycle",
-                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", keys::trackOrder })
+                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", "panLaw", "midiInputFilter", keys::trackOrder })
             if (auto v = document.get (doc::path ({ k })))
                 root.set (k, std::move (*v));
         readInfo (m, root);

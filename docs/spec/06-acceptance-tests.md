@@ -54,6 +54,16 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-15** [U][UI] · F-TMP-10 · The project key starts at C major; typing "f#m" in the control bar's key display sets F♯ minor as one undo step "Set Key" and nonsense changes nothing; Project Settings offers the 24 keys and sets B♭ major; names and sharps/flats follow D-DM-20; an exported MIDI file carries the key signature event, and importing a MIDI file into an empty project takes the file's key (as it takes the tempo, D-AT-1).
 
+**AT-PRJ-16** [U] · F-PRJ-9, D-UI-42 · Project count-in takes none, 1 to 6 bars or 1 or 2 beats and refuses 7 bars or 3 beats; the pan law takes 0, -3, -4.5 or -6 dB as one undo step "Set Pan Law"; the MIDI input filter takes the six kinds' bits as one undo step "Set MIDI Input Filter"; note-offs and velocity-0 note-ons always pass; all three survive saving and reopening.
+
+**AT-PRJ-17** [E] · D-UI-42 · Recording at bar 5 with a 3-bar count-in starts at bar 2, with 6 bars at bar -1, with 2 beats of 4/4 one half note before, and with 1 beat of 6/8 one eighth before; no count-in starts recording at once. The project's count-in default reaches the transport unclamped.
+
+**AT-PRJ-18** [E] · D-UI-42 · A mono source at centre plays at -6.02 dB each side with the -6 dB law (and 0.75 at pan +0.5, linear), -4.52 dB with -4.5, 0 dB with 0 (and +3 dB hard left), and -3.01 dB with -3; a hard pan is unity under -3, -4.5 and -6; a stereo source's balance is the same under any law.
+
+**AT-PRJ-19** [E] · D-UI-42 · With pitch bend and program change ignored, a recorded pass keeps its note and volume controller but neither ignored event, and the instrument never hears them. With notes ignored, a new note-on is dropped while the note-off of a note held before still reaches the instrument.
+
+**AT-PRJ-20** [UI] · D-UI-42 · Project Settings lists nine count-in choices ending "2 beats", shows the pan law as "-3 dB (equal power)", and sets 2 beats, -6 dB and ignore pitch bend; reopening it shows them. Navigate › Count-in lists "6 Bars" and "1 Beat"; choosing 1 Beat, Shift+K turns it off and back to 1 beat ("Count-in: 1 beat."); the control bar's More menu sets 4 bars.
+
 **AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
 
 ## 2. Transport (TRN)
@@ -638,7 +648,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-PRJ-5 | AT-PRJ-3, 8, 9 | | F-MIX-4 | AT-TRK-8 |
 | F-PRJ-6 | AT-PRJ-10 | | F-MIX-5 | AT-MIX-4 |
 | F-PRJ-7 | AT-PRJ-11, 12 | | F-MIX-6 | AT-MIX-5 |
-| F-PRJ-9 | AT-PRJ-13 | | F-MIX-7 | AT-MIX-6 |
+| F-PRJ-9 | AT-PRJ-13, 16–20 | | F-MIX-7 | AT-MIX-6 |
 | F-TRN-1 | AT-TRN-1, 2, 3, AT-RT-3 | | F-MIX-8 | AT-MIX-7 |
 | F-TRN-2 | AT-TRN-4 | | F-MIX-9 | AT-MIX-8 |
 | F-TRN-4 | AT-TRN-5 | | F-MIX-10 | AT-MIX-9, 10 |

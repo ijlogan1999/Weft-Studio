@@ -682,3 +682,36 @@ TEST_CASE ("Engine snapshot plays the topmost of overlapping regions, with gain 
     rig.engine.play (0);
     CHECK (firstNonSilent (rig.run (barSamples)) == -1);
 }
+
+TEST_CASE ("AT-PRJ-17: count-ins of 3 bars, 2 beats and 1 beat of 6/8 start that far before the record start", "[E][transport][AT-PRJ-17]")
+{
+    Rig rig;
+    rig.engine.setArmedTracks ({ rig.audioTrack() });
+    const auto startsAt = [&rig] (int countIn) {
+        clickSettings (rig, ClickDuring::record, 0.0, countIn);
+        REQUIRE (rig.engine.record (4 * barTicks).recording);
+        rig.run (1);
+        const auto at = rig.engine.positionSamples() - 1;
+        const auto state = rig.engine.state();
+        rig.engine.stop();
+        rig.run (256);
+        rig.finishRecording();
+        return std::pair { at, state };
+    };
+    CHECK (startsAt (3) == std::pair { 1 * barSamples, TransportState::countIn });
+    CHECK (startsAt (6) == std::pair { -2 * barSamples, TransportState::countIn });
+    CHECK (startsAt (-2) == std::pair { 4 * barSamples - 48000, TransportState::countIn });
+    CHECK (startsAt (0) == std::pair { 4 * barSamples, TransportState::recording });
+
+    // A beat follows the meter at the record start: an eighth note in 6/8.
+    REQUIRE (rig.session.setSignatureAt (0, 6, 8));
+    rig.sync();
+    CHECK (startsAt (-1) == std::pair { 4 * barSamples - 12000, TransportState::countIn }); // the same tick; an eighth is 12,000 samples
+
+    // The project's default reaches the engine settings unclamped.
+    model::MetronomeSettings m;
+    m.countInBars = 5;
+    CHECK (TransportSettings::fromDefaults (m).countInBars == 5);
+    m.countInBars = -2;
+    CHECK (TransportSettings::fromDefaults (m).countInBars == -2);
+}

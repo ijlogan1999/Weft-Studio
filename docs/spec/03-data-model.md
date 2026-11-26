@@ -62,6 +62,8 @@ Project {
   metronomeDefaults: MetronomeSettings   // per-user settings start from this (D-DM-12)
   key: { tonic: 0..11, mode: "major" | "minor" }   // F-TMP-10, D-DM-20
   showHiddenTracks: bool          // hidden tracks get rows again (D-W3-7)
+  panLaw: -3 | 0 | -4.5 | -6      // dB at centre for mono sources (D-UI-42); missing = -3
+  midiInputFilter: int            // bits: 1 notes, 2 program change, 4 pitch bend, 8 controllers, 16 aftertouch, 32 poly aftertouch (D-UI-42)
   automationLanes: Map<Id, AutomationLane>
 
   collab: CollabMeta              // §9
@@ -367,7 +369,7 @@ AutoPoint { id: Id, pos: Ticks, value: Normalized, curve: float /* −1..1, appl
 
 ### 8.3 Metronome
 ```ts
-MetronomeSettings { enabled: bool, levelDb: Db, during: 'record'|'play'|'both', countInBars: 0|1|2 }
+MetronomeSettings { enabled: bool, levelDb: Db, during: 'record'|'play'|'both', countInBars: -2..6 }   // 1-6 bars, -1/-2 beats, 0 none (D-UI-42)
 ```
 **Decision D-DM-12:** metronome and count-in settings are per user (local view state), because one person's click preference shouldn't change another's. The project stores only a default used when a user opens the project for the first time.
 

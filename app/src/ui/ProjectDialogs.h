@@ -95,8 +95,12 @@ public:
     juce::ComboBox key;        // ids: tonic + 1 (major), tonic + 13 (minor)
     juce::ToggleButton metronome { "Metronome on" };
     juce::ComboBox metronomeDuring; // 1 record, 2 play, 3 both
-    juce::ComboBox countIn;         // ids: bars + 1
+    juce::ComboBox countIn;         // ids: index in model::countInChoices + 1
     juce::Slider metronomeLevel;    // dB
+    juce::ComboBox panLaw;          // ids: index in model::panLaws + 1
+    /** MIDI input filter (W-35): one box per model::midiFilter bit, in bit order; ticked = ignored. */
+    juce::ToggleButton ignoreMidi[6] { juce::ToggleButton ("Notes"), juce::ToggleButton ("Program change"), juce::ToggleButton ("Pitch bend"),
+                                       juce::ToggleButton ("Controllers"), juce::ToggleButton ("Aftertouch"), juce::ToggleButton ("Poly aftertouch") };
     juce::TextButton ok { "OK" }, cancel { "Cancel" };
     juce::Label error;
     std::function<void()> onClose;

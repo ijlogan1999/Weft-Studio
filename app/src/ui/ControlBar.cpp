@@ -113,11 +113,13 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         refresh();
     };
 
-    countIn.addItemList ({ "No count-in", "1-bar count-in", "2-bar count-in" }, 1);
+    for (const auto choice : model::countInChoices)
+        countIn.addItem (choice == 0 ? juce::String ("No count-in") : juce::String (std::abs (choice)) + (choice > 0 ? "-bar" : "-beat") + " count-in",
+                         countIn.getNumItems() + 1);
     describe (countIn, "Count-in", "Count-in before recording");
     countIn.onChange = [this] {
         auto settings = studio.engine().settings();
-        settings.countInBars = countIn.getSelectedItemIndex();
+        settings.countInBars = model::countInChoices[static_cast<std::size_t> (std::max (0, countIn.getSelectedItemIndex()))];
         studio.engine().setSettings (settings);
     };
     addAndMakeVisible (countIn);
@@ -184,7 +186,7 @@ void ControlBar::refresh()
     snap.setToggleState (studio.snapEnabled, juce::dontSendNotification);
     follow.setToggleState (studio.follow, juce::dontSendNotification);
     keyboard.setToggleState (studio.keyboardMidiOn(), juce::dontSendNotification);
-    countIn.setSelectedItemIndex (studio.engine().settings().countInBars, juce::dontSendNotification);
+    countIn.setSelectedItemIndex (model::countInIndex (studio.engine().settings().countInBars), juce::dontSendNotification);
     snapBox.setText (juce::String (arrange::snapLabel (studio.snap)), juce::dontSendNotification);
     time.setColour (juce::Label::textColourId, colour (Token::textDim));
     timerCallback();
@@ -227,9 +229,9 @@ juce::PopupMenu ControlBar::overflowMenu() const
     juce::PopupMenu menu;
     if (! countIn.isVisible())
     {
-        const auto bars = studio.engine().settings().countInBars;
+        const auto chosen = model::countInIndex (studio.engine().settings().countInBars);
         for (int i = 0; i < countIn.getNumItems(); ++i)
-            menu.addItem (overflowCountIn + i, countIn.getItemText (i), true, bars == i);
+            menu.addItem (overflowCountIn + i, countIn.getItemText (i), true, chosen == i);
     }
     if (! cpu.isVisible())
     {
@@ -246,7 +248,7 @@ void ControlBar::pickOverflow (int item)
     if (item < overflowCountIn || item >= overflowCountIn + countIn.getNumItems())
         return;
     auto settings = studio.engine().settings();
-    settings.countInBars = item - overflowCountIn;
+    settings.countInBars = model::countInChoices[static_cast<std::size_t> (item - overflowCountIn)];
     studio.engine().setSettings (settings);
     studio.sendChangeMessage();
 }

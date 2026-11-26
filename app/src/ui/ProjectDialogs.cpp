@@ -206,9 +206,9 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     metronomeDuring.addItemList ({ "Recording", "Playback", "Recording and playback" }, 1);
     metronomeDuring.setSelectedId (m.during == "play" ? 2 : m.during == "both" ? 3 : 1, juce::dontSendNotification);
     describe (metronomeDuring, "Metronome plays during");
-    for (int bars = 0; bars <= 4; ++bars)
-        countIn.addItem (bars == 0 ? juce::String ("None") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), bars + 1);
-    countIn.setSelectedId (std::clamp (m.countInBars, 0, 4) + 1, juce::dontSendNotification);
+    for (const auto choice : model::countInChoices)
+        countIn.addItem (model::countInName (choice), countIn.getNumItems() + 1);
+    countIn.setSelectedId (model::countInIndex (m.countInBars) + 1, juce::dontSendNotification);
     describe (countIn, "Count-in");
     metronomeLevel.setRange (-60.0, 6.0, 0.5);
     metronomeLevel.setValue (m.levelDb, juce::dontSendNotification);
@@ -216,6 +216,19 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     metronomeLevel.setSliderStyle (juce::Slider::LinearHorizontal);
     metronomeLevel.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
     describe (metronomeLevel, "Metronome level");
+
+    static const char* const lawNames[] = { "0 dB (centre at full level)", "-3 dB (equal power)", "-4.5 dB", "-6 dB (linear)" };
+    static_assert (std::size (lawNames) == model::panLaws.size());
+    for (std::size_t i = 0; i < model::panLaws.size(); ++i)
+        panLaw.addItem (lawNames[i], static_cast<int> (i) + 1);
+    panLaw.setSelectedId (model::panLawIndex (info.panLawDb) + 1, juce::dontSendNotification);
+    describe (panLaw, "Pan law", "How loud a mono track panned to the centre plays on each side");
+    for (int i = 0; i < 6; ++i)
+    {
+        ignoreMidi[i].setToggleState ((info.midiInputFilter & (1 << i)) != 0, juce::dontSendNotification);
+        describe (ignoreMidi[i], "Ignore " + ignoreMidi[i].getButtonText().toLowerCase(), "Live MIDI input of this kind is neither played nor recorded");
+        addAndMakeVisible (ignoreMidi[i]);
+    }
 
     describe (ok, "OK", "Apply the settings (Enter)");
     describe (cancel, "Cancel", "Close without changes (Esc)");
@@ -231,15 +244,17 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     };
     styleError (error);
     for (auto* c : std::initializer_list<juce::Component*> { &name, &bitDepth, &sampleRate, &rateNote, &key, &metronome, &metronomeDuring, &countIn,
-                                                             &metronomeLevel, &ok, &cancel, &error })
+                                                             &metronomeLevel, &panLaw, &ok, &cancel, &error })
         addAndMakeVisible (c);
-    setSize (500, 344);
+    setSize (500, 344 + 3 * rowHeight);
 }
 
 bool ProjectSettingsDialog::apply()
 {
     auto& session = studio.session();
     const auto& info = studio.model().info;
+    const auto oldPanLaw = model::panLawIndex (info.panLawDb) + 1; // by value: the edits below replace the model
+    const auto oldFilter = info.midiInputFilter;
     std::vector<commands::EditResult> results;
     const auto newName = name.getText().trim().toStdString();
     if (newName != info.name)
@@ -254,11 +269,18 @@ bool ProjectSettingsDialog::apply()
     model::MetronomeSettings m = info.metronomeDefaults;
     m.enabled = metronome.getToggleState();
     m.during = metronomeDuring.getSelectedId() == 2 ? "play" : metronomeDuring.getSelectedId() == 3 ? "both" : "record";
-    m.countInBars = countIn.getSelectedId() - 1;
+    m.countInBars = model::countInChoices[static_cast<std::size_t> (std::max (1, countIn.getSelectedId()) - 1)];
     m.levelDb = metronomeLevel.getValue();
     const auto& old = info.metronomeDefaults;
     if (m.enabled != old.enabled || m.during != old.during || m.countInBars != old.countInBars || std::abs (m.levelDb - old.levelDb) > 1e-9)
         results.push_back (session.setMetronomeDefaults (m));
+    if (panLaw.getSelectedId() > 0 && panLaw.getSelectedId() != oldPanLaw)
+        results.push_back (session.setPanLaw (model::panLaws[static_cast<std::size_t> (panLaw.getSelectedId() - 1)]));
+    int filter = 0;
+    for (int i = 0; i < 6; ++i)
+        filter |= ignoreMidi[i].getToggleState() ? 1 << i : 0;
+    if (filter != oldFilter)
+        results.push_back (session.setMidiInputFilter (filter));
     studio.edited();
     for (const auto& r : results)
         if (! r)
@@ -271,7 +293,7 @@ bool ProjectSettingsDialog::apply()
 
 void ProjectSettingsDialog::paint (juce::Graphics& g)
 {
-    drawLabels (g, { "Name", "Recording", "Sample rate", "Key", "Metronome", "Plays during", "Count-in", "Level" });
+    drawLabels (g, { "Name", "Recording", "Sample rate", "Key", "Metronome", "Plays during", "Count-in", "Level", "Pan law", "Ignore MIDI" });
 }
 
 void ProjectSettingsDialog::resized()
@@ -286,6 +308,9 @@ void ProjectSettingsDialog::resized()
     metronomeDuring.setBounds (controlX, 16 + 5 * rowHeight, 220, 26);
     countIn.setBounds (controlX, 16 + 6 * rowHeight, 120, 26);
     metronomeLevel.setBounds (controlX, 16 + 7 * rowHeight, w, 26);
+    panLaw.setBounds (controlX, 16 + 8 * rowHeight, 240, 26);
+    for (int i = 0; i < 6; ++i)
+        ignoreMidi[i].setBounds (controlX + (i % 3) * (w / 3), 16 + (9 + i / 3) * rowHeight, w / 3, 26);
     error.setBounds (labelX, getHeight() - 42, getWidth() - 240, 28);
     ok.setBounds (getWidth() - 200, getHeight() - 42, 84, 28);
     cancel.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);

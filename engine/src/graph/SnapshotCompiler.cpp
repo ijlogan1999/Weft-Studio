@@ -115,10 +115,18 @@ float dbToGain (double db) noexcept { return db <= minusInfinityDb ? 0.0f : stat
 
 std::int64_t EngineSnapshot::tickToSample (Ticks t) const noexcept { return std::llround (tempo.tickToSample (static_cast<double> (t))); }
 
-std::pair<float, float> panGains (double pan) noexcept
+std::pair<float, float> panGains (double pan, double lawDb) noexcept
 {
-    const double theta = (std::clamp (pan, -1.0, 1.0) + 1.0) * std::numbers::pi / 4.0;
-    return { static_cast<float> (std::cos (theta)), static_cast<float> (std::sin (theta)) };
+    const double x = (std::clamp (pan, -1.0, 1.0) + 1.0) / 2.0; // 0 = left, 1 = right
+    const double powerL = std::cos (x * std::numbers::pi / 2.0), powerR = std::sin (x * std::numbers::pi / 2.0);
+    double l = powerL, r = powerR;
+    if (lawDb <= -6.0)
+        l = 1.0 - x, r = x;
+    else if (lawDb <= -4.5)
+        l = std::sqrt (powerL * (1.0 - x)), r = std::sqrt (powerR * x);
+    else if (lawDb > -3.0)
+        l = powerL * std::numbers::sqrt2, r = powerR * std::numbers::sqrt2;
+    return { static_cast<float> (l), static_cast<float> (r) };
 }
 
 std::pair<float, float> balanceGains (double pan) noexcept
@@ -511,6 +519,8 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
     snap->signatures = model.signatures;
     const auto& cycle = model.info.cycle;
     snap->cycleEnabled = cycle.enabled && cycle.end > cycle.start;
+    snap->panLawDb = model.info.panLawDb;
+    snap->midiInputFilter = model.info.midiInputFilter;
     snap->cycleStart = snap->tickToSample (cycle.start);
     snap->cycleEnd = snap->tickToSample (cycle.end);
     const auto& punch = model.info.punch;
@@ -585,7 +595,7 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         plan.kind = track->kind;
         plan.sourceChannels = track->kind == model::TrackKind::audio ? std::clamp (track->channels, 1, 2) : 2;
         plan.gain = dbToGain (track->strip.volumeDb);
-        const auto [l, r] = plan.sourceChannels == 1 ? panGains (track->strip.pan) : balanceGains (track->strip.pan);
+        const auto [l, r] = plan.sourceChannels == 1 ? panGains (track->strip.pan, model.info.panLawDb) : balanceGains (track->strip.pan);
         plan.panLeft = l;
         plan.panRight = r;
         plan.soloAudible = local.soloed.empty() || audibleBySolo.contains (track->id);

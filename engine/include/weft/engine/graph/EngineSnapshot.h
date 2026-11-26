@@ -181,6 +181,8 @@ struct EngineSnapshot
     std::int64_t punchStart = 0, punchEnd = 0;
     float masterGain = 1;
     float masterPanLeft = 1, masterPanRight = 1; // master balance
+    double panLawDb = -3.0;    // mono sources' level at centre pan (W-35)
+    int midiInputFilter = 0;   // model::midiFilter bits: live MIDI the project ignores (W-35)
     bool masterAudible = true;
     std::vector<AutomationPlan> masterAutomation;
     std::vector<InsertPlan> masterInserts; // the master's inserts process the whole mix (F-MIX-11)
@@ -219,8 +221,9 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
 /** Whether a track's mode plays its lanes: anything but Off (W-8). */
 bool followsAutomation (const model::Track& track) noexcept;
 
-/** Constant-power pan gains for a mono source at pan -1..+1 (centre = -3 dB each side). */
-std::pair<float, float> panGains (double pan) noexcept;
+/** Pan gains for a mono source at pan -1..+1 under a pan law (D-UI-42): -3 is constant power, -6 linear,
+    -4.5 between the two, and 0 constant power raised 3 dB so the centre is unity. */
+std::pair<float, float> panGains (double pan, double lawDb = -3.0) noexcept;
 /** Balance gains for a stereo source at pan -1..+1 (centre = unity). */
 std::pair<float, float> balanceGains (double pan) noexcept;
 

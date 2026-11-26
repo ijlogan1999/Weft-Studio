@@ -154,7 +154,7 @@ public:
         clickDuringRecord = 30001,
         clickDuringPlay,
         clickDuringBoth,
-        returnToStart = 30010, countInOff = 30011, countInOne, countInTwo,
+        returnToStart = 30010, countInOff = 30011, countInOne, countInTwo, // to countInOff + 8: model::countInChoices
         mergeLinear = 30020,
         mergeCycle,
         replaceMidi,

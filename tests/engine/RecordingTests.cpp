@@ -819,3 +819,50 @@ TEST_CASE ("AT-REC-23: software monitoring off, and monitoring only the selected
     rig.engine.setLocalView (view);
     CHECK (audible());
 }
+
+TEST_CASE ("AT-PRJ-19: the project's MIDI input filter keeps ignored kinds out of the instrument and the recording", "[E][record][midi][AT-PRJ-19]")
+{
+    Rig rig;
+    recordSettings (rig);
+    auto [keys, probe] = probeTrack (rig);
+    rig.engine.setArmedTracks ({ keys });
+    REQUIRE (rig.session.setMidiInputFilter (model::midiFilter::pitchBend | model::midiFilter::programChange));
+    rig.sync();
+    const auto base = rig.engine.deviceFrames();
+    REQUIRE (rig.engine.record (0).recording);
+    rig.engine.sendMidi (0x90, 60, 90, base + 24000);
+    rig.engine.sendMidi (0xE0, 0, 80, base + 30000); // pitch bend: ignored
+    rig.engine.sendMidi (0xC0, 5, 0, base + 31000);  // program change: ignored
+    rig.engine.sendMidi (0xB0, 7, 90, base + 32000); // volume: kept
+    rig.engine.sendMidi (0x80, 60, 0, base + 48000);
+    rig.run (72000);
+    REQUIRE (rig.finishRecording());
+
+    const auto regions = rig.regionsOn (keys);
+    REQUIRE (regions.size() == 1);
+    CHECK (notesOf (rig, *regions[0]).size() == 1);
+    const auto* seq = rig.session.model().sequence (regions[0]->midi.sequenceId);
+    REQUIRE (seq->controllers.size() == 1);
+    CHECK (seq->controllers.begin()->second.number == 7);
+    for (const auto& s : probe->seen)
+    {
+        CHECK ((s.event.status & 0xf0) != 0xE0);
+        CHECK ((s.event.status & 0xf0) != 0xC0);
+    }
+
+    // Notes off: a note-on is ignored, but a note-off for a note already held still reaches the instrument.
+    rig.engine.stop();
+    rig.run (256);
+    probe->seen.clear();
+    rig.engine.sendMidi (0x90, 64, 100, rig.engine.deviceFrames());
+    rig.run (256);
+    REQUIRE (rig.session.setMidiInputFilter (model::midiFilter::notes));
+    rig.sync();
+    rig.engine.sendMidi (0x80, 64, 0, rig.engine.deviceFrames());
+    rig.engine.sendMidi (0x90, 65, 100, rig.engine.deviceFrames());
+    rig.run (256);
+    const auto count = [&] (auto pred) { return std::count_if (probe->seen.begin(), probe->seen.end(), [&] (const auto& s) { return pred (s.event); }); };
+    CHECK (count ([] (const MidiEvent& e) { return e.isNoteOn() && e.data1 == 64; }) == 1);
+    CHECK (count ([] (const MidiEvent& e) { return e.isNoteOff() && e.data1 == 64; }) == 1);
+    CHECK (count ([] (const MidiEvent& e) { return e.isNoteOn() && e.data1 == 65; }) == 0);
+}

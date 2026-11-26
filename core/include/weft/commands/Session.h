@@ -158,6 +158,9 @@ public:
     EditResult setTrackHidden (const Id& trackId, bool hidden);
     /** Whether hidden tracks get rows (L-TRH-10). */
     EditResult setShowHiddenTracks (bool show);
+    /** Project Settings (W-35): the pan law for mono sources, and the live MIDI the project ignores (model::midiFilter bits). */
+    EditResult setPanLaw (double centreDb);
+    EditResult setMidiInputFilter (int filter);
     /** The project's key (F-TMP-10); step "Set Key". */
     EditResult setKey (const model::KeySignature& key);
     EditResult setCycle (bool enabled, Ticks start, Ticks end);

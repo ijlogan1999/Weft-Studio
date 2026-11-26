@@ -1532,12 +1532,12 @@ bool Studio::perform (Cmd command)
         {
             // Off and back to the length last used (1 bar until one is chosen in Navigate > Count-in).
             auto settings = eng->settings();
-            if (settings.countInBars > 0)
+            if (settings.countInBars != 0)
                 countInWhenOn = std::exchange (settings.countInBars, 0);
             else
                 settings.countInBars = countInWhenOn;
             eng->setSettings (settings);
-            setStatus (settings.countInBars == 0 ? juce::String ("Count-in off.") : "Count-in: " + juce::String (settings.countInBars) + (settings.countInBars == 1 ? " bar." : " bars."));
+            setStatus (settings.countInBars == 0 ? juce::String ("Count-in off.") : "Count-in: " + juce::String (model::countInName (settings.countInBars)) + ".");
             break;
         }
         case Cmd::deselectAll:

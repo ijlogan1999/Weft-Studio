@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 
 namespace weft::model
 {
@@ -808,13 +809,29 @@ MetronomeSettings MetronomeSettings::fromValue (const Value& v)
     m.enabled = v["enabled"].asBool (true);
     m.levelDb = clampDouble (v["levelDb"], 0.0, minusInfinityDb, 6.0);
     m.during = oneOf (v["during"], { "record", "play", "both" }, "both");
-    m.countInBars = clampInt<int> (v["countInBars"], 1, 0, 2);
+    m.countInBars = clampInt<int> (v["countInBars"], 1, minCountIn, maxCountIn);
     return m;
 }
 
 Value MetronomeSettings::toValue() const
 {
     return Value::map().set ("enabled", enabled).set ("levelDb", levelDb).set ("during", during).set ("countInBars", countInBars);
+}
+
+int countInIndex (int countIn) noexcept
+{
+    for (std::size_t i = 0; i < countInChoices.size(); ++i)
+        if (countInChoices[i] == countIn)
+            return static_cast<int> (i);
+    return 0;
+}
+
+std::string countInName (int countIn)
+{
+    if (countIn == 0)
+        return "None";
+    const auto n = std::abs (countIn);
+    return std::to_string (n) + (countIn > 0 ? " bar" : " beat") + (n == 1 ? "" : "s");
 }
 
 namespace
@@ -902,4 +919,28 @@ Value KeySignature::toValue() const { return Value::map().set ("tonic", tonic).s
 bool isValidSampleRate (int rate) noexcept { return rate == 44100 || rate == 48000 || rate == 88200 || rate == 96000; }
 
 bool isValidBitDepth (int bits) noexcept { return bits == 16 || bits == 24 || bits == 32; }
+
+int panLawIndex (double db) noexcept
+{
+    for (std::size_t i = 0; i < panLaws.size(); ++i)
+        if (std::abs (panLaws[i] - db) < 1e-9)
+            return static_cast<int> (i);
+    return -1;
+}
+
+bool isValidPanLaw (double db) noexcept { return panLawIndex (db) >= 0; }
+
+bool midiFilter::drops (int filter, int status, int data2) noexcept
+{
+    switch (status & 0xf0)
+    {
+        case 0x90: return data2 > 0 && (filter & notes) != 0;
+        case 0xa0: return (filter & polyPressure) != 0;
+        case 0xb0: return (filter & controllers) != 0;
+        case 0xc0: return (filter & programChange) != 0;
+        case 0xd0: return (filter & channelPressure) != 0;
+        case 0xe0: return (filter & pitchBend) != 0;
+        default: return false;
+    }
+}
 } // namespace weft::model

@@ -9,6 +9,7 @@
 #include "weft/doc/Value.h"
 #include "weft/time/Time.h"
 
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
@@ -428,11 +429,19 @@ struct MetronomeSettings
     bool enabled = true;
     double levelDb = 0.0;
     std::string during = "both";   // record | play | both (D-W1-10: clicks whenever the metronome is on)
-    int countInBars = 1;           // W-1: default 1 bar
+    int countInBars = 1;           // W-1: default 1 bar; see countInChoices
 
     static MetronomeSettings fromValue (const Value& v);
     Value toValue() const;
 };
+
+/** Count-in lengths in menu order (W-35, D-UI-42): none, 1 to 6 bars, then -1 and -2 for one or two beats. */
+inline constexpr std::array<int, 9> countInChoices { 0, 1, 2, 3, 4, 5, 6, -1, -2 };
+inline constexpr int minCountIn = -2, maxCountIn = 6;
+/** The choice's index in countInChoices; 0 (none) for a value that isn't one. */
+int countInIndex (int countIn) noexcept;
+/** "None", "1 bar", "3 bars", "1 beat", "2 beats". */
+std::string countInName (int countIn);
 
 /** The project's key (F-TMP-10, D-DM-20): a tonic pitch class and major or minor. */
 struct KeySignature
@@ -470,7 +479,23 @@ struct ProjectInfo
     MetronomeSettings metronomeDefaults;
     KeySignature key;
     bool showHiddenTracks = false; // L-TRH-10: hidden tracks get rows again (to unhide them)
+    double panLawDb = -3.0;        // W-35: a mono source's level at centre pan (isValidPanLaw)
+    int midiInputFilter = 0;       // W-35: midiFilter bits for live MIDI the project ignores
 };
+
+/** Pan laws Project Settings offers (W-35, D-UI-42): 0, -3, -4.5 or -6 dB at centre. */
+inline constexpr std::array<double, 4> panLaws { 0.0, -3.0, -4.5, -6.0 };
+bool isValidPanLaw (double db) noexcept;
+/** The law's index in panLaws, or -1. */
+int panLawIndex (double db) noexcept;
+
+/** Kinds of live MIDI input the project can ignore (W-35, D-UI-42): bits of ProjectInfo::midiInputFilter. */
+namespace midiFilter
+{
+inline constexpr int notes = 1, programChange = 2, pitchBend = 4, controllers = 8, channelPressure = 16, polyPressure = 32, all = 63;
+/** Whether a filter drops a live message. Note-offs (and velocity-0 note-ons) always pass, so no note hangs. */
+bool drops (int filter, int status, int data2) noexcept;
+} // namespace midiFilter
 
 bool isValidSampleRate (int rate) noexcept;
 bool isValidBitDepth (int bits) noexcept;
