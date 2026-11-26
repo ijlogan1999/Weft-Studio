@@ -718,6 +718,9 @@ void Engine::setSettings (const TransportSettings& s)
     c.clickInPlay = s.metronomeDuring != ClickDuring::record;
     c.clickInRecord = s.metronomeDuring != ClickDuring::play;
     c.clickGain = dbToGain (s.metronomeLevelDb);
+    c.clickOnlyCountIn = s.clickOnlyCountIn;
+    c.clickPattern = { s.clickBars, s.clickBeats, s.clickDivisions };
+    c.clickTone = std::clamp (s.clickTone, 0, Metronome::numTones - 1);
     send (c);
 }
 
@@ -895,6 +898,9 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
             clickInPlay = c.clickInPlay;
             clickInRecord = c.clickInRecord;
             clickGain = c.clickGain;
+            clickOnlyCountIn = c.clickOnlyCountIn;
+            clickPattern = c.clickPattern;
+            clickTone = c.clickTone;
             break;
     }
 }
@@ -963,7 +969,7 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
                     if (numRolledSpans < rolledSpans.size())
                         rolledSpans[numRolledSpans++] = { offset, n, position };
                     renderSpan (*snap, inputs, position, offset, n, true);
-                    const bool audible = clickOn && (transport == TransportState::recording ? clickInRecord : clickInPlay);
+                    const bool audible = clickOn && ! clickOnlyCountIn && (transport == TransportState::recording ? clickInRecord : clickInPlay);
                     renderClicks (*snap, position, offset, n, audible);
                     if (transport == TransportState::recording && pass != nullptr)
                         captureSpan (inputs, position, offset, n);
@@ -1656,15 +1662,19 @@ void Engine::renderClicks (const EngineSnapshot& snap, std::int64_t from, int of
     int count = 0;
     if (audible)
     {
-        count = Metronome::clicksIn (snap, from, from + frames, clickScratch.data(), maxClicksPerSpan);
+        // A count-in always clicks (D-W1-11): with every click type off it counts in with bars and beats.
+        auto pattern = clickPattern;
+        if (transport == TransportState::countIn && ! (pattern.bars || pattern.beats || pattern.divisions))
+            pattern = {};
+        count = Metronome::clicksIn (snap, from, from + frames, clickScratch.data(), maxClicksPerSpan, pattern);
         for (int i = 0; i < count; ++i)
         {
             clickOffsets[static_cast<std::size_t> (i)] = static_cast<int> (clickScratch[static_cast<std::size_t> (i)].sample - from);
-            clickAccents[static_cast<std::size_t> (i)] = clickScratch[static_cast<std::size_t> (i)].accent;
+            clickLevels[static_cast<std::size_t> (i)] = clickScratch[static_cast<std::size_t> (i)].level;
         }
     }
     float* click = mix[2].data();
-    metronome.render (&click, 1, offset, frames, clickOffsets.data(), clickAccents.data(), count, clickGain);
+    metronome.render (&click, 1, offset, frames, clickOffsets.data(), clickLevels.data(), count, clickGain, clickTone);
 }
 
 void Engine::takeLiveMidi (int numFrames) noexcept

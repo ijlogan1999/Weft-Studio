@@ -46,6 +46,7 @@ Shortcuts are Weft defaults (see `00-README.md`).
 6. During recording:
    - A red "recording" region grows on each armed track from the record start point, with a live waveform overview.
    - The metronome sounds if enabled for recording (default: on during record and play, D-W1-10).
+   - **Decision D-W1-11 (metronome clicks):** Navigate › Metronome Clicks turns the bar, beat and division clicks on and off on their own (default bar and beat). A division is a quarter of a beat, 6 dB softer than a beat. With bars off, a bar's first beat clicks as a beat. Only During Count-in silences the click once the count-in ends. Tone moves every click from an octave down to an octave up in five steps (default the middle). These are per-user settings like the rest of the metronome (D-DM-12). A count-in always clicks: with every click type off, it counts in with bars and beats.
    - Existing regions on the armed track keep playing until the recording region reaches them; from that point the track plays the new recording only (new region is on top).
 7. User presses **Space** (stop) or **R** again (stop recording but keep playing; **Decision D-W1-2:** pressing R while recording stops recording and continues playback; Space stops both).
 8. On stop the system:
@@ -435,6 +436,7 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W1-6 | Recording onto a track deleted remotely lands on a recovered track. |
 | D-W1-9 | Autopunch on sets the range to the cycle, else 4 bars from the playhead's bar; drag its ends (Shift+drag for a new range). |
 | D-W1-10 | New projects click during playback and recording ("Click During: Both"), so turning the metronome on is always audible; Recording only stays a choice in Project Settings. (Changed 2026-11.) |
+| D-W1-11 | Navigate › Metronome Clicks: bar, beat and division (a quarter beat, 6 dB softer) clicks on their own; Only During Count-in; five tones an octave either side; a count-in always clicks. |
 | D-W2-1 | Selected instrument track receives live MIDI unarmed. |
 | D-W2-2 | Recorded MIDI regions round outward to whole bars. |
 | D-W2-4 | MIDI Recording › Replace (off by default): a pass deletes the notes and controllers already on its track between where it started recording and where it stopped (the whole cycle for a cycle pass), deletes regions that end up empty inside that range, and makes a new region instead of merging. It all undoes with the recording. |

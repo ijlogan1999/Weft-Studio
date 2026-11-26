@@ -96,6 +96,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRN-20** [UI] · D-UI-17 · Stopped at bar 4 with Cycle off, Stop moves the playhead to tick 0. With the cycle at bars 3–5 and the playhead at bar 7, Stop goes to bar 3 and Stop again to tick 0; Space starts playback at bar 3; numpad 0 stops it and the playhead is back at bar 3. With Cycle off, Play starts at the playhead. The Navigate menu lists Stop.
 
+**AT-TRN-21** [E][UI] · D-W1-11 · At 120 BPM in 4/4 with Division on, clicks fall every 6,000 samples and a division is softer than a beat; with Bar off the click at sample 0 has the pitch of a beat; with only Bar on, clicks fall at 0 and 96,000 only; with Only During Count-in on, a one-bar count-in clicks four times and the bar after it is silent; Tone Low clicks lower than Normal and High higher. The Navigate menu's Metronome Clicks submenu turns each option on and the engine's settings follow.
+
 **AT-TRN-18** [UI] · F-TRN-17 · With follow on and zoom showing 4 bars, playing past the right edge scrolls the view so the playhead stays visible; with follow off, the view does not scroll.
 
 ## 3. Recording (REC)

@@ -194,6 +194,90 @@ TEST_CASE ("AT-TRN-10: metronome during record/play and level", "[E][transport][
     }
 }
 
+TEST_CASE ("AT-TRN-21: metronome bar, beat and division clicks, count-in only, and tone", "[E][transport][metronome][AT-TRN-21]")
+{
+    Rig rig;
+    auto settings = [&rig] (bool bars, bool beats, bool divisions, int tone = Metronome::middleTone, bool onlyCountIn = false, int countIn = 0) {
+        TransportSettings s;
+        s.metronomeOn = true;
+        s.metronomeDuring = ClickDuring::both;
+        s.countInBars = countIn;
+        s.clickBars = bars;
+        s.clickBeats = beats;
+        s.clickDivisions = divisions;
+        s.clickTone = tone;
+        s.clickOnlyCountIn = onlyCountIn;
+        rig.engine.setSettings (s);
+    };
+
+    SECTION ("divisions every sixteenth, softer than beats")
+    {
+        settings (true, true, true);
+        rig.engine.play (0);
+        const auto out = rig.run (barSamples + 100);
+        const auto clicks = onsets (out);
+        REQUIRE (clicks.size() == 17);
+        for (std::size_t i = 0; i < clicks.size(); ++i)
+            CHECK (clicks[i] == static_cast<std::int64_t> (i) * 6000);
+        CHECK (peak (out, 6000, 1000) == Catch::Approx (peak (out, 24000, 1000) / 2).epsilon (0.01));
+        CHECK (zeroCrossings (out, 6000, 1000) == zeroCrossings (out, 24000, 1000)); // same pitch as a beat
+    }
+    SECTION ("bar off: the downbeat clicks as a beat")
+    {
+        settings (false, true, false);
+        rig.engine.play (0);
+        const auto out = rig.run (barSamples + 100);
+        CHECK (onsets (out) == std::vector<std::int64_t> { 0, 24000, 48000, 72000, 96000 });
+        CHECK (zeroCrossings (out, 0, 1000) == zeroCrossings (out, 24000, 1000));
+    }
+    SECTION ("bar only")
+    {
+        settings (true, false, false);
+        rig.engine.play (0);
+        CHECK (onsets (rig.run (2 * barSamples - 100)) == std::vector<std::int64_t> { 0, 96000 });
+    }
+    SECTION ("nothing on: silent playback")
+    {
+        settings (false, false, false);
+        rig.engine.play (0);
+        CHECK (firstNonSilent (rig.run (barSamples)) == -1);
+    }
+    SECTION ("only during count-in")
+    {
+        rig.engine.setArmedTracks ({ rig.audioTrack() });
+        REQUIRE (rig.session.setTrackMonitor (rig.audioTrack(), "off"));
+        rig.sync();
+        settings (true, true, false, Metronome::middleTone, true, 1);
+        REQUIRE (rig.engine.record (barTicks).recording);
+        const auto out = rig.run (2 * barSamples);
+        CHECK (onsets (out) == std::vector<std::int64_t> { 0, 24000, 48000, 72000 });
+        CHECK (firstNonSilent (std::vector<float> (out.begin() + barSamples + 2000, out.end())) == -1);
+        CHECK (rig.engine.state() == TransportState::recording);
+    }
+    SECTION ("count-in clicks even with every click type off")
+    {
+        rig.engine.setArmedTracks ({ rig.audioTrack() });
+        settings (false, false, false, Metronome::middleTone, false, 1);
+        REQUIRE (rig.engine.record (barTicks).recording);
+        CHECK (onsets (rig.run (barSamples)) == std::vector<std::int64_t> { 0, 24000, 48000, 72000 });
+    }
+    SECTION ("tone")
+    {
+        auto beatPitch = [&] (int tone) {
+            rig.engine.stop();
+            rig.run (256);
+            settings (true, true, false, tone);
+            rig.engine.play (0);
+            const auto out = rig.run (30000);
+            return zeroCrossings (out, 24000, 1000);
+        };
+        const auto low = beatPitch (0), normal = beatPitch (Metronome::middleTone), high = beatPitch (Metronome::numTones - 1);
+        CHECK (low < normal);
+        CHECK (normal < high);
+        CHECK (high == Catch::Approx (4 * low).margin (4)); // two octaves apart
+    }
+}
+
 namespace
 {
 float inputValue (int channel, std::int64_t frame) { return static_cast<float> ((frame % 5000) + 1) / 8192.0f * (channel == 0 ? 1.0f : -1.0f); }

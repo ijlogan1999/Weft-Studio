@@ -57,6 +57,9 @@ struct TransportSettings
     bool midiMergeCycle = true;
     /** MIDI Recording › Replace (L-MREC-6): a pass deletes what was on the track where it recorded. */
     bool midiReplace = false;
+    /** Navigate › Metronome (D-W1-11): which clicks sound, whether only the count-in clicks, and the tone. */
+    bool clickBars = true, clickBeats = true, clickDivisions = false, clickOnlyCountIn = false;
+    int clickTone = Metronome::middleTone; // 0 (low) to Metronome::numTones - 1 (high)
 
     static TransportSettings fromDefaults (const model::MetronomeSettings& m);
 };
@@ -257,8 +260,10 @@ private:
         std::int64_t a = 0, b = 0; // play/locate/record: position (or fromPlayhead); record: b = count-in bars; stop: a = 1 stays put
         RecordPass* pass = nullptr;
         // settings
-        bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
+        bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true, clickOnlyCountIn = false;
         float clickGain = 1;
+        Metronome::Pattern clickPattern {};
+        int clickTone = Metronome::middleTone;
     };
 
     static constexpr std::int64_t fromPlayhead = INT64_MIN;
@@ -365,8 +370,10 @@ private:
     static constexpr int maxLiveEvents = 512;
     std::array<MidiEvent, maxLiveEvents> liveEvents {}; // this block's live MIDI, offsets in the block
     int numLive = 0;
-    bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
+    bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true, clickOnlyCountIn = false;
     float clickGain = 1;
+    Metronome::Pattern clickPattern {};
+    int clickTone = Metronome::middleTone;
     double loadAverage = 0;
     const media::AudioData* previewAudio = nullptr;
     std::uint64_t previewSeen = 0;
@@ -388,7 +395,7 @@ private:
     static constexpr int maxClicksPerSpan = 64;
     std::array<Metronome::Click, maxClicksPerSpan> clickScratch {};
     std::array<int, maxClicksPerSpan> clickOffsets {};
-    std::array<bool, maxClicksPerSpan> clickAccents {};
+    std::array<Metronome::Level, maxClicksPerSpan> clickLevels {};
     Metronome metronome;
 };
 } // namespace weft::engine

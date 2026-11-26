@@ -1849,6 +1849,11 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     settings.midiMergeLinear = before.midiMergeLinear;
     settings.midiMergeCycle = before.midiMergeCycle;
     settings.midiReplace = before.midiReplace;
+    settings.clickBars = before.clickBars;
+    settings.clickBeats = before.clickBeats;
+    settings.clickDivisions = before.clickDivisions;
+    settings.clickOnlyCountIn = before.clickOnlyCountIn;
+    settings.clickTone = before.clickTone;
     eng->setSettings (settings);
     loadProjectMedia();
     syncEngine();

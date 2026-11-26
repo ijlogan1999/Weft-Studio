@@ -156,7 +156,10 @@ public:
         returnToStart = 30010, countInOff = 30011, countInOne, countInTwo,
         mergeLinear = 30020,
         mergeCycle,
-        replaceMidi
+        replaceMidi,
+        clickBar = 30030, clickBeat, clickDivision, clickOnlyCountIn,
+        clickTone0 = 30040, // to clickTone0 + Metronome::numTones - 1, low to high (D-W1-11)
+        clickToneLast = clickTone0 + engine::Metronome::numTones - 1
     };
 
 private:

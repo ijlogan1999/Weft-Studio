@@ -881,6 +881,19 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             during.addItem (clickDuringPlay, "Playback", true, settings.metronomeDuring == engine::ClickDuring::play);
             during.addItem (clickDuringBoth, "Recording and Playback", true, settings.metronomeDuring == engine::ClickDuring::both);
             menu.addSubMenu ("Click During", during);
+            juce::PopupMenu clicks;
+            clicks.addItem (clickBar, "Bar", true, settings.clickBars);
+            clicks.addItem (clickBeat, "Beat", true, settings.clickBeats);
+            clicks.addItem (clickDivision, "Division", true, settings.clickDivisions);
+            clicks.addSeparator();
+            clicks.addItem (clickOnlyCountIn, "Only During Count-in", true, settings.clickOnlyCountIn);
+            juce::PopupMenu tone;
+            static const char* const toneNames[] = { "Low", "Lower", "Normal", "Higher", "High" };
+            static_assert (std::size (toneNames) == engine::Metronome::numTones);
+            for (int t = 0; t < engine::Metronome::numTones; ++t)
+                tone.addItem (clickTone0 + t, toneNames[t], true, settings.clickTone == t);
+            clicks.addSubMenu ("Tone", tone);
+            menu.addSubMenu ("Metronome Clicks", clicks);
             // The count-in lives here as well as in the control bar, which drops its menu in a narrow window (AT-UI-11).
             juce::PopupMenu countIn;
             countIn.addItem (countInOff, "Off", true, settings.countInBars == 0);
@@ -950,7 +963,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > clickDuringRecord - 1 && itemId <= replaceMidi)
+    if (itemId > clickDuringRecord - 1 && itemId <= clickToneLast)
     {
         auto settings = studio.engine().settings();
         switch (itemId)
@@ -965,7 +978,15 @@ void MainComponent::menuItemSelected (int itemId, int)
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
             case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;
-            default: return;
+            case clickBar: settings.clickBars = ! settings.clickBars; break;
+            case clickBeat: settings.clickBeats = ! settings.clickBeats; break;
+            case clickDivision: settings.clickDivisions = ! settings.clickDivisions; break;
+            case clickOnlyCountIn: settings.clickOnlyCountIn = ! settings.clickOnlyCountIn; break;
+            default:
+                if (itemId >= clickTone0 && itemId <= clickToneLast)
+                    settings.clickTone = itemId - clickTone0;
+                else
+                    return;
         }
         studio.engine().setSettings (settings);
         studio.sendChangeMessage();

@@ -1135,6 +1135,55 @@ TEST_CASE ("AT-TRN-20 Stop while stopped goes to the start; with Cycle on, Play 
     CHECK (items.contains ("Stop"));
 }
 
+TEST_CASE ("AT-TRN-21 Navigate › Metronome Clicks sets the bar, beat and division clicks, count-in only and tone", "[UI][AT-TRN-21]")
+{
+    Ui ui;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    const juce::PopupMenu* clicks = nullptr;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().text == "Metronome Clicks")
+            clicks = it.getItem().subMenu.get();
+    REQUIRE (clicks != nullptr);
+    juce::StringArray names;
+    const juce::PopupMenu* tone = nullptr;
+    for (juce::PopupMenu::MenuItemIterator it (*clicks); it.next();)
+    {
+        names.add (it.getItem().text);
+        if (it.getItem().text == "Tone")
+            tone = it.getItem().subMenu.get();
+    }
+    for (auto name : { "Bar", "Beat", "Division", "Only During Count-in", "Tone" })
+        CHECK (names.contains (name));
+    REQUIRE (tone != nullptr);
+    int toneItems = 0, ticked = -1;
+    for (juce::PopupMenu::MenuItemIterator it (*tone); it.next();)
+    {
+        if (it.getItem().isTicked)
+            ticked = it.getItem().itemID - MainComponent::clickTone0;
+        ++toneItems;
+    }
+    CHECK (toneItems == engine::Metronome::numTones);
+    CHECK (ticked == engine::Metronome::middleTone);
+
+    const auto before = ui.studio.engine().settings();
+    CHECK (before.clickBars);
+    CHECK (before.clickBeats);
+    CHECK_FALSE (before.clickDivisions);
+    CHECK_FALSE (before.clickOnlyCountIn);
+    ui.main->menuItemSelected (MainComponent::clickBar, 4);
+    ui.main->menuItemSelected (MainComponent::clickDivision, 4);
+    ui.main->menuItemSelected (MainComponent::clickOnlyCountIn, 4);
+    ui.main->menuItemSelected (MainComponent::clickTone0, 4);
+    const auto after = ui.studio.engine().settings();
+    CHECK_FALSE (after.clickBars);
+    CHECK (after.clickBeats);
+    CHECK (after.clickDivisions);
+    CHECK (after.clickOnlyCountIn);
+    CHECK (after.clickTone == 0);
+    ui.main->menuItemSelected (MainComponent::clickBeat, 4);
+    CHECK_FALSE (ui.studio.engine().settings().clickBeats);
+}
+
 TEST_CASE ("AT-ARR-31 Deselect All and Invert Selection", "[UI][AT-ARR-31]")
 {
     Ui ui;
