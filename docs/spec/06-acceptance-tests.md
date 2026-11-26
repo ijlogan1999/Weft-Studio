@@ -472,6 +472,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-LIB-1** [UI] · F-LIB-1 · The file browser lists folders and supported audio/MIDI files; clicking an audio file previews it; dragging it into the arrange view behaves as AT-ARR-25.
 
+**AT-LIB-3** [UI] · D-UI-33 · In the file browser, after showing a folder and then its subfolder, Back returns to the folder and Forward to the subfolder; going somewhere else after Back leaves nothing to go forward to. Home shows the home folder and Project the project's folder. Searching "TON" lists tone.wav and the folders but not beat.mid; "tone mid" lists no files; clearing it brings beat.mid back. With the volume at -12 dB, Play on the selected tone.wav (a 0.5 peak sine) previews it at a peak of 0.126 and the button reads Stop; Stop ends the preview.
+
 **AT-LIB-2** [UI][U] · F-LIB-2 · The project media browser lists every media hash referenced with original name, duration, and usage count; deleting all regions using a file shows count 0.
 
 ## 15. UI and preferences (UI)
@@ -625,7 +627,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-TRK-8 | AT-TRK-6 | | F-EXP-4 | AT-EXP-7 |
 | F-TRK-9 | AT-TRK-7 | | F-EXP-5 | AT-EXP-8 |
 | F-TRK-10 | AT-TRK-8, 9, 19, AT-MIX-16 | | F-EXP-11 | AT-EXP-9 |
-| F-TRK-11 | AT-TRK-10 | | F-LIB-1 | AT-LIB-1 |
+| F-TRK-11 | AT-TRK-10 | | F-LIB-1 | AT-LIB-1, 3 |
 | F-TRK-12 | AT-TRK-11 | | F-LIB-2 | AT-LIB-2 |
 | F-TRK-16 | AT-COL-20 to 23 | | F-UI-1 | AT-UI-1, 9 |
 | F-TRK-17 | AT-TRK-13 | | F-UI-3 | AT-UI-2 |

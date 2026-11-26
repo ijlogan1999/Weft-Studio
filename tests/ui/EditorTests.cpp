@@ -136,6 +136,99 @@ TEST_CASE ("AT-LIB-1 file browser lists supported files, previews on click, drag
     CHECK (ui.main->side().media().rows().size() == 1);
 }
 
+TEST_CASE ("AT-LIB-3 file browser history, places, search and preview controls", "[UI][AT-LIB-3]")
+{
+    Ui ui;
+    auto& device = static_cast<engine::NullDevice&> (ui.studio.device());
+    device.setCaptureCapacity (4096);
+    const auto dir = ui.folder.path / "browse";
+    std::filesystem::create_directories (dir / "Loops");
+    const auto wav = writeSine (dir / "tone.wav", 0.5);
+    writeSine (dir / "Loops" / "drum.wav", 0.1);
+    {
+        std::ofstream mid (dir / "beat.mid", std::ios::binary);
+        const unsigned char bytes[] = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 1, 0xE0, 'M', 'T', 'r', 'k', 0, 0, 0, 4, 0, 0xFF, 0x2F, 0 };
+        mid.write (reinterpret_cast<const char*> (bytes), sizeof (bytes));
+    }
+    ui.main->run (Cmd::toggleSidePanel);
+    ui.settle();
+    auto& browser = ui.main->side().browser();
+    auto& list = browser.contents();
+    const auto names = [&] {
+        for (int i = 0; i < 300 && list.isStillLoading(); ++i)
+            juce::Thread::sleep (10);
+        juce::StringArray out;
+        for (int i = 0; i < list.getNumFiles(); ++i)
+            out.add (list.getFile (i).getFileName());
+        return out;
+    };
+    const juce::File root (juce::String (dir.string())), loops (juce::String ((dir / "Loops").string()));
+
+    // Back and forward.
+    browser.setRoot (root);
+    browser.setRoot (loops);
+    CHECK (list.getDirectory() == loops);
+    REQUIRE (browser.canGoBack());
+    CHECK (browser.backButton().isEnabled());
+    CHECK_FALSE (browser.forwardButton().isEnabled());
+    browser.backButton().onClick();
+    ui.settle();
+    CHECK (list.getDirectory() == root);
+    REQUIRE (browser.canGoForward());
+    browser.forwardButton().onClick();
+    ui.settle();
+    CHECK (list.getDirectory() == loops);
+    browser.goBack();
+    browser.setRoot (root.getParentDirectory()); // a new place drops the forward history
+    CHECK_FALSE (browser.canGoForward());
+    browser.goBack();
+    CHECK (list.getDirectory() == root);
+
+    // Places.
+    browser.goHome();
+    CHECK (list.getDirectory() == juce::File::getSpecialLocation (juce::File::userHomeDirectory));
+    browser.goToProject();
+    CHECK (list.getDirectory() == juce::File (juce::String (ui.studio.projectRoot().string())));
+    browser.goBack();
+    browser.goBack();
+    CHECK (list.getDirectory() == root);
+
+    // Search: every word, any case; folders stay.
+    CHECK (names().contains ("beat.mid"));
+    browser.searchField().setText ("TON", juce::dontSendNotification);
+    browser.searchField().onTextChange(); // JUCE posts the change; deliver it now
+    auto found = names();
+    INFO (found.joinIntoString (", "));
+    CHECK (found.contains ("tone.wav"));
+    CHECK (found.contains ("Loops"));
+    CHECK_FALSE (found.contains ("beat.mid"));
+    browser.setSearch ("tone mid");
+    CHECK_FALSE (names().contains ("tone.wav"));
+    browser.setSearch ({});
+    CHECK (browser.searchField().isEmpty());
+    CHECK (names().contains ("beat.mid"));
+
+    // Play previews the selected file at the preview volume; pressed again it stops.
+    browser.volumeSlider().setValue (-12.0, juce::sendNotificationSync);
+    list.dispatchPendingMessages();
+    const juce::File tone (juce::String (wav.string()));
+    browser.tree().setSelectedFile (tone);
+    REQUIRE (browser.tree().getSelectedFile() == tone);
+    browser.playButton().onClick();
+    ui.settle();
+    ui.renderAudio (2048);
+    CHECK (ui.studio.engine().previewing());
+    CHECK (browser.playButton().getButtonText() == "Stop");
+    float peak = 0;
+    for (auto v : device.capturedOutput (0))
+        peak = std::max (peak, std::abs (v));
+    CHECK (peak == Catch::Approx (0.5 * std::pow (10.0, -12.0 / 20.0)).epsilon (0.01));
+    browser.playButton().onClick();
+    ui.settle();
+    ui.renderAudio (256);
+    CHECK_FALSE (ui.studio.engine().previewing());
+}
+
 TEST_CASE ("AT-EDA-2 Snap Edits to Zero Crossings moves audio editor trims onto a zero crossing", "[UI][AT-EDA-2]")
 {
     Ui ui;

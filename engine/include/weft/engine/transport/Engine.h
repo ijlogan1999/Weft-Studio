@@ -222,6 +222,9 @@ public:
     void preview (std::shared_ptr<const media::AudioData> audio);
     void stopPreview() { preview (nullptr); }
     bool previewing() const noexcept { return published.previewing.load (std::memory_order_relaxed); }
+    /** The preview's volume (D-W6-12), applied from the next block; the playing preview follows it. */
+    void setPreviewGain (float gain) noexcept { previewGain.store (gain, std::memory_order_relaxed); }
+    float previewGainNow() const noexcept { return previewGain.load (std::memory_order_relaxed); }
     std::size_t pendingRetired() const noexcept { return retired.size(); }
 
     // Real-time bounce (W-9) ------------------------------------------------------------
@@ -352,6 +355,7 @@ private:
     std::vector<Preview> previews; // message thread: kept alive until the audio thread moves past them
     std::atomic<const media::AudioData*> previewNext { nullptr };
     std::atomic<std::uint64_t> previewSerial { 0 }, previewAcked { 0 };
+    std::atomic<float> previewGain { 1.0f };
     MediaStreamer streamer;
     bool diskThread = true;
     struct LiveMidiIn

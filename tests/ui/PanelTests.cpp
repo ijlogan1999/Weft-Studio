@@ -418,7 +418,8 @@ TEST_CASE ("D-UI-13 controls take keyboard focus with a visible ring, and clicks
     int checked = 0;
     forEachComponent (*ui.main, [&] (juce::Component& c) {
         const bool control = dynamic_cast<juce::Button*> (&c) != nullptr || dynamic_cast<juce::Slider*> (&c) != nullptr || dynamic_cast<juce::ComboBox*> (&c) != nullptr;
-        if (! control || dynamic_cast<juce::TabBarButton*> (&c) != nullptr || ! c.isVisible() || c.getParentComponent() == nullptr
+        // A disabled control can't take focus (JUCE), e.g. the browser's Back with nothing to go back to.
+        if (! control || dynamic_cast<juce::TabBarButton*> (&c) != nullptr || ! c.isVisible() || ! c.isEnabled() || c.getParentComponent() == nullptr
             || dynamic_cast<juce::ScrollBar*> (c.getParentComponent()) != nullptr || dynamic_cast<juce::Slider*> (c.getParentComponent()) != nullptr
             || dynamic_cast<juce::TabbedButtonBar*> (c.getParentComponent()) != nullptr) // the tab bar's own overflow button
             return;

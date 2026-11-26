@@ -1109,11 +1109,12 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
     {
         const auto& chans = previewAudio->channels;
         const auto n = static_cast<int> (std::clamp<std::int64_t> (previewAudio->numFrames() - previewPos, 0, numFrames));
+        const float gain = previewGain.load (std::memory_order_relaxed);
         for (int ch = 0; ch < std::min (numOutputs, 2); ++ch)
         {
             const auto& src = chans[std::min<std::size_t> (static_cast<std::size_t> (ch), chans.size() - 1)];
             for (int i = 0; i < n; ++i)
-                outputs[ch][i] += src[static_cast<std::size_t> (previewPos + i)];
+                outputs[ch][i] += gain * src[static_cast<std::size_t> (previewPos + i)];
         }
         previewPos += n;
         if (previewPos >= previewAudio->numFrames())
