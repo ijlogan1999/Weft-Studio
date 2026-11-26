@@ -552,6 +552,7 @@ private:
     void loadViewState();
     std::optional<bool> performNotes (Cmd command);
     void zoomToFit();
+    int countInWhenOn = 1; // what the Count-in command turns back on
 
     std::unique_ptr<engine::AudioDevice> audioDevice;
     engine::MediaPool pool;

@@ -164,8 +164,15 @@ private:
     std::optional<Shown> anchor;
     Ticks deltaTicks = 0;
     int deltaPitch = 0;
-    commands::NoteSpan span;  // resize preview
+    commands::NoteSpan span;  // resize preview of the grabbed note
     int velocityDelta = 0;
+    juce::ModifierKeys dragMods;
+    enum class Axis { none, time, pitch };
+    Axis lockAxis = Axis::none; // Shift-drag: the direction the move is kept to
+    /** Where a selected note ends up while one of the selection is resized (D-W4-12). */
+    commands::NoteSpan resizedSpan (const Shown& n) const;
+    int limitVelocityDelta (int delta) const;
+    int draggedVelocity (const Shown& n) const;
     int laneValue = 0;
     Ticks laneTick = 0;
     std::optional<LanePoint> lanePoint;

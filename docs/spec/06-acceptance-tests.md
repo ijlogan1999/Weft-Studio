@@ -94,6 +94,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRN-19** [U] · F-TRN-20 · With regions selected from bar 3 beat 2 to bar 6 beat 1, U sets the cycle range to bar 3 – bar 7 (rounded outward to bars) and turns cycle on; with nothing selected, U does nothing.
 
+**AT-TRN-20** [UI] · D-UI-17 · Stopped at bar 4 with Cycle off, Stop moves the playhead to tick 0. With the cycle at bars 3–5 and the playhead at bar 7, Stop goes to bar 3 and Stop again to tick 0; Space starts playback at bar 3; numpad 0 stops it and the playhead is back at bar 3. With Cycle off, Play starts at the playhead. The Navigate menu lists Stop.
+
 **AT-TRN-18** [UI] · F-TRN-17 · With follow on and zoom showing 4 bars, playing past the right edge scrolls the view so the playhead stays visible; with follow off, the view does not scroll.
 
 ## 3. Recording (REC)
@@ -174,7 +176,9 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-14** [UI] · L-TRH-3 · A track at the default height shows a volume slider and a pan knob on the header's second line; moving them sets the channel's volume and pan (one undo step per drag), the slider's bottom is −inf, and changes made in the mixer move them.
 
-**AT-TRK-16** [U][UI] · L-TRH-10, D-W3-7 · Hide Track removes the track's header and lane while it stays in the track order; a region dragged down one row from the track above lands on the track below the hidden one, and a marquee skips it; the master can't be hidden; View › Show Hidden Tracks brings the row back with Unhide Track in its menu; hiding is one undo step and saved with the track.
+**AT-TRK-16** [U][UI] · L-TRH-10, D-W3-7 · Hide Track removes the track's header, lane and mixer strip while it stays in the track order; a region dragged down one row from the track above lands on the track below the hidden one, and a marquee skips it; the master can't be hidden; View › Show Hidden Tracks brings the row and the strip back with Unhide Track in its menu; hiding is one undo step and saved with the track.
+
+**AT-TRK-17** [UI] · D-UI-19 · With a track selected, Shift+M mutes it (undo step "Mute Track") and unmutes it, S solos and unsolos it, Shift+R record-enables it and back. Ctrl+Alt+I adds one instrument track below the selected track and selects it; Ctrl+Alt+A adds an audio track the same way; each is one undo step; the Track menu lists all five commands.
 
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
@@ -240,6 +244,16 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-30** [E] · L-RGN-6, D-W3-5 · Region Delay +100 ms plays a MIDI region's notes 4,800 samples later at 48 kHz (−10 ms: 480 earlier) and an audio region's first sample 10 ms late; the region doesn't move; values outside −500…+500 ms are refused.
 
+**AT-ARR-31** [UI] · D-UI-18 · With region A of A, B, C selected, Ctrl+Shift+I selects B and C only; with C's track hidden and nothing selected it selects A and B; Ctrl+Shift+A leaves nothing selected; the Edit menu lists both commands.
+
+**AT-ARR-32** [UI] · D-W3-8 · With A and B selected, a Mute-tool click on A mutes both as one undo step and leaves C alone; a click on unselected C mutes only C; an Eraser-tool click on B deletes A and B.
+
+**AT-ARR-33** [UI] · D-W3-10 · Dragging a region mostly sideways and one row down with Shift held moves it in time and keeps its track; dragging mostly down with Shift moves it one track down and keeps its position.
+
+**AT-ARR-34** [UI] · D-W3-9 · The right-click menu of an empty audio lane has Import Audio... and no Create MIDI Region; an instrument lane has Create MIDI Region and no Import Audio...; choosing Create MIDI Region at bar 3 makes a one-bar MIDI region there, selected.
+
+**AT-ARR-35** [UI] · D-UI-20 · With markers at bars 3 and 7 and the global tracks shown, the ruler has no flags; hidden, it has one flag per marker at the marker's position inside the ruler, and clicking the second moves the playhead to bar 7.
+
 ## 6. Audio editor (EDA)
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
@@ -262,7 +276,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRL-7** [U] · F-PRL-7 · Ctrl+C three notes, move playhead, Ctrl+V pastes them at the playhead keeping relative offsets, with new IDs, into the region under the playhead on the shown track.
 
-**AT-PRL-8** [U][UI] · F-PRL-8 · Dragging a velocity-lane bar sets that note's velocity; velocity tool drag of +20 on selected notes [50, 100, 120] yields [70, 120, 127]; typing 64 in the inspector with 3 notes selected sets all three; note color brightness is monotonic in velocity.
+**AT-PRL-8** [U][UI] · F-PRL-8 · Dragging a velocity-lane bar sets that note's velocity; velocity tool drag of +20 on selected notes [50, 100, 120] yields [57, 107, 127] (it stops when the first note reaches the limit, D-W4-13), the same drag with Alt then yields [77, 127, 127], and with Alt+Shift a drag of −10 on the note at 100 sets all three to 90; typing 64 in the inspector with 3 notes selected sets all three; note color brightness is monotonic in velocity.
 
 **AT-PRL-9** [E] · F-PRL-8 · With `TestSynth`, a note at velocity 64 outputs amplitude 64/127 ± 0.5%.
 
@@ -279,6 +293,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-PRL-15** [U][E] · F-PRL-15 · Ctrl+M mutes selected notes; muted notes are not sent at playback or bounce; Ctrl+M again unmutes.
 
 **AT-PRL-16** [E] · D-W4-9 · A MIDI region with Transpose +12 and Velocity +20 plays C3 at 100 as C4 at 120 without changing the stored note; −96 and +99 clamp the played note to pitch 0 and velocity 127; 97 and −100 are refused; each change is one undo step; audio regions refuse both.
+
+**AT-PRL-17** [UI] · F-PRL-5, D-W4-12 · With notes of length 240 (at 960) and 480 (at 1200) selected and snap 1/16, dragging the first note's right edge to 500 yields lengths 480 and 720, leaves an unselected note alone, and undoes in one step; the same drag with Shift to tick 2400 ends both notes at 2400; with Alt+Shift both get the grabbed note's new length; dragging the first note's left edge back by 240 moves both starts by 240 and keeps both ends.
+
+**AT-PRL-18** [UI] · D-W4-10, D-W4-11 · Dragging a note two grid steps right and two semitones up with Shift moves it in time only; dragging it mostly upward with Shift changes its pitch only; without Shift both change. After clicking a note of length 480 and velocity 64, a pencil click draws a note of length 480 and velocity 64.
 
 ## 8. Quantize (QNT)
 
@@ -445,6 +463,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-UI-7** [UI] · F-UI-10 · Every toolbar, transport, mixer, and header control has a tooltip with its name and (if any) shortcut; a test walks the accessibility tree and fails on controls without names.
 
 **AT-UI-8** [UI] · F-UI-14 · First launch (no settings file) shows Audio Setup; Test plays a tone (captured on the null device: 1 kHz at −18 dBFS for 1 s); Continue saves settings; second launch skips the dialog. With no openable device, the app opens in No-audio mode with a banner.
+
+**AT-UI-10** [UI] · F-UI-1, D-UI-22 · With two MIDI regions selected whose transpose differs (0 and +5) the inspector's name reads "2 regions", Transpose shows "—" and Velocity shows its value; setting Transpose to −12 sets both and undoes in one step; Mute mutes both. With an audio region and a MIDI region selected, the gain and transpose controls are hidden and setting Delay to 20 ms sets both.
+
+**AT-UI-11** [UI] · F-TRN-8, D-UI-21 · In a 1400 px window the control bar shows the More button; its menu lists the three count-in choices and a CPU line, and choosing "2-bar count-in" sets the count-in to 2 bars. At 2200 px the More button is hidden. Navigate › Count-in lists Off, 1 Bar and 2 Bars; Shift+K turns a 2-bar count-in off and back on at 2 bars.
 
 ## 16. Collaboration (COL)
 

@@ -48,7 +48,9 @@ enum class Cmd
     // Tap Tempo (L-TMP-9)
     tapTempo,
     // Hide tracks (L-TRH-10)
-    showHiddenTracks
+    showHiddenTracks,
+    // Second-pass small wins (D-UI-17 to D-UI-19): Stop on its own, count-in, selection, the selected track's buttons, one-step new tracks
+    stop, countIn, deselectAll, invertSelection, muteTrack, soloTrack, armTrack, newAudioTrack, newInstrumentTrack
 };
 
 struct CommandInfo

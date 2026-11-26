@@ -146,7 +146,7 @@ public:
         clickDuringRecord = 30001,
         clickDuringPlay,
         clickDuringBoth,
-        returnToStart = 30010,
+        returnToStart = 30010, countInOff = 30011, countInOne, countInTwo,
         mergeLinear = 30020,
         mergeCycle,
         replaceMidi

@@ -39,6 +39,12 @@ public:
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
     const model::Region* region() const;
+    /** Every selected region that still exists. */
+    std::vector<const model::Region*> regions() const;
+    enum class Kind { any, audio, midi };
+    /** Runs one edit on every selected region of the kind, as one undo step (spec 04 §4: "editing sets all"). */
+    void forRegions (std::string_view name, Kind kind, const std::function<commands::EditResult (const model::Region&)>& change);
+    static juce::String dash();
     std::vector<commands::NoteRef> notes() const;
     /** Sets a field on every selected note, as one undo step. */
     void editNotes (std::string_view name, const std::function<void (model::Note&)>& change);
@@ -46,6 +52,7 @@ private:
 
     Studio& studio;
     bool refreshing = false;
+    std::set<const juce::Slider*> mixed; // sliders whose regions differ: they read as a dash
     int regionTop = 0, trackTop = 0, noteTop = 0;
 };
 } // namespace weft::ui

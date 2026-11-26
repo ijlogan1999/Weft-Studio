@@ -30,6 +30,9 @@ public:
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
     /** Marker under x in the marker lane. */
     const model::Marker* markerAt (double x) const;
+    /** With the global tracks hidden, markers show as small name flags along the ruler's lower edge (D-UI-20):
+        each marker and its flag, in position order. Empty while the marker lane is showing. */
+    std::vector<std::pair<const model::Marker*, juce::Rectangle<float>>> markerFlags() const;
     /** Comment pins in the marker lane (04 §9.3): every thread, at its position. */
     juce::Rectangle<float> pinBounds (const model::Comment& thread) const;
     const model::Comment* commentAt (juce::Point<float> p) const;
@@ -159,6 +162,7 @@ public:
         contextSplitHere,
         contextSetEnd,
         contextClearEnd,
+        contextCreateMidi,
         contextTrackColour = 1000, // regions back to their track's colour; + 1 .. paletteSize: a swatch
         contextCommand = 2000      // + Cmd + 1
     };
@@ -242,6 +246,8 @@ private:
     void paintGrid (juce::Graphics&, juce::Rectangle<float> area);
     void paintRegion (juce::Graphics&, const model::Region& r, juce::Rectangle<float> box, bool ghost);
     void startRegionDrag (const model::Region& r, Zone zone, juce::Point<float> p, juce::ModifierKeys mods);
+    void createMidiRegionAt (const Id& trackId, float x);
+    enum class Lock { none, time, rows } dragLock = Lock::none; // Shift holds a region drag to one direction (D-W3-10)
     Ticks tickAt (float x) const { return static_cast<Ticks> (std::llround (studio.view.xToTick (x))); }
 
     Studio& studio;

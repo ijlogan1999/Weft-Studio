@@ -49,7 +49,7 @@ Visual identity requirements for the design system (summary):
 Left to right, functional groups:
 
 1. **Panel toggles:** Inspector, Side panel, Mixer, Editor, Global tracks.
-2. **Transport buttons:** Go to start, Rewind, Fast forward, Stop, Play, Record, Cycle. Record is visually distinct. Each shows state (lit when active).
+2. **Transport buttons:** Go to start, Rewind, Fast forward, Stop, Play, Record, Cycle. Record is visually distinct. Each shows state (lit when active). **Decision D-UI-17:** Stop pressed while already stopped moves the playhead to the cycle start when Cycle is on and the playhead isn't there, otherwise to the project start (also the **Stop** command, numpad 0). With Cycle on, Play (and Space) starts at the cycle start wherever the playhead is; Pause and Record are unchanged. **Count-in** (Shift+K) turns the count-in off and back on at the length last used.
 3. **Main display (LCD-like readout, own design):**
    - Position: bars.beats.division.ticks and time h:mm:ss.ms (click either to type a position; Enter jumps).
    - Tempo (BPM) at the playhead: drag vertically or double-click to type; edits the tempo point in effect at the playhead.
@@ -57,13 +57,14 @@ Left to right, functional groups:
    - Cycle range start/end when cycle is on.
 4. **Mode buttons:** Metronome, Count-in (with dropdown 0/1/2 bars), Autopunch, Snap (with grid value dropdown), Follow playhead.
 5. **Meters:** CPU (audio thread load %), Disk; both turn amber > 70%, red > 90% or on dropout. Clicking shows a detail popup with dropout count since session start.
+   **Decision D-UI-21:** when the window is too narrow for the whole bar, the CPU meter and then the count-in menu are dropped as before, and a **More** button ("…") appears in their place. Its menu holds whatever was dropped: the count-in choices (the current one ticked) and a line with the CPU load, dropouts and disk underruns. The count-in is also always in Navigate › Count-in.
 6. **Presence and sharing:** avatars of connected collaborators (initials in their color; up to 5, then "+N"), a sync state indicator (see §10), and a **Share** button.
 
 ## 4. C · Inspector (left)
 
 Shows properties of the current selection in collapsible sections:
 
-1. **Region section** (when regions are selected): name, color, mute, gain (audio), fades and curves (audio), quantize/strength/swing (MIDI), loop on/off, transpose and velocity offset (MIDI; v2 UI). Multi-selection shows mixed values as "—"; editing sets all.
+1. **Region section** (when regions are selected): name, color, mute, gain (audio), fades and curves (audio), quantize/strength/swing (MIDI), loop on/off, transpose and velocity offset (MIDI; v2 UI). Multi-selection shows mixed values as "—"; editing sets all. **Decision D-UI-22:** with several regions selected the name reads "N regions"; an edit is one undo step; a control that only audio regions have (gain, fades) shows only when no MIDI region is selected, and the MIDI controls only when every selected region is MIDI; mute, loop, delay and the name apply to any mix.
 2. **Track section** (selected track): name, color, input, output, monitor mode, automation mode, lock state.
 3. **Channel strips:** two compact channel strips side by side: the selected track's strip, and the strip of its output destination (Master or a bus). Each has instrument slot (instrument tracks), insert slots, send slots, output button, pan, fader, meter, mute/solo. These are the same controls as the mixer (§8) and edit the same data.
 4. **Note section** (in piano roll focus with notes selected): pitch, velocity, length, position, channel.
@@ -86,7 +87,7 @@ Presence on headers: when a collaborator is editing on a track (their last edit 
 
 Header right-click menu: New track (same type), Duplicate, Delete, Color, Lock/Unlock, Show automation.
 
-Header drag: reorder. Header area below the last track: double-click creates a new track (opens New Track dialog).
+Header drag: reorder. Header area below the last track: double-click creates a new track (opens New Track dialog). **Decision D-UI-19:** **New Audio Track** (Ctrl+Alt+A) and **New Instrument Track** (Ctrl+Alt+I) add one stereo track of that kind below the selected track and select it, without the dialog. **Mute Track** (Shift+M), **Solo Track** (S) and **Record-Enable Track** (Shift+R) press the selected track's buttons.
 
 ### 6.2 Timeline (right)
 - Background shows the grid (bar lines strong, beat lines medium, subdivisions faint, adapting to zoom).
@@ -101,6 +102,8 @@ Header drag: reorder. Header area below the last track: double-click creates a n
 - Automation lanes (when shown): under each track, a line with points in the track color.
 - Scrolling: wheel = vertical, Shift+wheel = horizontal, Ctrl+wheel = horizontal zoom at pointer, Ctrl+Shift+wheel = vertical zoom (track heights).
 - Tool selection: T opens the tool menu at the pointer; Esc returns to pointer tool.
+- **Decision D-UI-18:** **Deselect All** (Ctrl+Shift+A) clears the region selection (the note selection while the piano roll has focus). **Invert Selection** (Ctrl+Shift+I) selects every unselected region on a track that has a row and deselects the rest (in the piano roll: the notes of the shown regions).
+- **Decision D-UI-20:** while the global tracks are hidden, each marker shows as a small flag on the ruler's lower edge (a line in the marker's colour and its name); clicking a flag moves the playhead to the marker. Renaming, moving and deleting markers stay in the marker lane.
 
 ### 6.3 Empty state
 A new project shows one empty audio track and a hint in the timeline: "Drop audio or MIDI files here, or press R to record."
@@ -211,7 +214,9 @@ Shown in the bottom area (MVP; detachable window in v2).
 | Follow playhead | Ctrl+F | | Snap on/off | N |
 | Set cycle to selection | U | | Keyboard MIDI mode | Ctrl+K |
 | Previous / next marker | Alt+, / Alt+. | | Go to marker 1–9 | 1–9 |
-| Repeat regions | Ctrl+R | | | |
+| Repeat regions | Ctrl+R | | Stop / go to start | Numpad 0 |
+| Count-in on/off | Shift+K | | Deselect all / Invert selection | Ctrl+Shift+A / Ctrl+Shift+I |
+| Mute / Solo / Record-enable track | Shift+M / S / Shift+R | | New audio / instrument track | Ctrl+Alt+A / Ctrl+Alt+I |
 
 **Decision D-UI-1:** side panel is **Ctrl+L**; add marker is **;** (semicolon). Single-letter shortcuts are active only when focus is not in a text field.
 
@@ -247,3 +252,9 @@ New Track · Project Settings · Preferences (Audio, MIDI, General, Recording, C
 | D-UI-13 | Design tokens, 8 px grid, IBM Plex type scale, one accent, depth; lanes 56 px. |
 | D-UI-14 | Waveform overview pyramid and crisp outline drawing. |
 | D-UI-15 | Mixer meters (RMS and peak, shared fader scale), reset gestures, value tag. |
+| D-UI-17 | Stop while stopped goes to the cycle start, then the project start; Play starts at the cycle start when Cycle is on; Count-in command (Shift+K). |
+| D-UI-18 | Deselect All (Ctrl+Shift+A) and Invert Selection (Ctrl+Shift+I), for regions or, in the piano roll, notes. |
+| D-UI-19 | New Audio Track / New Instrument Track without the dialog; keys for the selected track's Mute, Solo and Record-enable. |
+| D-UI-20 | Markers show as flags on the ruler while the global tracks are hidden. |
+| D-UI-21 | A narrow control bar keeps the count-in and CPU reading in a More menu. |
+| D-UI-22 | Inspector with several regions selected: "N regions", one undo step per edit, controls limited to what every selected region has. |

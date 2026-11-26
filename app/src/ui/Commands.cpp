@@ -100,6 +100,15 @@ std::vector<CommandInfo> build()
         { Cmd::snapZeroCrossings, "Snap Edits to Zero Crossings", "", {} },
         { Cmd::tapTempo, "Tap Tempo", "Shift+T", { key ('T', shift) } },
         { Cmd::showHiddenTracks, "Show Hidden Tracks", "Ctrl+Shift+H", { key ('H', ctrl | shift) } },
+        { Cmd::stop, "Stop", "Numpad 0", { key (K::numberPad0) } },
+        { Cmd::countIn, "Count-in", "Shift+K", { key ('K', shift) } },
+        { Cmd::deselectAll, "Deselect All", "Ctrl+Shift+A", { key ('A', ctrl | shift) } },
+        { Cmd::invertSelection, "Invert Selection", "Ctrl+Shift+I", { key ('I', ctrl | shift) } },
+        { Cmd::muteTrack, "Mute Track", "Shift+M", { key ('M', shift) } },
+        { Cmd::soloTrack, "Solo Track", "S", { key ('S') } },
+        { Cmd::armTrack, "Record-Enable Track", "Shift+R", { key ('R', shift) } },
+        { Cmd::newAudioTrack, "New Audio Track", "Ctrl+Alt+A", { key ('A', ctrl | alt) } },
+        { Cmd::newInstrumentTrack, "New Instrument Track", "Ctrl+Alt+I", { key ('I', ctrl | alt) } },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),

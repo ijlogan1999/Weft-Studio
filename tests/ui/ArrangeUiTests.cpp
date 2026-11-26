@@ -404,8 +404,9 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (! it.getItem().isSeparator)
             items.add (it.getItem().text);
-    CHECK (items == juce::StringArray { "New Track", "Duplicate Track", "Duplicate Track with Regions", "Delete Track", "Color", "Move Track Up",
-                                        "Move Track Down", "Lock/Unlock Track" });
+    CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "Duplicate Track", "Duplicate Track with Regions",
+                                        "Delete Track", "Color", "Move Track Up", "Move Track Down", "Mute Track", "Solo Track", "Record-Enable Track",
+                                        "Lock/Unlock Track" });
 
     // Color › swatch 7 from the menu bar.
     ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);
@@ -674,9 +675,16 @@ TEST_CASE ("AT-TRK-16 Hide Track removes the row; Show Hidden Tracks brings it b
     CHECK (ui.timeline().rows() == 1);
     CHECK (ui.main->tracks().headers().front()->getY() == juce::roundToInt (ui.timeline().rowBounds (0).getY()));
     CHECK (ui.main->tracks().headers().front()->trackId == second);
+    // Its mixer strip goes with the row.
+    ui.main->run (Cmd::toggleMixer);
+    ui.settle();
+    const auto& strips = ui.main->bottom().mixerView().strips();
+    REQUIRE (strips.size() == 1);
+    CHECK (strips.front()->trackId() == second);
 
     REQUIRE (ui.studio.perform (Cmd::showHiddenTracks));
     ui.settle();
+    CHECK (strips.size() == 2);
     REQUIRE (headerFor (first) != nullptr);
     CHECK (ui.timeline().rows() == 2);
     juce::StringArray items;
@@ -901,9 +909,9 @@ TEST_CASE ("Region and lane right-click menus: edit commands, Split Here, Color,
     tl.pickContext (Timeline::contextCommand + static_cast<int> (Cmd::muteRegions) + 1, ui.centreOf (b));
     CHECK (ui.region (b).muted);
 
-    // On an empty lane: Paste, Set Project End Here, then Clear Project End.
+    // On an empty lane: what the track holds (AT-ARR-34), Paste, Set Project End Here, then Clear Project End.
     const auto empty = juce::Point<float> (static_cast<float> (ui.studio.view.tickToX (12.0 * bar)), onA.y);
-    CHECK (labels (tl.contextMenu (empty)) == juce::StringArray { "Paste", "Set Project End Here", "Add Comment" });
+    CHECK (labels (tl.contextMenu (empty)) == juce::StringArray { "Create MIDI Region", "Paste", "Set Project End Here", "Add Comment" });
     tl.pickContext (Timeline::contextSetEnd, empty);
     REQUIRE (ui.m().info.endMarker.has_value());
     CHECK (*ui.m().info.endMarker == 12 * bar);
@@ -1077,4 +1085,265 @@ TEST_CASE ("AT-TRN-18 With follow on, playing past the right edge scrolls the vi
     CHECK_FALSE (visible());
     ui.main->run (Cmd::playStop);
     ui.renderAudio();
+}
+
+TEST_CASE ("AT-TRN-20 Stop while stopped goes to the start; with Cycle on, Play starts at the cycle", "[UI][AT-TRN-20]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    const auto run = [&] {
+        ui.renderAudio (512);
+        studio.tick();
+        ui.settle();
+    };
+    studio.locate (3 * bar);
+    REQUIRE (studio.perform (Cmd::stop));
+    CHECK (studio.playhead() == 0);
+
+    REQUIRE (studio.session().setCycle (true, 2 * bar, 4 * bar));
+    studio.edited();
+    ui.settle();
+    studio.locate (6 * bar);
+    REQUIRE (studio.perform (Cmd::stop));
+    CHECK (studio.playhead() == 2 * bar); // the cycle start first
+    REQUIRE (studio.perform (Cmd::stop));
+    CHECK (studio.playhead() == 0);       // then the project start
+
+    // Play with the cycle on starts at the cycle start, wherever the playhead was.
+    studio.locate (6 * bar);
+    REQUIRE (ui.key (juce::KeyPress::spaceKey));
+    run();
+    REQUIRE (studio.playing());
+    CHECK (studio.playhead() >= 2 * bar);
+    CHECK (studio.playhead() < 3 * bar);
+    // Stop (the button, or numpad 0) stops; pressed again it's the "go to start" above.
+    REQUIRE (ui.key (juce::KeyPress::numberPad0));
+    run();
+    CHECK_FALSE (studio.playing());
+    CHECK (studio.playhead() == 2 * bar);
+
+    // With the cycle off, Play starts at the playhead as before.
+    REQUIRE (studio.session().setCycle (false, 2 * bar, 4 * bar));
+    studio.edited();
+    studio.locate (6 * bar);
+    REQUIRE (studio.perform (Cmd::playStop));
+    run();
+    CHECK (studio.playhead() >= 6 * bar);
+    REQUIRE (studio.perform (Cmd::playStop));
+    run();
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Stop"));
+}
+
+TEST_CASE ("AT-ARR-31 Deselect All and Invert Selection", "[UI][AT-ARR-31]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (2);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 2 * bar, bar);
+    const auto c = *s.createMidiRegion (tracks[1], bar, bar);
+    ui.studio.edited();
+    ui.settle();
+    auto& sel = ui.studio.selection;
+    const auto ctrlShift = juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
+
+    ui.click (ui.centreOf (a));
+    REQUIRE (ui.key ('I', ctrlShift));
+    CHECK_FALSE (sel.contains (a));
+    CHECK (sel.contains (b));
+    CHECK (sel.contains (c));
+    // Regions on a hidden track stay out of it.
+    REQUIRE (s.setTrackHidden (tracks[1], true));
+    ui.studio.edited();
+    ui.settle();
+    sel.clear();
+    REQUIRE (ui.key ('I', ctrlShift));
+    CHECK (sel.ids().size() == 2);
+    CHECK_FALSE (sel.contains (c));
+    REQUIRE (ui.key ('A', ctrlShift));
+    CHECK (sel.empty());
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (1, "Edit");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Deselect All"));
+    CHECK (items.contains ("Invert Selection"));
+}
+
+TEST_CASE ("AT-ARR-32 the Mute and Eraser tools act on every selected region", "[UI][AT-ARR-32]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 2 * bar, bar);
+    const auto c = *s.createMidiRegion (tracks[0], 4 * bar, bar);
+    ui.studio.selection.set ({ a, b });
+    ui.studio.edited();
+    ui.settle();
+
+    ui.studio.tool = Tool::mute;
+    ui.click (ui.centreOf (a));
+    CHECK (ui.region (a).muted);
+    CHECK (ui.region (b).muted);
+    CHECK_FALSE (ui.region (c).muted);
+    s.undo(); // one step
+    ui.studio.edited();
+    ui.settle();
+    CHECK_FALSE (ui.region (a).muted);
+    CHECK_FALSE (ui.region (b).muted);
+    // On a region outside the selection the tool takes just that one.
+    ui.click (ui.centreOf (c));
+    CHECK (ui.region (c).muted);
+    CHECK_FALSE (ui.region (a).muted);
+
+    ui.studio.tool = Tool::eraser;
+    ui.click (ui.centreOf (b));
+    CHECK (ui.m().region (a) == nullptr);
+    CHECK (ui.m().region (b) == nullptr);
+    CHECK (ui.m().region (c) != nullptr);
+}
+
+TEST_CASE ("AT-ARR-33 Shift keeps a region drag to one direction", "[UI][AT-ARR-33]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (2);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    ui.studio.snapEnabled = false;
+    ui.studio.edited();
+    ui.settle();
+    auto& tl = ui.timeline();
+    const auto shift = juce::ModifierKeys (juce::ModifierKeys::shiftModifier);
+    const auto oneBar = std::max (static_cast<float> (bar * ui.studio.view.pixelsPerTick), 150.0f); // further across than down
+    const auto oneRow = tl.rowBounds (2).getCentreY() - tl.rowBounds (1).getCentreY();
+
+    // Mostly sideways: the region stays on its track.
+    auto from = ui.centreOf (a);
+    tl.pointerDown (from, {});
+    tl.pointerDrag (from + juce::Point<float> (oneBar, oneRow), shift);
+    tl.pointerUp (from + juce::Point<float> (oneBar, oneRow), shift);
+    ui.settle();
+    CHECK (ui.region (a).start > 0);
+    CHECK (ui.region (a).trackId == tracks[0]);
+    const auto start = ui.region (a).start;
+    // Mostly downwards: it changes track and keeps its position.
+    from = ui.centreOf (a);
+    tl.pointerDown (from, {});
+    tl.pointerDrag (from + juce::Point<float> (oneRow * 0.5f, oneRow), shift);
+    tl.pointerUp (from + juce::Point<float> (oneRow * 0.5f, oneRow), shift);
+    ui.settle();
+    CHECK (ui.region (a).start == start);
+    CHECK (ui.region (a).trackId == tracks[1]);
+}
+
+TEST_CASE ("AT-ARR-34 an empty lane's menu creates a MIDI region or imports audio there", "[UI][AT-ARR-34]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    ui.settle();
+    auto& tl = ui.timeline();
+    const auto labels = [] (const juce::PopupMenu& menu) {
+        juce::StringArray out;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            out.add (it.getItem().text);
+        return out;
+    };
+    const auto x = static_cast<float> (ui.studio.view.tickToX (2.0 * bar)) + 3.0f;
+    const juce::Point<float> onAudio (x, tl.rowBounds (0).getCentreY()), onInstrument (x, tl.rowBounds (1).getCentreY());
+    CHECK (labels (tl.contextMenu (onAudio)).contains ("Import Audio..."));
+    CHECK_FALSE (labels (tl.contextMenu (onAudio)).contains ("Create MIDI Region"));
+    REQUIRE (labels (tl.contextMenu (onInstrument)).contains ("Create MIDI Region"));
+    CHECK_FALSE (labels (tl.contextMenu (onInstrument)).contains ("Import Audio..."));
+
+    tl.pickContext (Timeline::contextCreateMidi, onInstrument);
+    ui.settle();
+    const auto made = ui.m().regionsOnTrack (tracks[0]);
+    REQUIRE (made.size() == 1);
+    CHECK (made.front()->isMidi);
+    CHECK (made.front()->start == 2 * bar);
+    CHECK (made.front()->length == bar);
+    CHECK (ui.studio.selection.contains (made.front()->id));
+}
+
+TEST_CASE ("AT-ARR-35 markers show as flags on the ruler while the global tracks are hidden", "[UI][AT-ARR-35]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto verse = s.addMarker (2 * bar, "Verse");
+    const auto chorus = s.addMarker (6 * bar, "Chorus");
+    REQUIRE (verse);
+    REQUIRE (chorus);
+    ui.studio.layout.globalTracks = true;
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.ruler().markerFlags().empty()); // the marker lane shows them
+
+    ui.studio.layout.globalTracks = false;
+    ui.studio.edited();
+    ui.settle();
+    const auto flags = ui.ruler().markerFlags();
+    REQUIRE (flags.size() == 2);
+    CHECK (flags[0].first->name == "Verse");
+    CHECK (flags[0].second.getX() == Catch::Approx (ui.studio.view.tickToX (2.0 * bar)).margin (1.0));
+    CHECK (flags[1].second.getX() == Catch::Approx (ui.studio.view.tickToX (6.0 * bar)).margin (1.0));
+    CHECK (flags[0].second.getBottom() <= static_cast<float> (Ruler::rulerHeight));
+    // A click on a flag goes to its marker.
+    ui.ruler().pointerDown (flags[1].second.getCentre(), {});
+    ui.ruler().pointerUp();
+    ui.settle();
+    CHECK (ui.studio.playhead() == 6 * bar);
+}
+
+TEST_CASE ("AT-TRK-17 keys for the selected track's Mute, Solo and Record-enable; one-step new tracks", "[UI][AT-TRK-17]")
+{
+    Ui ui;
+    const auto audio = ui.m().trackOrder.front();
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    const auto shift = juce::ModifierKeys (juce::ModifierKeys::shiftModifier);
+    const auto ctrlAlt = juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier);
+
+    REQUIRE (ui.key ('M', shift));
+    CHECK (ui.m().track (audio)->mute);
+    CHECK (ui.studio.session().undoName() == "Mute Track");
+    REQUIRE (ui.key ('M', shift));
+    CHECK_FALSE (ui.m().track (audio)->mute);
+    REQUIRE (ui.key ('S'));
+    CHECK (ui.studio.localView().soloed.contains (audio));
+    REQUIRE (ui.key ('S'));
+    CHECK_FALSE (ui.studio.localView().soloed.contains (audio));
+    REQUIRE (ui.key ('R', shift));
+    CHECK (ui.studio.localView().armed.contains (audio));
+    REQUIRE (ui.key ('R', shift));
+    CHECK_FALSE (ui.studio.localView().armed.contains (audio));
+
+    // New Instrument Track / New Audio Track: one track below the selected one, selected, one undo step, no dialog.
+    REQUIRE (ui.key ('I', ctrlAlt));
+    REQUIRE (ui.m().trackOrder.size() >= 2);
+    const auto keys = ui.m().trackOrder[1];
+    CHECK (ui.m().track (keys)->kind == model::TrackKind::instrument);
+    CHECK (ui.studio.selectedTrack() == keys);
+    ui.studio.selectTrack (audio);
+    REQUIRE (ui.key ('A', ctrlAlt));
+    const auto second = ui.m().trackOrder[1];
+    CHECK (ui.m().track (second)->kind == model::TrackKind::audio);
+    CHECK (ui.m().trackOrder[2] == keys);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.m().track (second) == nullptr);
+
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (2, "Track");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        items.add (it.getItem().text);
+    for (const auto* name : { "New Audio Track", "New Instrument Track", "Mute Track", "Solo Track", "Record-Enable Track" })
+        CHECK (items.contains (name));
 }

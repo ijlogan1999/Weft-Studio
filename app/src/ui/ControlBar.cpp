@@ -14,8 +14,7 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         b->onClick = [this, button] {
             if (button == &stop)
             {
-                if (studio.playing())
-                    studio.perform (Cmd::playStop);
+                studio.perform (Cmd::stop); // stopped already: back to the start (D-UI-17)
                 return;
             }
             if (button == &play && studio.playing())
@@ -23,7 +22,7 @@ ControlBar::ControlBar (Studio& s) : studio (s)
             studio.perform (button->command);
         };
     }
-    describe (stop, "Stop", "Stop (Space)");
+    describe (stop, "Stop", "Stop (Space). Stopped already: go to the start of the cycle or project");
     describe (play, "Play", "Play (Space)");
     // Icons for the transport; the labels stay as the accessible names.
     start.setIcon (icon::goToStart());
@@ -95,6 +94,17 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         studio.engine().setSettings (settings);
     };
     addAndMakeVisible (countIn);
+    // What a narrow window drops stays reachable from this menu (AT-UI-11).
+    describe (more, "More", "More controls: the ones this window is too narrow to show");
+    more.setMouseClickGrabsKeyboardFocus (false);
+    more.onClick = [this] {
+        overflowMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (more),
+                                      [safe = juce::Component::SafePointer<ControlBar> (this)] (int item) {
+                                          if (safe != nullptr)
+                                              safe->pickOverflow (item);
+                                      });
+    };
+    addChildComponent (more);
     int id = 1;
     for (const auto& c : arrange::snapChoices())
         if (c.snap.kind != arrange::Snap::Kind::off)
@@ -185,6 +195,35 @@ void ControlBar::timerCallback()
     record.setToggleState (studio.recording(), juce::dontSendNotification);
 }
 
+juce::PopupMenu ControlBar::overflowMenu() const
+{
+    juce::PopupMenu menu;
+    if (! countIn.isVisible())
+    {
+        const auto bars = studio.engine().settings().countInBars;
+        for (int i = 0; i < countIn.getNumItems(); ++i)
+            menu.addItem (overflowCountIn + i, countIn.getItemText (i), true, bars == i);
+    }
+    if (! cpu.isVisible())
+    {
+        menu.addSeparator();
+        menu.addItem (overflowCpu, cpu.getText() + juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 dropouts ")) + juce::String (studio.engine().dropouts())
+                                       + ", disk underruns " + juce::String (studio.engine().diskUnderruns()),
+                      false);
+    }
+    return menu;
+}
+
+void ControlBar::pickOverflow (int item)
+{
+    if (item < overflowCountIn || item >= overflowCountIn + countIn.getNumItems())
+        return;
+    auto settings = studio.engine().settings();
+    settings.countInBars = item - overflowCountIn;
+    studio.engine().setSettings (settings);
+    studio.sendChangeMessage();
+}
+
 std::vector<std::vector<juce::Button*>> ControlBar::groups()
 {
     return { { &inspector, &side, &mixer, &editor, &global },
@@ -264,6 +303,7 @@ void ControlBar::resized()
     items.push_back ({ &follow, 56 });
     items.push_back ({ &keyboard, 48 });
     items.push_back ({ &cpu, 64, 2 });
+    items.push_back ({ &more, 32, -1 }); // only while something is dropped
     avatarsWidth = avatars.preferredWidth();
     if (avatarsWidth > 0)
     {
@@ -293,11 +333,15 @@ void ControlBar::resized()
     };
     for (auto& it : items)
         if (it.c != nullptr)
-            it.c->setVisible (true);
+            it.c->setVisible (it.dropOrder >= 0);
     for (int order = 1; order <= 3 && total() > area.getWidth(); ++order)
         for (auto& it : items)
             if (it.dropOrder == order)
+            {
                 it.c->setVisible (false);
+                if (it.c == &countIn || it.c == &cpu)
+                    more.setVisible (true);
+            }
     const auto scale = std::clamp (static_cast<double> (area.getWidth()) / std::max (1, total()), 0.7, 1.0);
 
     auto r = area;

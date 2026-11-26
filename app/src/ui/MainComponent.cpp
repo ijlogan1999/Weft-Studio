@@ -791,7 +791,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::undo, Cmd::redo })
                 add (c);
             menu.addSeparator();
-            for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll })
+            for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll, Cmd::deselectAll, Cmd::invertSelection })
                 add (c);
             menu.addSeparator();
             for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
@@ -805,6 +805,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         case 2:
         {
             add (Cmd::newTrack);
+            add (Cmd::newAudioTrack);
+            add (Cmd::newInstrumentTrack);
             add (Cmd::duplicateTrack);
             add (Cmd::duplicateTrackWithRegions);
             add (Cmd::deleteTrack);
@@ -814,6 +816,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSubMenu ("Color", colourMenu (colourMenuBase, colourable && t->color.rgb.empty() ? t->color.palette : -1), colourable);
             add (Cmd::moveTrackUp);
             add (Cmd::moveTrackDown);
+            menu.addSeparator();
+            for (auto c : { Cmd::muteTrack, Cmd::soloTrack, Cmd::armTrack })
+                add (c);
             menu.addSeparator();
             add (Cmd::lockTrack);
             break;
@@ -826,7 +831,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         case 4:
         {
-            for (auto c : { Cmd::playStop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
+            for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
             const auto settings = studio.engine().settings();
@@ -836,6 +841,19 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             during.addItem (clickDuringPlay, "Playback", true, settings.metronomeDuring == engine::ClickDuring::play);
             during.addItem (clickDuringBoth, "Recording and Playback", true, settings.metronomeDuring == engine::ClickDuring::both);
             menu.addSubMenu ("Click During", during);
+            // The count-in lives here as well as in the control bar, which drops its menu in a narrow window (AT-UI-11).
+            juce::PopupMenu countIn;
+            countIn.addItem (countInOff, "Off", true, settings.countInBars == 0);
+            countIn.addItem (countInOne, "1 Bar", true, settings.countInBars == 1);
+            countIn.addItem (countInTwo, "2 Bars", true, settings.countInBars == 2);
+            countIn.addSeparator();
+            {
+                juce::PopupMenu::Item toggle ("Count-in On/Off");
+                toggle.itemID = static_cast<int> (Cmd::countIn) + 1;
+                toggle.shortcutKeyDescription = commandInfo (Cmd::countIn).shortcut;
+                countIn.addItem (toggle);
+            }
+            menu.addSubMenu ("Count-in", countIn);
             menu.addItem (returnToStart, "Return to Start on Stop", true, settings.returnToStartOnStop);
             juce::PopupMenu midi;
             midi.addItem (mergeLinear, "Merge into Existing Region", true, settings.midiMergeLinear);
@@ -901,6 +919,9 @@ void MainComponent::menuItemSelected (int itemId, int)
             case clickDuringPlay: settings.metronomeDuring = engine::ClickDuring::play; break;
             case clickDuringBoth: settings.metronomeDuring = engine::ClickDuring::both; break;
             case returnToStart: settings.returnToStartOnStop = ! settings.returnToStartOnStop; break;
+            case countInOff: settings.countInBars = 0; break;
+            case countInOne: settings.countInBars = 1; break;
+            case countInTwo: settings.countInBars = 2; break;
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
             case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;

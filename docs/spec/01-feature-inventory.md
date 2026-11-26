@@ -28,7 +28,7 @@ Tag counts at the end of the file.
 
 | ID | Feature | Tag | Summary |
 |---|---|---|---|
-| F-TRN-1 | Play / Stop | MVP | Space toggles play/stop from the playhead. Stop returns the playhead to where play started (setting: "return to start on stop", default on). |
+| F-TRN-1 | Play / Stop | MVP | Space toggles play/stop from the playhead (from the cycle start when Cycle is on, D-UI-17). Stop returns the playhead to where play started (setting: "return to start on stop", default on). |
 | F-TRN-2 | Record | MVP | R arms recording on record-enabled tracks and starts transport. |
 | F-TRN-3 | Pause | MVP | Pause holds the playhead in place. Brought forward from v2 (D-INV-6). |
 | F-TRN-4 | Go to start / end | MVP | Home and End move the playhead to project start / project end marker. |

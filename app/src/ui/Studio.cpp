@@ -667,6 +667,27 @@ std::optional<bool> Studio::performNotes (Cmd command)
             }
             sendChangeMessage();
             return true;
+        case Cmd::deselectAll:
+            piano.selection.clear();
+            piano.point.reset();
+            sendChangeMessage();
+            return true;
+        case Cmd::invertSelection:
+        {
+            // D-UI-18: every note of the shown regions that wasn't selected.
+            std::set<commands::NoteRef> inverted;
+            for (const auto& id : regions)
+            {
+                const auto* r = m.region (id);
+                if (const auto* seq = m.sequence (r->midi.sequenceId))
+                    for (const auto& [noteId, n] : seq->notes)
+                        if (n.pos >= r->midi.sequenceOffset && n.pos < r->midi.sequenceOffset + r->length && ! piano.selection.contains ({ id, noteId }))
+                            inverted.insert ({ id, noteId });
+            }
+            piano.selection = std::move (inverted);
+            sendChangeMessage();
+            return true;
+        }
         case Cmd::muteNotes: return needNotes() && check (s.toggleNotesMuted (notes));
         case Cmd::quantize: return check (s.quantizeNotes (regions, notes, piano.quantizeGrid, piano.strength / 100.0, piano.swing));
         case Cmd::transposeUp:
@@ -711,6 +732,8 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
         case Cmd::reverseRegions: case Cmd::snapZeroCrossings: case Cmd::tapTempo: case Cmd::showHiddenTracks:
+        case Cmd::stop: case Cmd::countIn: case Cmd::muteTrack: case Cmd::soloTrack: case Cmd::armTrack: case Cmd::newAudioTrack:
+        case Cmd::newInstrumentTrack:
             break;
     }
     return std::nullopt;
@@ -737,9 +760,77 @@ bool Studio::perform (Cmd command)
             if (playing())
                 eng->stop();
             else
-                eng->play (playhead());
+                eng->play (m.info.cycle.enabled ? m.info.cycle.start : playhead()); // D-UI-17: the cycle plays from its start
             locatedAt.reset();
             break;
+        case Cmd::stop:
+            // D-UI-17: Stop while stopped goes back to the start of the cycle, or of the project.
+            if (playing())
+            {
+                eng->stop();
+                locatedAt.reset();
+            }
+            else
+                locate (m.info.cycle.enabled && playhead() != m.info.cycle.start ? m.info.cycle.start : 0);
+            break;
+        case Cmd::countIn:
+        {
+            // Off and back to the length last used (1 bar until one is chosen in Navigate > Count-in).
+            auto settings = eng->settings();
+            if (settings.countInBars > 0)
+                countInWhenOn = std::exchange (settings.countInBars, 0);
+            else
+                settings.countInBars = countInWhenOn;
+            eng->setSettings (settings);
+            setStatus (settings.countInBars == 0 ? juce::String ("Count-in off.") : "Count-in: " + juce::String (settings.countInBars) + (settings.countInBars == 1 ? " bar." : " bars."));
+            break;
+        }
+        case Cmd::deselectAll:
+            selection.clear();
+            pointSelection = {};
+            break;
+        case Cmd::invertSelection:
+        {
+            // D-UI-18: regions on tracks that have a row; the ones tucked away on hidden tracks stay out of it.
+            std::vector<Id> inverted;
+            for (const auto& [id, r] : m.regions)
+                if (! selection.contains (id) && std::find (m.rows.begin(), m.rows.end(), m.effectiveTrackId (*r)) != m.rows.end())
+                    inverted.push_back (id);
+            selection.set (std::move (inverted));
+            break;
+        }
+        case Cmd::muteTrack:
+        case Cmd::soloTrack:
+        case Cmd::armTrack:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr)
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            if (command == Cmd::muteTrack)
+                toggleMute (t->id);
+            else if (command == Cmd::soloTrack)
+                toggleSolo (t->id);
+            else if (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument)
+                toggleArm (t->id);
+            else
+                return false;
+            return true;
+        }
+        case Cmd::newAudioTrack:
+        case Cmd::newInstrumentTrack:
+        {
+            // D-UI-19: one track of that kind below the selected one, with the New Track dialog's defaults, selected.
+            const auto made = s.createTracks (command == Cmd::newAudioTrack ? model::TrackKind::audio : model::TrackKind::instrument, 1, 2, local.selectedTrack);
+            if (made.empty())
+                setStatus (juce::String (s.lastError()));
+            else
+                selectTrack (made.front());
+            edited();
+            return ! made.empty();
+        }
         case Cmd::pause:
             // Stops where it is (F-TRN-3, D-INV-6); pressed again, plays on from there.
             if (playing())
@@ -2390,7 +2481,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::octaveDown, Cmd::notesLeft, Cmd::notesRight, Cmd::applyQuantize, Cmd::deleteTrack, Cmd::newBus,
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
-        Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks,
+        Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

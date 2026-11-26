@@ -28,31 +28,37 @@ Inspector::Inspector (Studio& s) : studio (s)
     regionName.setBorderSize ({});
     describe (regionName, "Region name", "Region name (double-click to rename)");
     regionName.onTextChange = [this] {
-        if (const auto* r = region(); r != nullptr && regionName.getText().trim().isNotEmpty())
-            studio.check (studio.session().setRegionName (r->id, regionName.getText().trim().toStdString()));
+        const auto name = regionName.getText().trim().toStdString();
+        if (! name.empty() && ! refreshing && region() != nullptr)
+            forRegions ("Rename Regions", Kind::any, [&] (const model::Region& r) { return studio.session().setRegionName (r.id, name); });
         else
             refresh();
     };
     describe (regionMute, Cmd::muteRegions);
     regionMute.onClick = [this] {
-        if (const auto* r = region())
-            studio.check (studio.session().setRegionMuted (r->id, regionMute.getToggleState()));
+        const bool on = regionMute.getToggleState();
+        forRegions ("Mute Regions", Kind::any, [&] (const model::Region& r) { return studio.session().setRegionMuted (r.id, on); });
     };
     describe (regionLoop, Cmd::loopRegion);
     regionLoop.onClick = [this] {
-        if (const auto* r = region())
-        {
-            const auto& m = studio.model();
+        const bool on = regionLoop.getToggleState();
+        forRegions ("Loop Regions", Kind::any, [&] (const model::Region& r) {
             // Turning loop on repeats the region once; dragging the loop handle extends it.
-            const auto end = regionLoop.getToggleState() ? std::optional<Ticks> (static_cast<Ticks> (m.regionEndTick (*r)) * 2 - r->start) : std::nullopt;
-            studio.check (studio.session().setRegionLoop (r->id, end));
-        }
+            const auto end = on ? std::optional<Ticks> (static_cast<Ticks> (studio.model().regionEndTick (r)) * 2 - r.start) : std::nullopt;
+            return studio.session().setRegionLoop (r.id, end);
+        });
     };
-    auto setupSlider = [] (juce::Slider& sl, double lo, double hi, double step, const juce::String& suffix) {
+    auto setupSlider = [this] (juce::Slider& sl, double lo, double hi, double step, const juce::String& suffix) {
         sl.setSliderStyle (juce::Slider::LinearHorizontal);
         sl.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, size::control);
         sl.setRange (lo, hi, step);
-        sl.setTextValueSuffix (suffix);
+        // A dash while the selected regions differ (spec 04 §4); otherwise the value and its unit. The unit is
+        // added here, not as the slider's suffix, so the dash stands alone.
+        sl.textFromValueFunction = [this, &sl, step, suffix] (double v) {
+            if (mixed.contains (&sl))
+                return dash();
+            return (step < 1.0 ? juce::String (v, 1) : juce::String (juce::roundToInt (v))) + suffix;
+        };
     };
     setupSlider (regionGain, -30.0, 24.0, 0.1, " dB");
     regionGain.setDoubleClickReturnValue (true, 0.0);
@@ -63,8 +69,8 @@ Inspector::Inspector (Studio& s) : studio (s)
         studio.edited();
     };
     regionGain.onValueChange = [this] {
-        if (const auto* r = region(); r != nullptr && ! refreshing)
-            studio.check (studio.session().setRegionGain (r->id, regionGain.getValue()));
+        if (! refreshing)
+            forRegions ("Region Gain", Kind::audio, [&] (const model::Region& r) { return studio.session().setRegionGain (r.id, regionGain.getValue()); });
     };
     setupSlider (regionDelay, -500.0, 500.0, 0.1, " ms");
     regionDelay.setDoubleClickReturnValue (true, 0.0);
@@ -75,8 +81,8 @@ Inspector::Inspector (Studio& s) : studio (s)
         studio.edited();
     };
     regionDelay.onValueChange = [this] {
-        if (const auto* r = region(); r != nullptr && ! refreshing)
-            studio.check (studio.session().setRegionDelay (r->id, regionDelay.getValue()));
+        if (! refreshing)
+            forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) { return studio.session().setRegionDelay (r.id, regionDelay.getValue()); });
     };
     setupSlider (fadeIn, 0.0, 10000.0, 1.0, " ms");
     setupSlider (fadeOut, 0.0, 10000.0, 1.0, " ms");
@@ -86,31 +92,32 @@ Inspector::Inspector (Studio& s) : studio (s)
     {
         f->setSkewFactorFromMidPoint (500.0);
         f->onValueChange = [this, f] {
-            const auto* r = region();
-            if (r == nullptr || refreshing || r->isMidi)
+            if (refreshing)
                 return;
             const auto samples = static_cast<Samples> (f->getValue() / 1000.0 * studio.model().info.sampleRate);
-            if (f == &fadeIn)
-                studio.check (studio.session().setRegionFades (
-                    r->id, model::Fade { std::min (samples, r->length - r->audio.fadeOut.length), r->audio.fadeIn.curve }, std::nullopt));
-            else
-                studio.check (studio.session().setRegionFades (
-                    r->id, std::nullopt, model::Fade { std::min (samples, r->length - r->audio.fadeIn.length), r->audio.fadeOut.curve }));
+            forRegions (f == &fadeIn ? "Fade In" : "Fade Out", Kind::audio, [&] (const model::Region& r) {
+                if (f == &fadeIn)
+                    return studio.session().setRegionFades (
+                        r.id, model::Fade { std::min (samples, r.length - r.audio.fadeOut.length), r.audio.fadeIn.curve }, std::nullopt);
+                return studio.session().setRegionFades (
+                    r.id, std::nullopt, model::Fade { std::min (samples, r.length - r.audio.fadeIn.length), r.audio.fadeOut.curve });
+            });
         };
     }
     for (auto* c : { &fadeInCurve, &fadeOutCurve })
     {
         c->addItemList (curveNames, 1);
         c->onChange = [this, c] {
-            const auto* r = region();
-            if (r == nullptr || refreshing || r->isMidi)
+            if (refreshing || c->getSelectedItemIndex() < 0)
                 return;
-            const std::string curve = curveIds[std::max (0, c->getSelectedItemIndex())];
-            if (c == &fadeInCurve)
-                studio.check (studio.session().setRegionFades (r->id, model::Fade { r->audio.fadeIn.length, curve }, std::nullopt));
-            else
-                studio.check (studio.session().setRegionFades (r->id, std::nullopt, model::Fade { r->audio.fadeOut.length, curve }));
+            const std::string curve = curveIds[c->getSelectedItemIndex()];
+            forRegions ("Fade Curve", Kind::audio, [&] (const model::Region& r) {
+                if (c == &fadeInCurve)
+                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, curve }, std::nullopt);
+                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, curve });
+            });
         };
+        c->setTextWhenNothingSelected (dash());
     }
     describe (fadeInCurve, "Fade-in curve");
     describe (fadeOutCurve, "Fade-out curve");
@@ -118,6 +125,7 @@ Inspector::Inspector (Studio& s) : studio (s)
     regionQuantize.addItem ("Off", 1);
     for (std::size_t i = 1; i < gridValues().size(); ++i)
         regionQuantize.addItem (gridValues()[i].name, static_cast<int> (i) + 1);
+    regionQuantize.setTextWhenNothingSelected (dash());
     describe (regionQuantize, "Region quantize", "Playback quantize for the region: Off or a grid value (notes keep their positions)");
     regionQuantize.onChange = [this] { setRegionQuantize(); };
     setupSlider (quantizeStrength, 0.0, 100.0, 1.0, "%");
@@ -146,19 +154,18 @@ Inspector::Inspector (Studio& s) : studio (s)
             studio.session().endGesture();
             studio.edited();
         };
-        sl->onValueChange = [this, sl] {
-            const auto* r = region();
-            if (r == nullptr || refreshing || ! r->isMidi)
+        sl->onValueChange = [this, sl, name] {
+            if (refreshing)
                 return;
             const auto v = static_cast<int> (std::lround (sl->getValue()));
-            studio.check (sl == &regionTranspose ? studio.session().setRegionTranspose (r->id, v)
-                                                 : studio.session().setRegionVelocityOffset (r->id, v));
+            forRegions (name, Kind::midi, [&] (const model::Region& r) {
+                return sl == &regionTranspose ? studio.session().setRegionTranspose (r.id, v) : studio.session().setRegionVelocityOffset (r.id, v);
+            });
         };
     }
     describe (applyQuantize, Cmd::applyQuantize);
     applyQuantize.onClick = [this] {
-        if (const auto* r = region())
-            studio.check (studio.session().applyRegionQuantize (r->id));
+        forRegions ("Apply Quantize", Kind::midi, [&] (const model::Region& r) { return studio.session().applyRegionQuantize (r.id); });
     };
 
     const auto noteField = [this] (juce::Label& l, const juce::String& name, std::function<void (const juce::String&)> apply) {
@@ -261,6 +268,42 @@ const model::Region* Inspector::region() const
     return ids.empty() ? nullptr : studio.model().region (ids.front());
 }
 
+std::vector<const model::Region*> Inspector::regions() const
+{
+    std::vector<const model::Region*> out;
+    for (const auto& id : studio.selection.ids())
+        if (const auto* r = studio.model().region (id))
+            out.push_back (r);
+    return out;
+}
+
+juce::String Inspector::dash() { return juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94")); }
+
+void Inspector::forRegions (std::string_view name, Kind kind, const std::function<commands::EditResult (const model::Region&)>& change)
+{
+    auto& session = studio.session();
+    // A slider drag has its own gesture open; anything else on several regions becomes one undo step here.
+    // One region keeps the step its own command names.
+    const auto ids = studio.selection.ids();
+    const bool own = ! session.inGesture() && ids.size() > 1;
+    if (own)
+        session.beginGesture (std::string (name));
+    for (const auto& id : ids)
+    {
+        // Looked up again each time: every edit rebuilds the model.
+        const auto* r = studio.model().region (id);
+        if (r == nullptr || (kind == Kind::audio && r->isMidi) || (kind == Kind::midi && ! r->isMidi))
+            continue;
+        if (! studio.check (change (*r)))
+            break;
+    }
+    if (own)
+    {
+        session.endGesture();
+        studio.edited();
+    }
+}
+
 std::vector<commands::NoteRef> Inspector::notes() const
 {
     if (! studio.notesFocused())
@@ -285,60 +328,74 @@ void Inspector::editNotes (std::string_view name, const std::function<void (mode
 
 void Inspector::setRegionQuantize()
 {
-    const auto* r = region();
-    if (r == nullptr || refreshing || ! r->isMidi)
+    if (refreshing || regionQuantize.getSelectedId() <= 0)
         return;
     const auto index = regionQuantize.getSelectedId() - 1;
     std::optional<model::RegionQuantize> q;
     if (index > 0)
         q = model::RegionQuantize { gridValues()[static_cast<std::size_t> (index)].ticks, quantizeStrength.getValue() / 100.0, quantizeSwing.getValue() / 100.0 };
-    studio.check (studio.session().setRegionQuantize (r->id, q));
+    forRegions ("Region Quantize", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionQuantize (r.id, q); });
 }
 
 void Inspector::refresh()
 {
     const juce::ScopedValueSetter<bool> guard (refreshing, true);
-    const auto* r = region();
-    const bool audio = r != nullptr && ! r->isMidi;
+    // Region section: with several regions selected each field shows their common value, or a
+    // dash when they differ; an edit sets them all (spec 04 §4, AT-UI-10).
+    const auto all = regions();
+    const auto* r = all.empty() ? nullptr : all.front();
+    const bool audio = r != nullptr && std::none_of (all.begin(), all.end(), [] (const model::Region* x) { return x->isMidi; });
+    const bool midi = r != nullptr && std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->isMidi; });
+    const auto same = [&all] (auto field) {
+        return std::all_of (all.begin(), all.end(), [&] (const model::Region* x) { return ! (field (*x) < field (*all.front())) && ! (field (*all.front()) < field (*x)); });
+    };
+    mixed.clear();
+    const auto show = [this] (juce::Slider& sl, double value, bool allSame) {
+        if (! allSame)
+            mixed.insert (&sl);
+        sl.setValue (value, juce::dontSendNotification);
+        sl.updateText();
+    };
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay })
         c->setVisible (r != nullptr);
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve })
         c->setVisible (audio);
     if (r != nullptr)
     {
-        regionName.setText (juce::String (r->name), juce::dontSendNotification);
-        regionMute.setToggleState (r->muted, juce::dontSendNotification);
-        regionLoop.setToggleState (r->loop && r->loop->enabled, juce::dontSendNotification);
-        regionDelay.setValue (r->delayMs, juce::dontSendNotification);
+        regionName.setText (all.size() == 1 ? juce::String (r->name) : juce::String (static_cast<int> (all.size())) + " regions", juce::dontSendNotification);
+        regionMute.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->muted; }), juce::dontSendNotification);
+        regionLoop.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->loop && x->loop->enabled; }), juce::dontSendNotification);
+        show (regionDelay, r->delayMs, same ([] (const model::Region& x) { return x.delayMs; }));
     }
     if (audio)
     {
         const auto rate = static_cast<double> (studio.model().info.sampleRate);
-        regionGain.setValue (r->audio.gainDb, juce::dontSendNotification);
-        fadeIn.setValue (static_cast<double> (r->audio.fadeIn.length) * 1000.0 / rate, juce::dontSendNotification);
-        fadeOut.setValue (static_cast<double> (r->audio.fadeOut.length) * 1000.0 / rate, juce::dontSendNotification);
-        fadeInCurve.setSelectedItemIndex (curveIndex (r->audio.fadeIn.curve), juce::dontSendNotification);
-        fadeOutCurve.setSelectedItemIndex (curveIndex (r->audio.fadeOut.curve), juce::dontSendNotification);
+        show (regionGain, r->audio.gainDb, same ([] (const model::Region& x) { return x.audio.gainDb; }));
+        show (fadeIn, static_cast<double> (r->audio.fadeIn.length) * 1000.0 / rate, same ([] (const model::Region& x) { return x.audio.fadeIn.length; }));
+        show (fadeOut, static_cast<double> (r->audio.fadeOut.length) * 1000.0 / rate, same ([] (const model::Region& x) { return x.audio.fadeOut.length; }));
+        fadeInCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeIn.curve; }) ? curveIndex (r->audio.fadeIn.curve) : -1, juce::dontSendNotification);
+        fadeOutCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeOut.curve; }) ? curveIndex (r->audio.fadeOut.curve) : -1, juce::dontSendNotification);
     }
-    const bool midi = r != nullptr && r->isMidi;
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &applyQuantize,
                                                                           &regionTranspose, &regionVelocity })
         c->setVisible (midi);
     if (midi)
     {
-        regionTranspose.setValue (r->midi.transpose, juce::dontSendNotification);
-        regionVelocity.setValue (r->midi.velocityOffset, juce::dontSendNotification);
+        show (regionTranspose, r->midi.transpose, same ([] (const model::Region& x) { return x.midi.transpose; }));
+        show (regionVelocity, r->midi.velocityOffset, same ([] (const model::Region& x) { return x.midi.velocityOffset; }));
         const auto& q = r->midi.quantize;
+        const bool sameGrid = same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->grid : Ticks (-1); });
         int id = 1;
         for (std::size_t i = 1; q && i < gridValues().size(); ++i)
             if (gridValues()[i].ticks == q->grid)
                 id = static_cast<int> (i) + 1;
-        regionQuantize.setSelectedId (id, juce::dontSendNotification);
-        quantizeStrength.setValue (q ? q->strength * 100.0 : 100.0, juce::dontSendNotification);
-        quantizeSwing.setValue (q ? q->swing * 100.0 : 0.0, juce::dontSendNotification);
-        quantizeStrength.setEnabled (q.has_value());
-        quantizeSwing.setEnabled (q.has_value());
-        applyQuantize.setEnabled (q.has_value());
+        regionQuantize.setSelectedId (sameGrid ? id : 0, juce::dontSendNotification);
+        show (quantizeStrength, q ? q->strength * 100.0 : 100.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->strength : 1.0; }));
+        show (quantizeSwing, q ? q->swing * 100.0 : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->swing : 0.0; }));
+        const bool any = std::any_of (all.begin(), all.end(), [] (const model::Region* x) { return x->midi.quantize.has_value(); });
+        quantizeStrength.setEnabled (any && sameGrid);
+        quantizeSwing.setEnabled (any && sameGrid);
+        applyQuantize.setEnabled (any);
     }
 
     // Note section: one value, or a dash when the selected notes differ.
@@ -355,9 +412,9 @@ void Inspector::refresh()
             const auto v = field (*found.front());
             return std::all_of (found.begin(), found.end(), [&] (const model::Note* n) { return field (*n) == v; }) ? std::optional (v) : std::nullopt;
         };
-        const juce::String mixed (juce::CharPointer_UTF8 ("\xe2\x80\x94"));
+        const auto mixedText = dash();
         const auto pitch = common ([] (const model::Note& n) { return n.pitch; });
-        notePitch.setText (pitch ? juce::String (commands::noteName (*pitch)) : mixed, juce::dontSendNotification);
+        notePitch.setText (pitch ? juce::String (commands::noteName (*pitch)) : mixedText, juce::dontSendNotification);
         // Velocity shows the range of a mixed selection, like "64–110" (W-4 step 9).
         const auto [lowest, highest] = std::minmax_element (found.begin(), found.end(), [] (const model::Note* a, const model::Note* b) { return a->velocity < b->velocity; });
         noteVelocity.setText ((*lowest)->velocity == (*highest)->velocity
@@ -365,9 +422,9 @@ void Inspector::refresh()
                                   : juce::String ((*lowest)->velocity) + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x93")) + juce::String ((*highest)->velocity),
                               juce::dontSendNotification);
         const auto length = common ([] (const model::Note& n) { return n.length; });
-        noteLength.setText (length ? juce::String (*length) : mixed, juce::dontSendNotification);
+        noteLength.setText (length ? juce::String (*length) : mixedText, juce::dontSendNotification);
         const auto channel = common ([] (const model::Note& n) { return n.channel; });
-        noteChannel.setText (channel ? juce::String (*channel) : mixed, juce::dontSendNotification);
+        noteChannel.setText (channel ? juce::String (*channel) : mixedText, juce::dontSendNotification);
         std::optional<Ticks> position;
         for (std::size_t i = 0; i < found.size(); ++i)
         {
@@ -376,7 +433,7 @@ void Inspector::refresh()
             if (! position)
                 break;
         }
-        notePosition.setText (position ? juce::String (formatBarsBeats (*position, studio.model().signatures)) : mixed, juce::dontSendNotification);
+        notePosition.setText (position ? juce::String (formatBarsBeats (*position, studio.model().signatures)) : mixedText, juce::dontSendNotification);
     }
 
     const auto* t = studio.model().track (studio.selectedTrack());

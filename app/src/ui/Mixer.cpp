@@ -1138,11 +1138,13 @@ void MixerView::refresh()
 {
     const auto& m = studio.model();
     std::vector<Id> order;
+    // A hidden track's strip goes with its row (D-W3-7) and comes back with Show Hidden Tracks.
+    const auto shown = [&] (const model::Track& t) { return ! t.hidden || m.info.showHiddenTracks; };
     for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind != model::TrackKind::bus && t->kind != model::TrackKind::master)
+        if (const auto* t = m.track (tid); t != nullptr && t->kind != model::TrackKind::bus && t->kind != model::TrackKind::master && shown (*t))
             order.push_back (tid);
     for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind == model::TrackKind::bus)
+        if (const auto* t = m.track (tid); t != nullptr && t->kind == model::TrackKind::bus && shown (*t))
             order.push_back (tid);
     if (order != shownOrder)
     {
