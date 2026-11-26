@@ -85,7 +85,8 @@ enum class Cmd
     // D-W8-7: automation mode commands and lanes
     automationAllOff, automationAllRead, automationAllTouch, automationAllLatch, automationOffRead, automationLatchRead, cycleAutomationParameter,
     // D-UI-39: marker commands
-    markerForSelection, cycleToMarker, cycleToPreviousMarker, cycleToNextMarker, previousMarkerSetLocators, nextMarkerSetLocators, goToMarkerNumber
+    markerForSelection, cycleToMarker, cycleToPreviousMarker, cycleToNextMarker, previousMarkerSetLocators, nextMarkerSetLocators, goToMarkerNumber,
+    applyRegionParameters, applyRegionParametersExceptDelay
 };
 
 struct CommandInfo

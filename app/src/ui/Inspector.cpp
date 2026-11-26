@@ -235,8 +235,35 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
         studio.edited();
     };
     regionDelay.onValueChange = [this] {
-        if (! refreshing)
-            forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) { return studio.session().setRegionDelay (r.id, regionDelay.getValue()); });
+        if (refreshing)
+            return;
+        const bool ticks = regionDelayUnit.getSelectedId() == 2;
+        const auto v = regionDelay.getValue();
+        forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) {
+            return ticks ? studio.session().setRegionDelayTicks (r.id, static_cast<Ticks> (std::llround (v))) : studio.session().setRegionDelay (r.id, v);
+        });
+    };
+    regionDelay.textFromValueFunction = [this] (double v) {
+        if (mixed.contains (&regionDelay))
+            return dash();
+        return regionDelayUnit.getSelectedId() == 2 ? juce::String (juce::roundToInt (v)) : juce::String (v, 1);
+    };
+    regionDelayUnit.addItem ("ms", 1);
+    regionDelayUnit.addItem ("ticks", 2);
+    describe (regionDelayUnit, "Region delay unit", "Delay in milliseconds or in ticks (960 to a quarter note)");
+    regionDelayUnit.onChange = [this] {
+        if (refreshing || regionDelayUnit.getSelectedId() == 0)
+            return;
+        const bool ticks = regionDelayUnit.getSelectedId() == 2;
+        // Switching the unit starts the delay at zero.
+        forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) {
+            return ticks ? studio.session().setRegionDelayTicks (r.id, 0) : studio.session().setRegionDelay (r.id, 0.0);
+        });
+    };
+    describe (regionReverse, Cmd::reverseRegions);
+    regionReverse.onClick = [this] {
+        studio.perform (Cmd::reverseRegions);
+        refresh();
     };
     setupSlider (fadeIn, 0.0, 10000.0, 1.0, " ms");
     setupSlider (fadeOut, 0.0, 10000.0, 1.0, " ms");
@@ -317,6 +344,47 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             });
         };
     }
+    setupSlider (quantizeRange, -960.0, 960.0, 1.0, "");
+    setupSlider (quantizeFlam, -960.0, 960.0, 1.0, "");
+    describe (quantizeRange, "Q-Range", "Positive: only notes this close to the grid move. Negative: only notes further away. 0: all (ticks)");
+    describe (quantizeFlam, "Q-Flam", "Spreads notes that quantize together this many ticks apart, upwards (or downwards when negative)");
+    for (auto* sl : { &quantizeRange, &quantizeFlam })
+    {
+        sl->setDoubleClickReturnValue (true, 0.0);
+        sl->onDragStart = [this] { studio.session().beginGesture ("Region Quantize"); };
+        sl->onDragEnd = [this] {
+            studio.session().endGesture();
+            studio.edited();
+        };
+        sl->onValueChange = [this] { setRegionQuantize(); };
+    }
+    for (const auto& [value, name] : dynamicsValues())
+        regionDynamics.addItem (name, regionDynamics.getNumItems() + 1);
+    regionDynamics.setTextWhenNothingSelected (dash());
+    describe (regionDynamics, "Region dynamics", "Widens or narrows the differences between velocities; Fixed plays them all alike");
+    regionDynamics.onChange = [this] {
+        const auto i = regionDynamics.getSelectedItemIndex();
+        if (refreshing || i < 0)
+            return;
+        const auto v = dynamicsValues()[static_cast<std::size_t> (i)].first;
+        forRegions ("Region Dynamics", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionDynamics (r.id, v); });
+    };
+    for (const auto& [value, name] : gateValues())
+        regionGate.addItem (name, regionGate.getNumItems() + 1);
+    regionGate.setTextWhenNothingSelected (dash());
+    describe (regionGate, "Region gate time", "Plays notes shorter or longer by a percent; Fixed plays them short, Legato ties each to the next");
+    regionGate.onChange = [this] {
+        const auto i = regionGate.getSelectedItemIndex();
+        if (refreshing || i < 0)
+            return;
+        const auto v = gateValues()[static_cast<std::size_t> (i)].first;
+        forRegions ("Region Gate Time", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionGate (r.id, v); });
+    };
+    describe (regionClipLength, "Clip Length", "Notes stop at the region's end; off, they play their whole length");
+    regionClipLength.onClick = [this] {
+        const bool on = regionClipLength.getToggleState();
+        forRegions ("Region Clip Length", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionClipLength (r.id, on); });
+    };
     describe (applyQuantize, Cmd::applyQuantize);
     applyQuantize.onClick = [this] {
         forRegions ("Apply Quantize", Kind::midi, [&] (const model::Region& r) { return studio.session().applyRegionQuantize (r.id); });
@@ -504,6 +572,8 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
 
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &regionDelay, &fadeIn, &fadeOut,
                                                                           &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
+                                                                          &regionDelayUnit, &regionReverse, &quantizeRange, &quantizeFlam, &regionDynamics,
+                                                                          &regionGate, &regionClipLength,
                                                                           &applyQuantize, &regionTranspose, &regionVelocity, &notePitch, &noteVelocity, &noteLength, &notePosition,
                                                                           &noteChannel, &trackName, &trackColour, &monitor, &midiIn, &midiInChannel, &midiOutChannel,
                                                                           &delayUnit, &trackDelay, &trackTranspose, &trackVelocity, &keyLow, &keyHigh,
@@ -654,6 +724,23 @@ void Inspector::editNotes (std::string_view name, const std::function<void (mode
     studio.edited();
 }
 
+const std::vector<std::pair<int, juce::String>>& Inspector::dynamicsValues()
+{
+    static const std::vector<std::pair<int, juce::String>> values { { 0, "Fixed" },    { 33, "3:1" },     { 50, "2:1" },   { 67, "1.5:1" },
+                                                                    { 80, "1.25:1" }, { 100, "Off" },    { 125, "1:1.25" }, { 150, "1:1.5" },
+                                                                    { 200, "1:2" },   { 300, "1:3" } };
+    return values;
+}
+
+const std::vector<std::pair<int, juce::String>>& Inspector::gateValues()
+{
+    using M = model::MidiRegionData;
+    static const std::vector<std::pair<int, juce::String>> values { { 0, "Off" },   { M::gateFixed, "Fixed" }, { 25, "25%" },  { 50, "50%" },
+                                                                    { 75, "75%" },  { 90, "90%" },             { 110, "110%" }, { 125, "125%" },
+                                                                    { 150, "150%" }, { 200, "200%" },          { M::gateLegato, "Legato" } };
+    return values;
+}
+
 void Inspector::setRegionQuantize()
 {
     if (refreshing || regionQuantize.getSelectedId() <= 0)
@@ -661,7 +748,8 @@ void Inspector::setRegionQuantize()
     const auto index = regionQuantize.getSelectedId() - 1;
     std::optional<model::RegionQuantize> q;
     if (index > 0)
-        q = model::RegionQuantize { gridValues()[static_cast<std::size_t> (index)].ticks, quantizeStrength.getValue() / 100.0, quantizeSwing.getValue() / 100.0 };
+        q = model::RegionQuantize { gridValues()[static_cast<std::size_t> (index)].ticks, quantizeStrength.getValue() / 100.0, quantizeSwing.getValue() / 100.0,
+                                    static_cast<Ticks> (std::lround (quantizeRange.getValue())), static_cast<Ticks> (std::lround (quantizeFlam.getValue())) };
     forRegions ("Region Quantize", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionQuantize (r.id, q); });
 }
 
@@ -684,16 +772,24 @@ void Inspector::refresh()
         sl.setValue (value, juce::dontSendNotification);
         sl.updateText();
     };
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay, &regionDelayUnit })
         c->setVisible (r != nullptr);
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve, &regionReverse })
         c->setVisible (audio);
     if (r != nullptr)
     {
         regionName.setText (all.size() == 1 ? juce::String (r->name) : juce::String (static_cast<int> (all.size())) + " regions", juce::dontSendNotification);
         regionMute.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->muted; }), juce::dontSendNotification);
         regionLoop.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->loop && x->loop->enabled; }), juce::dontSendNotification);
-        show (regionDelay, r->delayMs, same ([] (const model::Region& x) { return x.delayMs; }));
+        const bool ticks = r->delayInTicks;
+        const bool sameUnit = same ([] (const model::Region& x) { return x.delayInTicks; });
+        regionDelayUnit.setSelectedId (sameUnit ? (ticks ? 2 : 1) : 0, juce::dontSendNotification);
+        if (ticks)
+            regionDelay.setRange (-static_cast<double> (model::Region::maxDelayTicks), static_cast<double> (model::Region::maxDelayTicks), 1.0);
+        else
+            regionDelay.setRange (-500.0, 500.0, 0.1);
+        show (regionDelay, ticks ? static_cast<double> (r->delayTicks) : r->delayMs,
+              sameUnit && same ([] (const model::Region& x) { return x.delayInTicks ? static_cast<double> (x.delayTicks) : x.delayMs; }));
     }
     if (audio)
     {
@@ -703,9 +799,11 @@ void Inspector::refresh()
         show (fadeOut, static_cast<double> (r->audio.fadeOut.length) * 1000.0 / rate, same ([] (const model::Region& x) { return x.audio.fadeOut.length; }));
         fadeInCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeIn.curve; }) ? curveIndex (r->audio.fadeIn.curve) : -1, juce::dontSendNotification);
         fadeOutCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeOut.curve; }) ? curveIndex (r->audio.fadeOut.curve) : -1, juce::dontSendNotification);
+        regionReverse.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.reversed; }), juce::dontSendNotification);
     }
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &applyQuantize,
-                                                                          &regionTranspose, &regionVelocity })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &quantizeRange, &quantizeFlam,
+                                                                          &applyQuantize, &regionTranspose, &regionVelocity, &regionDynamics, &regionGate,
+                                                                          &regionClipLength })
         c->setVisible (midi);
     if (midi)
     {
@@ -721,8 +819,22 @@ void Inspector::refresh()
         show (quantizeStrength, q ? q->strength * 100.0 : 100.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->strength : 1.0; }));
         show (quantizeSwing, q ? q->swing * 100.0 : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->swing : 0.0; }));
         const bool any = std::any_of (all.begin(), all.end(), [] (const model::Region* x) { return x->midi.quantize.has_value(); });
+        show (quantizeRange, q ? static_cast<double> (q->range) : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->range : Ticks (0); }));
+        show (quantizeFlam, q ? static_cast<double> (q->flam) : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->flam : Ticks (0); }));
         quantizeStrength.setEnabled (any && sameGrid);
         quantizeSwing.setEnabled (any && sameGrid);
+        quantizeRange.setEnabled (any && sameGrid);
+        quantizeFlam.setEnabled (any && sameGrid);
+        const auto indexOf = [] (const std::vector<std::pair<int, juce::String>>& values, int v) {
+            for (std::size_t i = 0; i < values.size(); ++i)
+                if (values[i].first == v)
+                    return static_cast<int> (i);
+            return -1;
+        };
+        regionDynamics.setSelectedItemIndex (same ([] (const model::Region& x) { return x.midi.dynamics; }) ? indexOf (dynamicsValues(), r->midi.dynamics) : -1,
+                                             juce::dontSendNotification);
+        regionGate.setSelectedItemIndex (same ([] (const model::Region& x) { return x.midi.gate; }) ? indexOf (gateValues(), r->midi.gate) : -1, juce::dontSendNotification);
+        regionClipLength.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->midi.clipLength; }), juce::dontSendNotification);
         applyQuantize.setEnabled (any);
     }
 
@@ -904,6 +1016,10 @@ void Inspector::paintBody (juce::Graphics& g)
     label (quantizeSwing, "Swing");
     label (regionTranspose, "Transpose");
     label (regionVelocity, "Velocity");
+    label (quantizeRange, "Q-Range");
+    label (quantizeFlam, "Q-Flam");
+    label (regionDynamics, "Dynamics");
+    label (regionGate, "Gate time");
     label (notePitch, "Pitch");
     label (noteVelocity, "Velocity");
     label (noteLength, "Length");
@@ -953,9 +1069,14 @@ int Inspector::layout (int width, int visibleHeight)
         auto toggles = row();
         regionMute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2));
         regionLoop.setBounds (toggles);
-        regionDelay.setBounds (withLabel (row()));
+        {
+            auto delay = withLabel (row());
+            regionDelayUnit.setBounds (delay.removeFromRight (64));
+            regionDelay.setBounds (delay.withTrimmedRight (space::half));
+        }
         if (regionGain.isVisible())
         {
+            regionReverse.setBounds (withLabel (row()));
             regionGain.setBounds (withLabel (row()));
             fadeIn.setBounds (withLabel (row()));
             fadeInCurve.setBounds (withLabel (row()));
@@ -967,9 +1088,14 @@ int Inspector::layout (int width, int visibleHeight)
             regionQuantize.setBounds (withLabel (row()));
             quantizeStrength.setBounds (withLabel (row()));
             quantizeSwing.setBounds (withLabel (row()));
+            quantizeRange.setBounds (withLabel (row()));
+            quantizeFlam.setBounds (withLabel (row()));
             applyQuantize.setBounds (withLabel (row()));
             regionTranspose.setBounds (withLabel (row()));
             regionVelocity.setBounds (withLabel (row()));
+            regionDynamics.setBounds (withLabel (row()));
+            regionGate.setBounds (withLabel (row()));
+            regionClipLength.setBounds (withLabel (row()));
         }
         r.removeFromTop (space::s1);
     }

@@ -3,6 +3,7 @@
 #include "EngineFixtures.h"
 
 #include "weft/engine/arrange/OfflineRender.h"
+#include "weft/commands/Notes.h"
 #include "weft/engine/midi/MidiInputs.h"
 
 #include <catch2/catch_approx.hpp>
@@ -346,4 +347,174 @@ TEST_CASE ("AT-TRK-23: track parameters change what an instrument track plays, f
     CHECK (ons[0].event.data2 == 110);
     CHECK ((ons[0].event.status & 0x0f) == 4);
     CHECK (ons[1].event.data1 == 65);
+}
+
+TEST_CASE ("AT-PRL-22: MIDI region dynamics, gate time, clip length, Q-Range, Q-Flam and delay in ticks", "[E][pianoroll][AT-PRL-22]")
+{
+    KeysRig k;
+    auto& s = k.rig.session;
+    const auto add = [&] (Ticks pos, Ticks length, int pitch, int velocity) {
+        model::Note n;
+        n.pos = pos;
+        n.length = length;
+        n.pitch = pitch;
+        n.velocity = velocity;
+        return *s.addNote (k.region, n);
+    };
+    const auto played = [&] {
+        const auto& r = *s.model().region (k.region);
+        return commands::playedNotes (r, *s.model().sequence (r.midi.sequenceId), r.start, r.start + r.length);
+    };
+    add (0, 480, 60, 100);
+    add (960, 480, 62, 40);
+
+    // Dynamics scales the distance from 64; Fixed plays them alike, and the velocity offset adds after.
+    REQUIRE (s.setRegionDynamics (k.region, 50));
+    CHECK (s.undoName() == "Region Dynamics");
+    auto p = played();
+    REQUIRE (p.size() == 2);
+    CHECK (p[0].velocity == 82);
+    CHECK (p[1].velocity == 52);
+    REQUIRE (s.setRegionDynamics (k.region, 0));
+    REQUIRE (s.setRegionVelocityOffset (k.region, 10));
+    p = played();
+    CHECK (p[0].velocity == 74);
+    CHECK (p[1].velocity == 74);
+    CHECK_FALSE (s.setRegionDynamics (k.region, 301));
+    REQUIRE (s.setRegionDynamics (k.region, 100));
+    REQUIRE (s.setRegionVelocityOffset (k.region, 0));
+
+    // Gate time: a percent of the length, Fixed short, Legato to the next note.
+    REQUIRE (s.setRegionGate (k.region, 50));
+    CHECK (played()[0].off == 240);
+    REQUIRE (s.setRegionGate (k.region, model::MidiRegionData::gateFixed));
+    CHECK (played()[0].off == model::MidiRegionData::fixedGateTicks);
+    REQUIRE (s.setRegionGate (k.region, model::MidiRegionData::gateLegato));
+    p = played();
+    CHECK (p[0].off == 960);
+    CHECK (p[1].off == 1440); // the last keeps its length
+    CHECK_FALSE (s.setRegionGate (k.region, 201));
+    REQUIRE (s.setRegionGate (k.region, 0));
+
+    // Clip Length: a note past the region's end stops there, or plays on with it off.
+    const auto end = s.model().region (k.region)->length;
+    add (end - 240, 960, 64, 100);
+    CHECK (played().back().off == end);
+    REQUIRE (s.setRegionClipLength (k.region, false));
+    CHECK (played().back().off == end + 720);
+    k.play (barSamples * 3);
+    const auto offs = k.seen (0x80);
+    REQUIRE_FALSE (offs.empty());
+    CHECK (offs.back().frame == (end + 720) * barSamples / barTicks);
+    REQUIRE (s.setRegionClipLength (k.region, true));
+
+    // Q-Range and Q-Flam, on a 1/16 grid.
+    const auto chordBase = 2 * barTicks;
+    REQUIRE (s.trimRegionLength (k.region, 3 * barTicks));
+    add (chordBase + 10, 120, 50, 100);  // 10 ticks late
+    add (chordBase + 300, 120, 51, 100); // 60 ticks late of 240
+    model::RegionQuantize q;
+    q.grid = 240;
+    q.range = 30;
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    const auto onOf = [&] (int pitch) {
+        for (const auto& n : played())
+            if (n.note->pitch == pitch)
+                return n.on;
+        return Ticks (-1);
+    };
+    CHECK (onOf (50) == chordBase);
+    CHECK (onOf (51) == chordBase + 300);
+    q.range = -30;
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    CHECK (onOf (50) == chordBase + 10);
+    CHECK (onOf (51) == chordBase + 240);
+    q.range = 0;
+    q.flam = 20; // a chord a beat later, one note 5 ticks late
+    add (chordBase + 960, 120, 67, 100);
+    add (chordBase + 960, 120, 72, 100);
+    add (chordBase + 965, 120, 70, 100);
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    CHECK (onOf (67) == chordBase + 960);
+    CHECK (onOf (70) == chordBase + 980);
+    CHECK (onOf (72) == chordBase + 1000);
+    q.flam = -20;
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    CHECK (onOf (72) == chordBase + 960);
+    CHECK (onOf (67) == chordBase + 1000);
+    q.range = 4000;
+    CHECK_FALSE (s.setRegionQuantize (k.region, q));
+    REQUIRE (s.setRegionQuantize (k.region, std::nullopt));
+
+    // Delay in ticks; setting milliseconds goes back to them.
+    REQUIRE (s.setRegionDelayTicks (k.region, 480));
+    CHECK (s.model().region (k.region)->delayInTicks);
+    k.play (barSamples);
+    REQUIRE_FALSE (k.seen (0x90).empty());
+    CHECK (k.seen (0x90)[0].frame == 480 * barSamples / barTicks);
+    CHECK_FALSE (s.setRegionDelayTicks (k.region, 961));
+    REQUIRE (s.setRegionDelay (k.region, 10.0));
+    CHECK_FALSE (s.model().region (k.region)->delayInTicks);
+    REQUIRE (s.setRegionDelayTicks (k.region, 240));
+
+    // A save and load keeps them.
+    REQUIRE (s.setRegionGate (k.region, 50));
+    const auto again = model::Region::fromValue (k.region, s.model().region (k.region)->toValue());
+    CHECK (again.midi.gate == 50);
+    CHECK (again.delayInTicks);
+    CHECK (again.delayTicks == 240);
+}
+
+TEST_CASE ("AT-PRL-23: Apply All Parameters writes the region parameters into the notes", "[E][pianoroll][AT-PRL-23]")
+{
+    KeysRig k;
+    auto& s = k.rig.session;
+    model::Note n;
+    n.pos = 250;
+    n.length = 480;
+    n.pitch = 60;
+    n.velocity = 100;
+    const auto note = *s.addNote (k.region, n);
+    REQUIRE (s.setRegionQuantize (k.region, model::RegionQuantize { 240, 1.0, 0.0 }));
+    REQUIRE (s.setRegionTranspose (k.region, 2));
+    REQUIRE (s.setRegionVelocityOffset (k.region, 10));
+    REQUIRE (s.setRegionGate (k.region, 50));
+    REQUIRE (s.setRegionDelayTicks (k.region, 120));
+    k.play (barSamples);
+    const auto before = k.seen (0x90);
+    REQUIRE (before.size() == 1);
+
+    REQUIRE (s.applyRegionParameters ({ k.region }, false));
+    CHECK (s.undoName() == "Apply All Except Delay");
+    auto r = *s.model().region (k.region);
+    CHECK_FALSE (r.midi.quantize);
+    CHECK (r.midi.transpose == 0);
+    CHECK (r.midi.velocityOffset == 0);
+    CHECK (r.midi.gate == 0);
+    CHECK (r.delayTicks == 120); // kept
+    const auto* written = s.model().sequence (r.midi.sequenceId)->sortedNotes()[0];
+    CHECK (written->pos == 240);
+    CHECK (written->length == 240);
+    CHECK (written->pitch == 62);
+    CHECK (written->velocity == 110);
+    // It plays the same.
+    k.play (barSamples);
+    const auto after = k.seen (0x90);
+    REQUIRE (after.size() == 1);
+    CHECK (after[0].frame == before[0].frame);
+    CHECK (after[0].event.data1 == before[0].event.data1);
+    CHECK (after[0].event.data2 == before[0].event.data2);
+
+    // With the delay too, then one undo step back.
+    REQUIRE (s.applyRegionParameters ({ k.region }, true));
+    CHECK (s.undoName() == "Apply All Parameters");
+    r = *s.model().region (k.region);
+    CHECK (r.delayTicks == 0);
+    CHECK (s.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pos == 360);
+    s.undo();
+    s.undo();
+    r = *s.model().region (k.region);
+    CHECK (r.midi.transpose == 2);
+    CHECK (s.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pos == 250);
+    CHECK (s.model().sequence (r.midi.sequenceId)->notes.contains (note));
 }

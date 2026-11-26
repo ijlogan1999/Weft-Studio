@@ -331,6 +331,11 @@ Value Track::toValue() const
 
 // Region --------------------------------------------------------------------
 
+Value RegionQuantize::toValue() const
+{
+    return Value::map().set ("grid", grid).set ("strength", strength).set ("swing", swing).set ("range", range).set ("flam", flam);
+}
+
 Region Region::fromValue (const Id& id, const Value& v)
 {
     Region r;
@@ -344,6 +349,8 @@ Region Region::fromValue (const Id& id, const Value& v)
         r.color = Color::fromValue (v["color"]);
     r.muted = v["muted"].asBool();
     r.delayMs = clampDouble (v["delayMs"], 0.0, -500.0, 500.0);
+    r.delayInTicks = v["delayInTicks"].asBool();
+    r.delayTicks = clampInt<Ticks> (v["delayTicks"], 0, -maxDelayTicks, maxDelayTicks);
     r.z = v["z"].asInt();
     if (v["loop"].isMap())
         r.loop = RegionLoop { v["loop"]["enabled"].asBool(), v["loop"]["endTicks"].asInt() };
@@ -358,10 +365,15 @@ Region Region::fromValue (const Id& id, const Value& v)
             const auto& q = m["quantize"];
             r.midi.quantize = RegionQuantize { std::max<std::int64_t> (1, q["grid"].asInt (240)),
                                                clampDouble (q["strength"], 1.0, 0.0, 1.0),
-                                               clampDouble (q["swing"], 0.0, 0.0, 1.0) };
+                                               clampDouble (q["swing"], 0.0, 0.0, 1.0),
+                                               clampInt<Ticks> (q["range"], 0, -3840, 3840),
+                                               clampInt<Ticks> (q["flam"], 0, -960, 960) };
         }
         r.midi.transpose = clampInt<int> (m["transpose"], 0, -127, 127);
         r.midi.velocityOffset = clampInt<int> (m["velocityOffset"], 0, -127, 127);
+        r.midi.dynamics = clampInt<int> (m["dynamics"], 100, 0, MidiRegionData::maxDynamics);
+        r.midi.gate = clampInt<int> (m["gate"], 0, MidiRegionData::gateLegato, MidiRegionData::maxGate);
+        r.midi.clipLength = m["clipLength"].asBool (true);
     }
     else
     {
@@ -371,6 +383,7 @@ Region Region::fromValue (const Id& id, const Value& v)
         r.audio.gainDb = clampDouble (a["gainDb"], 0.0, minusInfinityDb, 24.0);
         r.audio.fadeIn = fadeFromValue (a["fadeIn"]);
         r.audio.fadeOut = fadeFromValue (a["fadeOut"]);
+        r.audio.reversed = a["reversed"].asBool();
         // Fades never exceed the region (W-3h step 4); shrink proportionally.
         const auto total = r.audio.fadeIn.length + r.audio.fadeOut.length;
         if (total > r.length)
@@ -398,6 +411,8 @@ Value Region::toValue() const
                   .set ("color", color ? color->toValue() : Value())
                   .set ("muted", muted)
                   .set ("delayMs", delayMs)
+                  .set ("delayInTicks", delayInTicks)
+                  .set ("delayTicks", delayTicks)
                   .set ("z", z)
                   .set ("loop", loop ? Value::map().set ("enabled", loop->enabled).set ("endTicks", loop->endTicks) : Value())
                   .set ("takeFolderId", takeFolderId.empty() ? Value() : Value (takeFolderId))
@@ -408,13 +423,16 @@ Value Region::toValue() const
     {
         Value q;
         if (midi.quantize)
-            q = Value::map().set ("grid", midi.quantize->grid).set ("strength", midi.quantize->strength).set ("swing", midi.quantize->swing);
+            q = midi.quantize->toValue();
         v.set ("midi", Value::map()
                            .set ("sequenceId", midi.sequenceId)
                            .set ("sequenceOffset", midi.sequenceOffset)
                            .set ("quantize", q)
                            .set ("transpose", midi.transpose)
-                           .set ("velocityOffset", midi.velocityOffset));
+                           .set ("velocityOffset", midi.velocityOffset)
+                           .set ("dynamics", midi.dynamics)
+                           .set ("gate", midi.gate)
+                           .set ("clipLength", midi.clipLength));
     }
     else
     {
@@ -423,7 +441,8 @@ Value Region::toValue() const
                             .set ("sourceOffset", audio.sourceOffset)
                             .set ("gainDb", audio.gainDb)
                             .set ("fadeIn", fadeToValue (audio.fadeIn))
-                            .set ("fadeOut", fadeToValue (audio.fadeOut)));
+                            .set ("fadeOut", fadeToValue (audio.fadeOut))
+                            .set ("reversed", audio.reversed));
     }
     return v;
 }

@@ -595,7 +595,8 @@ EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::Med
             if (projection.mediaRef (media.hash) == nullptr)
                 good = good && w.put (doc::path ({ keys::media, media.hash }), media.toValue());
             good = good && w.put (regionPath (id) / "audio" / "media", Value (media.hash))
-                   && w.put (regionPath (id) / "audio" / "sourceOffset", Value (static_cast<std::int64_t> (0)));
+                   && w.put (regionPath (id) / "audio" / "sourceOffset", Value (static_cast<std::int64_t> (0)))
+                   && w.put (regionPath (id) / "audio" / "reversed", Value (! projection.region (id)->audio.reversed));
             stamp (w, id);
         }
         return wrote (good);

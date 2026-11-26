@@ -1415,6 +1415,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::selectPreviousTrack: case Cmd::selectNextTrack: case Cmd::selectInsideCycle: case Cmd::selectMutedRegions: case Cmd::selectSameColor: case Cmd::selectFirst: case Cmd::selectLast: case Cmd::togglePreviousRegion: case Cmd::toggleNextRegion: case Cmd::scrollToSelection: case Cmd::moveToPlayhead: case Cmd::moveToPlayheadSelectNext: case Cmd::regionStartToPlayhead: case Cmd::regionEndToPlayhead: case Cmd::splitAtCycle:
         case Cmd::automationAllOff: case Cmd::automationAllRead: case Cmd::automationAllTouch: case Cmd::automationAllLatch: case Cmd::automationOffRead: case Cmd::automationLatchRead: case Cmd::cycleAutomationParameter:
         case Cmd::markerForSelection: case Cmd::cycleToMarker: case Cmd::cycleToPreviousMarker: case Cmd::cycleToNextMarker: case Cmd::previousMarkerSetLocators: case Cmd::nextMarkerSetLocators: case Cmd::goToMarkerNumber:
+        case Cmd::applyRegionParameters: case Cmd::applyRegionParametersExceptDelay:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
             break;
     }
@@ -2545,6 +2546,20 @@ bool Studio::perform (Cmd command)
         case Cmd::notesLeft:
         case Cmd::notesRight:
             return false; // these arrows do nothing in the arrange view
+        case Cmd::applyRegionParameters:
+        case Cmd::applyRegionParametersExceptDelay:
+        {
+            std::vector<Id> midi;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && r->isMidi)
+                    midi.push_back (id);
+            if (midi.empty())
+            {
+                setStatus ("Select MIDI regions.");
+                return false;
+            }
+            return check (s.applyRegionParameters (midi, command == Cmd::applyRegionParameters));
+        }
         case Cmd::applyQuantize:
         {
             bool any = false;
@@ -4111,6 +4126,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle, Cmd::automationAllOff, Cmd::automationAllRead,
         Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead, Cmd::automationLatchRead, Cmd::markerForSelection,
         Cmd::cycleToMarker, Cmd::cycleToPreviousMarker, Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators,
+        Cmd::applyRegionParameters, Cmd::applyRegionParametersExceptDelay,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

@@ -919,6 +919,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
                 add (c);
             {
+                // D-W4-16: write the region parameters into the notes.
+                juce::PopupMenu params;
+                for (auto c : { Cmd::applyRegionParameters, Cmd::applyRegionParametersExceptDelay })
+                    params.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+                menu.addSubMenu ("MIDI Region Parameters", params);
+            }
+            {
                 // Piano roll note functions (D-W4-14, D-W4-15).
                 juce::PopupMenu noteMenu;
                 for (auto c : { Cmd::selectAllFollowing, Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead,

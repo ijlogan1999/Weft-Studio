@@ -140,6 +140,8 @@ Region {
   name: string?                 // default derived from source
   color: Color?                 // null = inherit track color
   muted: bool
+  delayMs: float                // -500..500, default 0 (L-RGN-6)
+  delayInTicks: bool, delayTicks: Ticks   // -960..960; whichever was set last applies (D-W4-16)
   z: int                        // stacking order on its track; higher plays on top
   loop: { enabled: bool, endTicks: Ticks }?    // loop repeats until endTicks
   takeFolderId: Id?             // set if this region is a take
@@ -160,6 +162,7 @@ AudioRegionData {
   gainDb: Db                    // region gain, default 0
   fadeIn:  Fade                 // { length: Samples, curve: 'linear'|'equalPower'|'sCurve' }
   fadeOut: Fade
+  reversed: bool                // plays a reversed copy (L-RGN-12, D-W4-16)
 }
 ```
 
@@ -171,9 +174,12 @@ Invariants: `sourceOffset ≥ 0`; `sourceOffset + length ≤ media.lengthSamples
 MidiRegionData {
   sequenceId: Id                // events live in a MidiSequence (shared by aliases in v2)
   sequenceOffset: Ticks         // event at this sequence tick plays at region.start
-  quantize: { grid: Ticks, strength: 0..1, swing: 0..1 } | null
+  quantize: { grid: Ticks, strength: 0..1, swing: 0..1, range: Ticks, flam: Ticks } | null   // range, flam: D-W4-16
   transpose: int                // semitones, default 0 (v2 UI; field present from v1)
   velocityOffset: int           // default 0 (v2 UI)
+  dynamics: int                 // percent 0..300, 100 = off, 0 = Fixed (D-W4-16)
+  gate: int                     // 0 off, 1..200 percent, -1 Fixed, -2 Legato
+  clipLength: bool              // default true
 }
 ```
 

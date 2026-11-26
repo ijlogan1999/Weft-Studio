@@ -176,6 +176,7 @@ struct AudioRegionData
     Samples sourceOffset = 0;
     double gainDb = 0.0;
     Fade fadeIn, fadeOut;
+    bool reversed = false; // plays a reversed copy of its audio (L-RGN-12); Reverse toggles it
 };
 
 struct RegionQuantize
@@ -183,6 +184,13 @@ struct RegionQuantize
     Ticks grid = 240;
     double strength = 1.0; // 0..1
     double swing = 0.0;    // 0..1 (UI shows 0-100%)
+    /** Q-Range (D-W4-16): positive, only notes within this many ticks of their grid point move; negative,
+        only notes further away than that; 0, every note. */
+    Ticks range = 0;
+    /** Q-Flam: notes landing together are spread this many ticks apart, upwards in pitch (negative: downwards). */
+    Ticks flam = 0;
+    Value toValue() const;
+    bool operator== (const RegionQuantize&) const = default;
 };
 
 struct MidiRegionData
@@ -192,6 +200,14 @@ struct MidiRegionData
     std::optional<RegionQuantize> quantize;
     int transpose = 0;
     int velocityOffset = 0;
+    /** Dynamics (D-W4-16): each velocity's distance from 64 is scaled by this percent; 0 is Fixed (all 64), 100 off. */
+    int dynamics = 100;
+    /** Gate time: 0 off, else a percent of each note's length; gateFixed plays short notes, gateLegato ties them. */
+    int gate = 0;
+    static constexpr int gateFixed = -1, gateLegato = -2, maxGate = 200, maxDynamics = 300;
+    static constexpr Ticks fixedGateTicks = 30;
+    /** Clip Length: notes stop at the region's end (the default); off, they play their whole length. */
+    bool clipLength = true;
 };
 
 struct RegionLoop
@@ -212,6 +228,10 @@ struct Region
     bool muted = false;
     /** Playback delay in milliseconds, -500..+500 (L-RGN-6, D-W3-5): the region plays this much later (or earlier). */
     double delayMs = 0.0;
+    /** The delay in ticks instead (D-W4-16), -960..+960; whichever was set last applies. */
+    bool delayInTicks = false;
+    Ticks delayTicks = 0;
+    static constexpr Ticks maxDelayTicks = 960;
     std::int64_t z = 0;
     std::optional<RegionLoop> loop;
     Id takeFolderId;

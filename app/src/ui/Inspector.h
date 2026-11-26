@@ -58,6 +58,8 @@ public:
     juce::Slider regionGain, fadeIn, fadeOut;
     /** Playback delay for any region (L-RGN-6). */
     juce::Slider regionDelay;
+    juce::ComboBox regionDelayUnit; // ms or ticks (D-W4-16)
+    juce::ToggleButton regionReverse { "Reverse" }; // audio
     juce::ComboBox fadeInCurve, fadeOutCurve;
     // MIDI region quantize (F-QNT-1).
     juce::ComboBox regionQuantize;
@@ -65,6 +67,13 @@ public:
     juce::TextButton applyQuantize { "Apply Quantize" };
     // MIDI region playback parameters (L-RPR-2).
     juce::Slider regionTranspose, regionVelocity;
+    // More MIDI region parameters (D-W4-16).
+    juce::Slider quantizeRange, quantizeFlam;
+    juce::ComboBox regionDynamics, regionGate;
+    juce::ToggleButton regionClipLength { "Clip Length" };
+    /** The Dynamics and Gate Time menus: each item's value, by item index. */
+    static const std::vector<std::pair<int, juce::String>>& dynamicsValues();
+    static const std::vector<std::pair<int, juce::String>>& gateValues();
     // Note section (piano roll focus with notes selected).
     juce::Label notePitch, noteVelocity, noteLength, notePosition, noteChannel;
     // Track section.

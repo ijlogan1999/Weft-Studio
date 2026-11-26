@@ -217,12 +217,20 @@ public:
     /** A region's own color, or nullopt to follow its track (F-TRK-9). */
     EditResult setRegionColor (const Id& regionId, std::optional<model::Color> color);
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
-    /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-20); notes keep their stored pitch. */
+    /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-9); notes keep their stored pitch. */
     EditResult setRegionTranspose (const Id& regionId, int semitones);
     /** Region playback delay, -500..+500 ms (L-RGN-6, D-W3-5); the region's position doesn't change. */
     EditResult setRegionDelay (const Id& regionId, double delayMs);
-    /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-20); results stay within 1..127. */
+    /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-9); results stay within 1..127. */
     EditResult setRegionVelocityOffset (const Id& regionId, int offset);
+    /** Region delay in ticks, -960..+960 (D-W4-16); setRegionDelay goes back to milliseconds. */
+    EditResult setRegionDelayTicks (const Id& regionId, Ticks ticks);
+    /** MIDI region Dynamics percent, 0 (Fixed) to 300, 100 off (D-W4-16). */
+    EditResult setRegionDynamics (const Id& regionId, int percent);
+    /** MIDI region Gate Time: 0 off, 1..200 percent, MidiRegionData::gateFixed or gateLegato (D-W4-16). */
+    EditResult setRegionGate (const Id& regionId, int gate);
+    /** MIDI region Clip Length (D-W4-16). */
+    EditResult setRegionClipLength (const Id& regionId, bool clip);
 
     // Several regions (arrange view) ---------------------------------------------
     /** Drag move (W-3b): one undo step; the plan is planMove's. Moved regions go on top (D-W3-2). */
@@ -301,6 +309,9 @@ public:
     EditResult quantizeNotes (const std::vector<Id>& regionIds, const std::vector<NoteRef>& notes, Ticks grid, double strength, double swingPercent);
     /** Apply Quantize (W-5 region quantize step 4): bakes the region's playback quantize into its notes and turns it off. */
     EditResult applyRegionQuantize (const Id& regionId);
+    /** Apply All Parameters Permanently (D-W4-16): writes the region's quantize, transpose, velocity, dynamics,
+        gate time and clip length (and, with `delay`, its delay) into its notes and resets them. One undo step. */
+    EditResult applyRegionParameters (const std::vector<Id>& regionIds, bool delay);
 
     // Controller lanes (F-PRL-12); positions are timeline ticks --------------------------
     std::optional<Id> addController (const Id& regionId, model::CcEvent event);

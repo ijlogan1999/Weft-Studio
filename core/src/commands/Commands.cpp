@@ -875,11 +875,11 @@ EditResult Session::setRegionQuantize (const Id& regionId, std::optional<model::
         return reject ("That region no longer exists.");
     if (! r->isMidi)
         return reject ("Quantize applies to MIDI regions.");
-    if (q && (q->grid <= 0 || q->strength < 0 || q->strength > 1 || q->swing < 0 || q->swing > 1))
+    if (q && (q->grid <= 0 || q->strength < 0 || q->strength > 1 || q->swing < 0 || q->swing > 1 || std::abs (q->range) > 3840 || std::abs (q->flam) > 960))
         return reject ("Quantize settings are out of range.");
     Value v;
     if (q)
-        v = Value::map().set ("grid", q->grid).set ("strength", q->strength).set ("swing", q->swing);
+        v = q->toValue();
     return run ("Region Quantize", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "midi" / "quantize", v);
         stamp (w, regionId);
@@ -910,7 +910,60 @@ EditResult Session::setRegionDelay (const Id& regionId, double delayMs)
     if (std::isnan (delayMs) || delayMs < -500.0 || delayMs > 500.0)
         return reject ("Delay is -500 to +500 ms.");
     return run ("Region Delay", [&] (TxnWriter& w) {
-        bool good = w.put (regionPath (regionId) / "delayMs", Value (delayMs));
+        bool good = w.put (regionPath (regionId) / "delayMs", Value (delayMs)) && w.put (regionPath (regionId) / "delayInTicks", Value (false));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionDelayTicks (const Id& regionId, Ticks ticks)
+{
+    if (projection.region (regionId) == nullptr)
+        return reject ("That region no longer exists.");
+    if (ticks < -model::Region::maxDelayTicks || ticks > model::Region::maxDelayTicks)
+        return reject ("Delay is -960 to +960 ticks.");
+    return run ("Region Delay", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "delayTicks", Value (ticks)) && w.put (regionPath (regionId) / "delayInTicks", Value (true));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionDynamics (const Id& regionId, int percent)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return reject ("Dynamics applies to MIDI regions.");
+    if (percent < 0 || percent > model::MidiRegionData::maxDynamics)
+        return reject ("Dynamics is 0 to 300%.");
+    return run ("Region Dynamics", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "dynamics", Value (percent));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionGate (const Id& regionId, int gate)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return reject ("Gate time applies to MIDI regions.");
+    if (gate < model::MidiRegionData::gateLegato || gate > model::MidiRegionData::maxGate)
+        return reject ("Gate time is Fixed, Legato or 1 to 200%.");
+    return run ("Region Gate Time", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "gate", Value (gate));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionClipLength (const Id& regionId, bool clip)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return reject ("Clip Length applies to MIDI regions.");
+    return run ("Region Clip Length", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "clipLength", Value (clip));
         stamp (w, regionId);
         return wrote (good);
     });

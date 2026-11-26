@@ -433,3 +433,89 @@ TEST_CASE ("D-UI-13 controls take keyboard focus with a visible ring, and clicks
     // The ring itself: the theme makes one for any focusable component.
     CHECK (Theme::get().lookAndFeel().createFocusOutlineForComponent (*ui.main) != nullptr);
 }
+
+TEST_CASE ("AT-PRL-24 the inspector sets the more MIDI region parameters and Reverse", "[UI][AT-PRL-24]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    ui.studio.selection.set ({ a });
+    ui.studio.edited();
+    ui.settle();
+    auto& in = ui.main->inspector();
+    REQUIRE (in.regionDynamics.isVisible());
+    CHECK (in.regionDynamics.getText() == "Off");
+    CHECK (in.regionGate.getText() == "Off");
+    CHECK (in.regionClipLength.getToggleState());
+    CHECK (in.regionDelayUnit.getText() == "ms");
+    CHECK_FALSE (in.regionReverse.isVisible());
+
+    in.regionDynamics.setSelectedItemIndex (2, juce::sendNotificationSync); // 2:1
+    in.regionGate.setText ("Legato", juce::sendNotificationSync);
+    in.regionClipLength.setToggleState (false, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (a).midi.dynamics == 50);
+    CHECK (ui.region (a).midi.gate == model::MidiRegionData::gateLegato);
+    CHECK_FALSE (ui.region (a).midi.clipLength);
+    CHECK (s.undoName() == "Region Clip Length");
+
+    // Q-Range and Q-Flam need a quantize value, and keep it.
+    CHECK_FALSE (in.quantizeRange.isEnabled());
+    in.regionQuantize.setSelectedId (in.regionQuantize.getNumItems(), juce::sendNotificationSync);
+    ui.settle();
+    REQUIRE (in.quantizeRange.isEnabled());
+    const auto grid = ui.region (a).midi.quantize->grid;
+    in.quantizeRange.setValue (30, juce::sendNotificationSync);
+    in.quantizeFlam.setValue (-10, juce::sendNotificationSync);
+    ui.settle();
+    REQUIRE (ui.region (a).midi.quantize);
+    CHECK (ui.region (a).midi.quantize->grid == grid);
+    CHECK (ui.region (a).midi.quantize->range == 30);
+    CHECK (ui.region (a).midi.quantize->flam == -10);
+
+    // Delay in ticks.
+    in.regionDelayUnit.setSelectedId (2, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (a).delayInTicks);
+    CHECK (in.regionDelay.getMaximum() == 960.0);
+    in.regionDelay.setValue (240, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (a).delayTicks == 240);
+    CHECK (in.regionDelay.getTextFromValue (240) == "240");
+
+    // Edit › MIDI Region Parameters.
+    const auto menu = ui.main->getMenuForIndex (1, "Edit");
+    juce::StringArray names;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().text == "MIDI Region Parameters")
+            for (juce::PopupMenu::MenuItemIterator sub (*it.getItem().subMenu); sub.next();)
+                names.add (sub.getItem().text);
+    CHECK (names == juce::StringArray { "Apply All Parameters Permanently", "Apply All Except Delay" });
+    CHECK (ui.main->run (Cmd::applyRegionParametersExceptDelay));
+    CHECK (s.undoName() == "Apply All Except Delay");
+    CHECK_FALSE (ui.region (a).midi.quantize);
+    CHECK (ui.region (a).midi.dynamics == 100);
+    CHECK (ui.region (a).delayTicks == 240);
+    ui.settle();
+    CHECK (in.regionDynamics.getText() == "Off");
+
+    // Reverse for audio regions, as a tick box.
+    const auto file = writeSine (ui.folder.path / "sine.wav");
+    engine::DropTarget target;
+    target.at = 4 * bar;
+    target.trackId = ui.m().trackOrder.front();
+    const auto outcome = ui.studio.importFiles ({ file }, target);
+    REQUIRE (outcome.regions.size() == 1);
+    const auto audio = outcome.regions.front();
+    ui.studio.selection.set ({ audio });
+    ui.studio.edited();
+    ui.settle();
+    REQUIRE (in.regionReverse.isVisible());
+    CHECK_FALSE (in.regionReverse.getToggleState());
+    in.regionReverse.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (audio).audio.reversed);
+    CHECK (in.regionReverse.getToggleState());
+    CHECK (s.undoName() == "Reverse");
+}

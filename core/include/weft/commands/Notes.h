@@ -36,6 +36,20 @@ const model::Note* findNote (const model::ProjectModel& m, const NoteRef& ref);
 /** The MIDI region on a track that covers a timeline tick (topmost when stacked), or null. */
 const model::Region* midiRegionAt (const model::ProjectModel& m, const Id& trackId, Ticks at);
 
+/** A region note as it plays (D-W4-16), in timeline ticks: after the region's quantize (with Q-Range and Q-Flam),
+    gate time and clip length, with its velocity after Dynamics and the velocity offset (1..127). The pitch is the
+    stored one: the caller adds the region's transpose, which a track's No Transpose ignores. */
+struct PlayedNote
+{
+    const model::Note* note = nullptr;
+    Ticks on = 0, off = 0;
+    int velocity = 64;
+};
+
+/** The notes one pass of a region plays, from passStart to passEnd (a looped region plays several passes), in
+    order. With onlyQuantize, just the quantize applies (Apply Quantize). Muted notes don't play. */
+std::vector<PlayedNote> playedNotes (const model::Region& r, const model::MidiSequence& seq, Ticks passStart, Ticks passEnd, bool onlyQuantize = false);
+
 /** "C3" for MIDI 60 (D-W4-1); sharps for black keys ("C#3"). */
 std::string noteName (int pitch);
 inline bool isBlackKey (int pitch) noexcept

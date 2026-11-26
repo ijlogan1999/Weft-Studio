@@ -204,6 +204,8 @@ std::vector<CommandInfo> build()
         { Cmd::previousMarkerSetLocators, "Previous Marker and Set Locators", "Ctrl+Alt+Shift+,", { key (',', ctrl | alt | shift) } },
         { Cmd::nextMarkerSetLocators, "Next Marker and Set Locators", "Ctrl+Alt+Shift+.", { key ('.', ctrl | alt | shift) } },
         { Cmd::goToMarkerNumber, "Go to Marker Number...", "Ctrl+/", { key ('/', ctrl) } },
+        { Cmd::applyRegionParameters, "Apply All Parameters Permanently", "", {} },
+        { Cmd::applyRegionParametersExceptDelay, "Apply All Except Delay", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
         { Cmd::automationAllTouch, "Set All Tracks to Automation Touch", "", {} },
