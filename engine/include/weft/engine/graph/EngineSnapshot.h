@@ -42,6 +42,9 @@ struct AudioSegment
     float gain = 1;                            // region gain
     std::int64_t fadeIn = 0, fadeOut = 0;      // lengths in device samples
     FadeCurve fadeInCurve = FadeCurve::equalPower, fadeOutCurve = FadeCurve::equalPower;
+    /** Speed fades (D-UI-51), in device samples: over the first `speedUp` the read speeds up from a standstill,
+        over the last `slowDown` it slows down to one. */
+    std::int64_t speedUp = 0, slowDown = 0;
     /** Under a higher region's fade: the complementary gain, so the two crossfade (D-W1-5).
         The upper region's fade position u runs 0..1 over [duckFrom, duckFrom + duckLength), rising for
         a fade-in and falling for a fade-out; this segment plays at fadeGain (duckCurve, 1 - u). */

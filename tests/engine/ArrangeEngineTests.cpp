@@ -3,6 +3,7 @@
 #include "EngineFixtures.h"
 
 #include "weft/engine/arrange/OfflineRender.h"
+#include "weft/engine/dsp/Stretch.h"
 
 #include <catch2/catch_approx.hpp>
 
@@ -470,4 +471,156 @@ TEST_CASE ("AT-EDA-3: the Audio File Editor's functions rewrite the file and mov
     CHECK (rig.session.model().region (b)->length == 4000);
     REQUIRE (rig.session.undo().done);
     CHECK_FALSE (engine::editAudioFile (rig.session, "b3:ramp", engine::FileEdit::trim, 0, 0, rig.media, mediaDir));
+}
+
+namespace
+{
+/** The frequency over [from, to) of the output, from its upward zero crossings. */
+double frequencyOf (const std::vector<float>& v, std::size_t from, std::size_t to)
+{
+    std::vector<double> ups;
+    for (std::size_t i = from + 1; i < to && i < v.size(); ++i)
+        if (v[i - 1] < 0.0f && v[i] >= 0.0f)
+            ups.push_back (static_cast<double> (i - 1) + static_cast<double> (-v[i - 1]) / static_cast<double> (v[i] - v[i - 1]));
+    if (ups.size() < 2)
+        return 0.0;
+    return static_cast<double> (ups.size() - 1) / ((ups.back() - ups.front()) / 48000.0);
+}
+
+float peakOf (const std::vector<float>& v, std::size_t from, std::size_t to)
+{
+    float peak = 0.0f;
+    for (std::size_t i = from; i < to && i < v.size(); ++i)
+        peak = std::max (peak, std::abs (v[i]));
+    return peak;
+}
+} // namespace
+
+TEST_CASE ("AT-ARR-48: audio region transpose, fine tune, speed, speed fades and time stretch", "[E][arrange][AT-ARR-48]")
+{
+    Rig rig;
+    const auto track = rig.audioTrack();
+    rig.media.add ("b3:sine", sineMedia (48000, 440.0));
+    model::MediaRef m;
+    m.hash = "b3:sine";
+    m.originalName = "sine.wav";
+    m.lengthSamples = 48000;
+    REQUIRE (rig.session.addMedia (m));
+    const auto id = rig.session.createAudioRegion (track, 0, "b3:sine", 0, 48000).value();
+    rig.sync();
+    auto& s = rig.session;
+    const auto region = [&] { return *s.model().region (id); };
+    const auto play = [&] {
+        rig.sync();
+        rig.engine.stop();
+        rig.engine.play (0);
+        return rig.run (200000);
+    };
+
+    // As it is: 440 Hz for a second.
+    auto out = play();
+    CHECK (frequencyOf (out, 2000, 46000) == Catch::Approx (440.0).epsilon (0.002));
+
+    // Speed 200%: twice as fast and an octave up, half as long.
+    REQUIRE (s.setAudioRegionSpeed (id, 2.0));
+    CHECK (s.undoName() == "Region Speed");
+    CHECK (region().length == 24000);
+    out = play();
+    CHECK (frequencyOf (out, 1000, 23000) == Catch::Approx (880.0).epsilon (0.002));
+    CHECK (peakOf (out, 24100, 30000) == 0.0f);
+    // Trims and splits follow the speed: half a region's length is all of the second half of the file.
+    const auto right = s.splitRegion (id, 480); // 12000 samples in
+    REQUIRE (right);
+    CHECK (s.model().region (*right)->audio.sourceOffset == 24000);
+    CHECK (s.model().region (*right)->audio.speed == Catch::Approx (2.0));
+    REQUIRE (s.joinRegions ({ id, *right }));
+    CHECK (region().length == 24000);
+    s.trimRegionLength (id, 48000); // can't run past the file's end
+    CHECK (region().length == 24000);
+    REQUIRE (s.undoName() == "Join Regions");
+    REQUIRE (s.undo().done); // the join
+    REQUIRE (s.undo().done); // the split
+    REQUIRE (s.undo().done); // the speed
+    CHECK (region().length == 48000);
+    CHECK (region().audio.speed == Catch::Approx (1.0));
+    CHECK_FALSE (s.setAudioRegionSpeed (id, 5.0));
+
+    // Transpose +12: an octave up, the length unchanged. Fine Tune +50 cents on its own: a quarter tone up.
+    REQUIRE (s.setAudioRegionPitch (id, 12, 0));
+    CHECK (s.undoName() == "Transpose");
+    CHECK (region().length == 48000);
+    out = play();
+    CHECK (frequencyOf (out, 4000, 44000) == Catch::Approx (880.0).epsilon (0.01));
+    CHECK (peakOf (out, 40000, 47000) > 0.25f);
+    CHECK (rig.media.find (engine::derivedMediaKey (region().audio)) != nullptr);
+    REQUIRE (s.setAudioRegionPitch (id, 0, 50));
+    out = play();
+    CHECK (frequencyOf (out, 4000, 44000) == Catch::Approx (440.0 * std::pow (2.0, 50.0 / 1200.0)).epsilon (0.01));
+    CHECK_FALSE (s.setAudioRegionPitch (id, 25, 0));
+    CHECK_FALSE (s.setAudioRegionPitch (id, 0, 51));
+    REQUIRE (s.setAudioRegionPitch (id, 0, 0));
+    rig.sync();
+    // Derived audio no region uses any more is let go.
+    CHECK (rig.media.size() == 1);
+
+    // Time stretch to twice the length: two seconds of 440 Hz. It stays within 4x.
+    REQUIRE (s.stretchAudioRegion (id, 96000));
+    CHECK (s.undoName() == "Time Stretch");
+    CHECK (region().length == 96000);
+    CHECK (region().audio.stretch == Catch::Approx (2.0));
+    out = play();
+    CHECK (frequencyOf (out, 4000, 92000) == Catch::Approx (440.0).epsilon (0.01));
+    CHECK (peakOf (out, 88000, 95000) > 0.25f);
+    CHECK (peakOf (out, 96100, 100000) == 0.0f);
+    REQUIRE (s.stretchAudioRegion (id, 1000000));
+    CHECK (region().audio.stretch == Catch::Approx (4.0));
+    CHECK (region().length == 192000);
+    // From the start edge: the end stays put.
+    REQUIRE (s.undo().done);
+    REQUIRE (s.undo().done);
+    REQUIRE (s.moveRegion (id, barTicks));
+    const auto endTick = s.model().regionEndTick (region());
+    REQUIRE (s.stretchAudioRegion (id, 24000, true));
+    CHECK (region().audio.stretch == Catch::Approx (0.5));
+    CHECK (s.model().regionEndTick (region()) == Catch::Approx (endTick).margin (1.0));
+    CHECK (region().start == barTicks + 960); // 24000 samples later
+    REQUIRE (s.undo().done);
+    REQUIRE (s.undo().done);
+    REQUIRE (region().audio.stretch == Catch::Approx (1.0));
+    REQUIRE (region().start == 0);
+
+    // Speed Up over the first half second: no level fade, a slow start, and in time once it's over.
+    model::Fade up;
+    up.length = 24000;
+    up.speed = true;
+    REQUIRE (s.setRegionFades (id, up, std::nullopt));
+    CHECK (region().audio.fadeIn.speed);
+    out = play();
+    CHECK (peakOf (out, 2000, 6000) > 0.25f);                            // full level from the start
+    CHECK (frequencyOf (out, 0, 12000) < 440.0 * 0.6);                    // but slow
+    for (std::size_t i = 30000; i < 31000; i += 97)                       // and back in time after the fade
+        CHECK (out[i] == Catch::Approx (0.5 * std::sin (2.0 * std::numbers::pi * 440.0 * static_cast<double> (i) / 48000.0)).margin (0.01));
+    // Slow Down over the last half second winds down to a standstill.
+    model::Fade down;
+    down.length = 24000;
+    down.speed = true;
+    REQUIRE (s.setRegionFades (id, model::Fade {}, down));
+    out = play();
+    CHECK (frequencyOf (out, 2000, 22000) == Catch::Approx (440.0).epsilon (0.01));
+    CHECK (frequencyOf (out, 40000, 47900) < 440.0 * 0.4);
+
+    // Saved with the project; a region left alone writes none of it.
+    REQUIRE (s.setAudioRegionPitch (id, -3, 7));
+    REQUIRE (s.setAudioRegionSpeed (id, 1.5));
+    const auto saved = model::Region::fromValue (id, region().toValue());
+    CHECK (saved.audio.transpose == -3);
+    CHECK (saved.audio.fineTune == 7);
+    CHECK (saved.audio.speed == Catch::Approx (1.5));
+    CHECK (saved.audio.fadeOut.speed);
+    model::Region plain;
+    plain.isMidi = false;
+    const auto v = plain.toValue();
+    CHECK (v["audio"]["transpose"].isNull());
+    CHECK (v["audio"]["speed"].isNull());
+    CHECK (v["audio"]["fadeIn"]["speed"].isNull());
 }

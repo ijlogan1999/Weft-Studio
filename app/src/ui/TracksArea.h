@@ -306,6 +306,11 @@ private:
     Id dragRegion;
     juce::Point<float> downAt, lastAt;
     bool gestureOpen = false;
+    /** Ctrl-drag on an audio region's edge time-stretches it (D-UI-51): the length it will have, shown as an
+        outline and applied when the drag ends (each stretch renders the audio again). */
+    bool stretching = false;
+    std::optional<Samples> stretchLength;
+    std::optional<juce::Rectangle<float>> stretchOutline() const;
 };
 
 class TracksArea final : public juce::Component, private juce::ChangeListener, private juce::ScrollBar::Listener, private juce::Timer

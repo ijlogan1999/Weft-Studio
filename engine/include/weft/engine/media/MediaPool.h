@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace weft::engine
 {
@@ -35,6 +36,8 @@ public:
     void remove (const std::string& hash) { pool.erase (hash); }
     void clear() { pool.clear(); }
     std::size_t size() const noexcept { return pool.size(); }
+    /** Every hash or derived-audio key in the pool. */
+    std::vector<std::string> keys() const;
 
     /** Files up to this many frames are read whole; longer ones stream. Default: 30 s at 48 kHz. */
     void setResidentLimit (std::int64_t frames) noexcept { residentFrames = frames; }

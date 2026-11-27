@@ -65,6 +65,9 @@ public:
     juce::ComboBox regionDelayUnit; // ms or ticks (D-W4-16)
     juce::ToggleButton regionReverse { "Reverse" }; // audio
     juce::ComboBox fadeInCurve, fadeOutCurve;
+    // Audio region pitch and time (D-UI-51).
+    juce::Slider audioTranspose, fineTune, audioSpeed;
+    juce::ToggleButton speedUp { "Speed Up" }, slowDown { "Slow Down" };
     // MIDI region quantize (F-QNT-1).
     juce::ComboBox regionQuantize;
     juce::Slider quantizeStrength, quantizeSwing;

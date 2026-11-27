@@ -25,7 +25,13 @@ bool canHold (const model::Track& t, bool midi) { return midi ? t.kind == TrackK
 
 std::string kindName (TrackKind kind) { return kind == TrackKind::instrument ? "Inst" : "Audio"; }
 
-Value fadeValue (const model::Fade& f) { return Value::map().set ("length", f.length).set ("curve", f.curve); }
+Value fadeValue (const model::Fade& f)
+{
+    auto v = Value::map().set ("length", f.length).set ("curve", f.curve);
+    if (f.speed)
+        v.set ("speed", true);
+    return v;
+}
 
 Ticks regionEnd (const model::ProjectModel& m, const Region& r)
 {
@@ -589,10 +595,12 @@ EditResult Session::replaceFile (const std::string& oldHash, const model::MediaR
         if (r->isMidi || r->audio.media != oldHash)
             continue;
         const auto start = map (r->audio.sourceOffset, false);
-        const auto end = map (r->audio.sourceOffset + r->length, true);
-        if (end - start < model::minAudioRegionLength)
+        const auto end = map (r->audio.sourceOffset + r->audio.sourceLength (r->length), true);
+        // The region keeps its speed and stretch, so its length follows the part of the file it plays.
+        const auto length = r->audio.timelineLength (end - start);
+        if (length < model::minAudioRegionLength)
             return reject ("The edit would leave " + r->name + " empty.");
-        changes.push_back ({ id, start, end - start, r.get() });
+        changes.push_back ({ id, start, length, r.get() });
     }
     auto ref = media;
     ref.addedBy = userId;
@@ -657,7 +665,7 @@ EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::Med
             return reject ("That region no longer exists.");
         if (r->isMidi)
             return reject ("Reverse applies to audio regions.");
-        if (media.lengthSamples < r->length)
+        if (media.lengthSamples < r->audio.sourceLength (r->length))
             return reject ("The reversed audio is shorter than the region.");
     }
     return run ("Reverse", [&] (TxnWriter& w) {

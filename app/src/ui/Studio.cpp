@@ -3137,7 +3137,7 @@ bool Studio::perform (Cmd command)
                 if (slip)
                     // Slip right: the content moves later, so it starts earlier in the source.
                     result = r->isMidi ? s.slipRegion (id, r->midi.sequenceOffset - delta)
-                                       : s.slipRegion (id, r->audio.sourceOffset - samples (r->start, delta));
+                                       : s.slipRegion (id, r->audio.sourceOffset - r->audio.sourceLength (samples (r->start, delta)));
                 else if (r->isMidi)
                     result = s.trimRegionLength (id, std::max<Ticks> (1, r->length + delta));
                 else

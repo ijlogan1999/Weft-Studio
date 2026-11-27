@@ -279,9 +279,9 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             forRegions (f == &fadeIn ? "Fade In" : "Fade Out", Kind::audio, [&] (const model::Region& r) {
                 if (f == &fadeIn)
                     return studio.session().setRegionFades (
-                        r.id, model::Fade { std::min (samples, r.length - r.audio.fadeOut.length), r.audio.fadeIn.curve }, std::nullopt);
+                        r.id, model::Fade { std::min (samples, r.length - r.audio.fadeOut.length), r.audio.fadeIn.curve, r.audio.fadeIn.speed }, std::nullopt);
                 return studio.session().setRegionFades (
-                    r.id, std::nullopt, model::Fade { std::min (samples, r.length - r.audio.fadeIn.length), r.audio.fadeOut.curve });
+                    r.id, std::nullopt, model::Fade { std::min (samples, r.length - r.audio.fadeIn.length), r.audio.fadeOut.curve, r.audio.fadeOut.speed });
             });
         };
     }
@@ -294,14 +294,59 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             const std::string curve = curveIds[c->getSelectedItemIndex()];
             forRegions ("Fade Curve", Kind::audio, [&] (const model::Region& r) {
                 if (c == &fadeInCurve)
-                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, curve }, std::nullopt);
-                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, curve });
+                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, curve, r.audio.fadeIn.speed }, std::nullopt);
+                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, curve, r.audio.fadeOut.speed });
             });
         };
         c->setTextWhenNothingSelected (dash());
     }
     describe (fadeInCurve, "Fade-in curve");
     describe (fadeOutCurve, "Fade-out curve");
+    // Speed fades (D-UI-51): the fade in becomes Speed Up, the fade out Slow Down.
+    describe (speedUp, "Speed Up", "The fade in speeds the audio up from a standstill instead of fading its level");
+    describe (slowDown, "Slow Down", "The fade out slows the audio down to a standstill instead of fading its level");
+    for (auto* b : { &speedUp, &slowDown })
+        b->onClick = [this, b] {
+            const bool on = b->getToggleState();
+            forRegions (b == &speedUp ? "Fade In Type" : "Fade Out Type", Kind::audio, [&] (const model::Region& r) {
+                if (b == &speedUp)
+                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, r.audio.fadeIn.curve, on }, std::nullopt);
+                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, r.audio.fadeOut.curve, on });
+            });
+        };
+
+    // Audio region pitch and speed (D-UI-51). Pitch changes render the region's audio again, so they apply when the
+    // slider is let go.
+    setupSlider (audioTranspose, -24.0, 24.0, 1.0, " st");
+    setupSlider (fineTune, -50.0, 50.0, 1.0, " ct");
+    setupSlider (audioSpeed, 25.0, 400.0, 1.0, "%");
+    audioSpeed.setSkewFactorFromMidPoint (100.0);
+    describe (audioTranspose, "Audio transpose", "Shifts the region's pitch this many semitones, keeping its length (double-click resets)");
+    describe (fineTune, "Fine tune", "Shifts the region's pitch this many cents (double-click resets)");
+    describe (audioSpeed, "Speed", "Plays the region faster or slower, like tape: faster is also higher and shorter (double-click resets)");
+    audioTranspose.setDoubleClickReturnValue (true, 0.0);
+    fineTune.setDoubleClickReturnValue (true, 0.0);
+    audioSpeed.setDoubleClickReturnValue (true, 100.0);
+    for (auto* sl : { &audioTranspose, &fineTune })
+    {
+        sl->setChangeNotificationOnlyOnRelease (true);
+        sl->onValueChange = [this, sl] {
+            if (refreshing)
+                return;
+            const auto v = static_cast<int> (std::lround (sl->getValue()));
+            forRegions ("Transpose", Kind::audio, [&] (const model::Region& r) {
+                return sl == &audioTranspose ? studio.session().setAudioRegionPitch (r.id, v, r.audio.fineTune)
+                                             : studio.session().setAudioRegionPitch (r.id, r.audio.transpose, v);
+            });
+        };
+    }
+    audioSpeed.setChangeNotificationOnlyOnRelease (true);
+    audioSpeed.onValueChange = [this] {
+        if (refreshing)
+            return;
+        const auto v = audioSpeed.getValue() / 100.0;
+        forRegions ("Region Speed", Kind::audio, [&] (const model::Region& r) { return studio.session().setAudioRegionSpeed (r.id, v); });
+    };
 
     regionQuantize.addItem ("Off", 1);
     for (std::size_t i = 1; i < gridValues().size(); ++i)
@@ -573,7 +618,8 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &regionDelay, &fadeIn, &fadeOut,
                                                                           &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
                                                                           &regionDelayUnit, &regionReverse, &quantizeRange, &quantizeFlam, &regionDynamics,
-                                                                          &regionGate, &regionClipLength,
+                                                                          &regionGate, &regionClipLength, &audioTranspose, &fineTune, &audioSpeed,
+                                                                          &speedUp, &slowDown,
                                                                           &applyQuantize, &regionTranspose, &regionVelocity, &notePitch, &noteVelocity, &noteLength, &notePosition,
                                                                           &noteChannel, &trackName, &trackColour, &monitor, &midiIn, &midiInChannel, &midiOutChannel,
                                                                           &delayUnit, &trackDelay, &trackTranspose, &trackVelocity, &keyLow, &keyHigh,
@@ -798,7 +844,8 @@ void Inspector::refresh()
     };
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay, &regionDelayUnit })
         c->setVisible (r != nullptr);
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve, &regionReverse })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve, &regionReverse,
+                                                                          &audioTranspose, &fineTune, &audioSpeed, &speedUp, &slowDown })
         c->setVisible (audio);
     if (r != nullptr)
     {
@@ -824,6 +871,11 @@ void Inspector::refresh()
         fadeInCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeIn.curve; }) ? curveIndex (r->audio.fadeIn.curve) : -1, juce::dontSendNotification);
         fadeOutCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeOut.curve; }) ? curveIndex (r->audio.fadeOut.curve) : -1, juce::dontSendNotification);
         regionReverse.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.reversed; }), juce::dontSendNotification);
+        show (audioTranspose, r->audio.transpose, same ([] (const model::Region& x) { return x.audio.transpose; }));
+        show (fineTune, r->audio.fineTune, same ([] (const model::Region& x) { return x.audio.fineTune; }));
+        show (audioSpeed, r->audio.speed * 100.0, same ([] (const model::Region& x) { return x.audio.speed; }));
+        speedUp.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.fadeIn.speed; }), juce::dontSendNotification);
+        slowDown.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.fadeOut.speed; }), juce::dontSendNotification);
     }
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &quantizeRange, &quantizeFlam,
                                                                           &applyQuantize, &regionTranspose, &regionVelocity, &regionDynamics, &regionGate,
@@ -1035,6 +1087,9 @@ void Inspector::paintBody (juce::Graphics& g)
     label (regionDelay, "Delay");
     label (fadeIn, "Fade in");
     label (fadeOut, "Fade out");
+    label (audioTranspose, "Transpose");
+    label (fineTune, "Fine Tune");
+    label (audioSpeed, "Speed");
     label (regionQuantize, "Quantize");
     label (quantizeStrength, "Strength");
     label (quantizeSwing, "Swing");
@@ -1104,8 +1159,13 @@ int Inspector::layout (int width, int visibleHeight)
             regionGain.setBounds (withLabel (row()));
             fadeIn.setBounds (withLabel (row()));
             fadeInCurve.setBounds (withLabel (row()));
+            speedUp.setBounds (withLabel (row()));
             fadeOut.setBounds (withLabel (row()));
             fadeOutCurve.setBounds (withLabel (row()));
+            slowDown.setBounds (withLabel (row()));
+            audioTranspose.setBounds (withLabel (row()));
+            fineTune.setBounds (withLabel (row()));
+            audioSpeed.setBounds (withLabel (row()));
         }
         if (regionQuantize.isVisible())
         {

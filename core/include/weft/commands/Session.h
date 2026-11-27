@@ -228,6 +228,16 @@ public:
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
     /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-9); notes keep their stored pitch. */
     EditResult setRegionTranspose (const Id& regionId, int semitones);
+    /** Audio region pitch (D-UI-51): transpose -24..+24 semitones and fine tune -50..+50 cents, the length
+        unchanged. One undo step "Transpose". */
+    EditResult setAudioRegionPitch (const Id& regionId, int semitones, int cents);
+    /** Audio region tape-style speed, 0.25..4 (D-UI-51): the region plays the same audio faster (and higher), so its
+        length scales by the old speed over the new one. One undo step "Region Speed". */
+    EditResult setAudioRegionSpeed (const Id& regionId, double speed);
+    /** Time stretch (D-UI-51): the region plays the same audio at the same pitch over `newLength` samples.
+        `keepEnd` stretches from the start edge, so the end stays put. The stretch stays within 0.25..4. One undo
+        step "Time Stretch". */
+    EditResult stretchAudioRegion (const Id& regionId, Samples newLength, bool keepEnd = false);
     /** Region playback delay, -500..+500 ms (L-RGN-6, D-W3-5); the region's position doesn't change. */
     EditResult setRegionDelay (const Id& regionId, double delayMs);
     /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-9); results stay within 1..127. */

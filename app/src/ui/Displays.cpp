@@ -72,7 +72,7 @@ void BigDisplay::paint (juce::Graphics& g)
     g.fillAll (colour (Token::background));
     g.setColour (colour (Token::text));
     // The digits fill the window: the font follows its height, and shrinks for a narrow window.
-    auto f = font (Type::monoCounter).withHeight (static_cast<float> (getHeight()) * 0.7f);
+    auto f = fontAtHeight (Type::monoCounter, static_cast<float> (getHeight()) * 0.7f);
     const auto width = juce::GlyphArrangement::getStringWidth (f, shown);
     if (width > static_cast<float> (getWidth()) * 0.92f)
         f = f.withHeight (f.getHeight() * static_cast<float> (getWidth()) * 0.92f / width);
@@ -110,7 +110,7 @@ void PerformanceMeter::paint (juce::Graphics& g)
     g.setColour (colour (load > 0.85f ? Token::meterClip : Token::accent));
     g.fillRect (bar.reduced (1.0f).withWidth ((bar.getWidth() - 2.0f) * load));
     g.setColour (colour (Token::textDim));
-    g.setFont (font (Type::monoSmall).withHeight (std::max (11.0f, static_cast<float> (textRow.getHeight()) * 0.8f)));
+    g.setFont (fontAtHeight (Type::monoSmall, std::max (11.0f, static_cast<float> (textRow.getHeight()) * 0.8f)));
     g.drawText (text(), textRow, juce::Justification::centredLeft, true);
 }
 

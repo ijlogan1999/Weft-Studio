@@ -393,23 +393,25 @@ commands::EditResult reverseRegions (commands::Session& session, const std::vect
         if (ref == nullptr)
             continue;
         // The region's part of the file: from disk when it's there, else from memory.
+        // At its speed and stretch the region plays this much of the file (D-UI-51).
+        const auto frames = r->audio.sourceLength (r->length);
         media::AudioData audio;
         audio.sampleRate = model.info.sampleRate;
         media::WavReader reader;
         if (reader.open (mediaDir / media::mediaFileName (ref->hash)))
         {
-            audio.channels.assign (static_cast<std::size_t> (reader.info().channels), std::vector<float> (static_cast<std::size_t> (r->length)));
+            audio.channels.assign (static_cast<std::size_t> (reader.info().channels), std::vector<float> (static_cast<std::size_t> (frames)));
             std::vector<float*> dest;
             for (auto& c : audio.channels)
                 dest.push_back (c.data());
-            reader.read (r->audio.sourceOffset, r->length, dest.data());
+            reader.read (r->audio.sourceOffset, frames, dest.data());
         }
         else if (const auto source = media.find (ref->hash); source != nullptr && source->resident())
         {
-            audio.channels.assign (static_cast<std::size_t> (source->numChannels()), std::vector<float> (static_cast<std::size_t> (r->length)));
+            audio.channels.assign (static_cast<std::size_t> (source->numChannels()), std::vector<float> (static_cast<std::size_t> (frames)));
             bool missing = false;
             for (int c = 0; c < source->numChannels(); ++c)
-                for (std::int64_t i = 0; i < r->length; ++i)
+                for (std::int64_t i = 0; i < frames; ++i)
                     audio.channels[static_cast<std::size_t> (c)][static_cast<std::size_t> (i)] = source->sample (c, r->audio.sourceOffset + i, missing);
         }
         else

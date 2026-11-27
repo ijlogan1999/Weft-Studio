@@ -2656,3 +2656,89 @@ TEST_CASE ("AT-REC-27 Record Toggle, Replace and Capture as Recording in Navigat
     CHECK_FALSE (ui.studio.localView().armed.contains (keys[1]));
     CHECK (Preferences::fromString (ui.studio.preferences().toString()).autoArmMidi);
 }
+
+TEST_CASE ("AT-UI-19 audio region Transpose, Fine Tune, Speed and speed fades in the inspector; Ctrl-drag an edge to time-stretch", "[UI][AT-UI-19]")
+{
+    Ui ui;
+    ui.studio.view.pixelsPerTick = 200.0 / bar;
+    const auto file = writeSine (ui.folder.path / "sine.wav");
+    engine::DropTarget target;
+    target.at = 0;
+    target.trackId = ui.m().trackOrder.front();
+    const auto outcome = ui.studio.importFiles ({ file }, target);
+    REQUIRE (outcome.regions.size() == 1);
+    const auto id = outcome.regions.front();
+    ui.studio.selection.set ({ id });
+    ui.studio.edited();
+    ui.settle();
+    auto& inspector = ui.main->inspector();
+    REQUIRE (inspector.audioTranspose.isVisible());
+    REQUIRE (inspector.fineTune.isVisible());
+    REQUIRE (inspector.audioSpeed.isVisible());
+    REQUIRE (inspector.speedUp.isVisible());
+    CHECK_FALSE (inspector.regionTranspose.isVisible()); // the MIDI one
+
+    inspector.audioTranspose.setValue (5.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.transpose == 5);
+    CHECK (ui.region (id).length == 48000);
+    inspector.fineTune.setValue (-20.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fineTune == -20);
+    CHECK (ui.region (id).audio.transpose == 5);
+    ui.renderAudio (4096); // the shifted audio plays
+
+    inspector.audioSpeed.setValue (200.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.speed == Catch::Approx (2.0));
+    CHECK (ui.region (id).length == 24000);
+    CHECK (ui.studio.session().undoName() == "Region Speed");
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).length == 48000);
+    CHECK (inspector.audioSpeed.getValue() == Catch::Approx (100.0));
+
+    // The fade types: Speed Up and Slow Down keep the fade lengths.
+    REQUIRE (ui.studio.session().setRegionFades (id, model::Fade { 4800, "linear" }, model::Fade { 4800, "linear" }));
+    ui.studio.edited();
+    ui.settle();
+    inspector.speedUp.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fadeIn.speed);
+    CHECK (ui.region (id).audio.fadeIn.length == 4800);
+    inspector.slowDown.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fadeOut.speed);
+    // Changing the curve keeps the type.
+    inspector.fadeInCurve.setSelectedItemIndex (0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fadeIn.speed);
+
+    // Ctrl-drag the right edge from half a bar to a bar: shown as an outline while dragging, applied on release
+    // as one undo step "Time Stretch". A plain drag still trims.
+    auto& tl = ui.timeline();
+    const auto box = tl.regionBounds (ui.region (id));
+    const juce::Point<float> edge { box.getRight() - 2.0f, box.getBottom() - 4.0f };
+    REQUIRE (tl.zoneAt (ui.region (id), edge) == Timeline::Zone::trimEnd);
+    const auto ctrl = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+    tl.pointerDown (edge, ctrl);
+    for (int i = 1; i <= 50; ++i)
+        tl.pointerDrag (edge.translated (static_cast<float> (i) * 2.0f, 0.0f), ctrl);
+    CHECK (ui.region (id).length == 48000);
+    tl.pointerUp (edge.translated (100.0f, 0.0f), ctrl);
+    ui.settle();
+    CHECK (ui.region (id).audio.stretch == Catch::Approx (2.0).margin (0.02));
+    CHECK (ui.region (id).length == Catch::Approx (96000.0).margin (1000.0));
+    CHECK (ui.studio.session().undoName() == "Time Stretch");
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).length == 48000);
+    CHECK (ui.region (id).audio.stretch == Catch::Approx (1.0));
+
+    tl.pointerDown (edge, {});
+    tl.pointerDrag (edge.translated (-40.0f, 0.0f), {});
+    tl.pointerUp (edge.translated (-40.0f, 0.0f), {});
+    ui.settle();
+    CHECK (ui.region (id).length < 48000);
+    CHECK (ui.region (id).audio.stretch == Catch::Approx (1.0));
+}

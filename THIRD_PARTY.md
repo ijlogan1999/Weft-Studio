@@ -27,6 +27,8 @@ original or redistributable and be listed here.
 | ↳ pslextensions (inside JUCE) | | LicenseRef-Public-Domain | yes | |
 | PlexMono | 1.1.0 | OFL-1.1 | yes | Typeface for time, tempo and level readouts, embedded in the app |
 | PlexSans | 1.1.0 | OFL-1.1 | yes | UI typeface (Regular, Medium, SemiBold), embedded in the app |
+| SignalsmithLinear | 0.6.4 | MIT | yes | FFT and vector maths used by Signalsmith Stretch (headers only) |
+| SignalsmithStretch | 1.4.0 | MIT | yes | Pitch shifting and time stretching of audio regions (headers only) |
 
 ## Rust crates linked into the app (via weft-ffi)
 

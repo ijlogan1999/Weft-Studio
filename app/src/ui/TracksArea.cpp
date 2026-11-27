@@ -2161,7 +2161,8 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
         if (! wave.empty())
         {
             const auto rate = static_cast<double> (m.info.sampleRate);
-            const double framesPerPixel = rate / (m.tempo.bpmAt (r.start) / 60.0 * ticksPerQuarter) / studio.view.pixelsPerTick;
+            // Speed and stretch draw the file faster or slower across the region (D-UI-51).
+            const double framesPerPixel = rate / (m.tempo.bpmAt (r.start) / 60.0 * ticksPerQuarter) / studio.view.pixelsPerTick * r.audio.sourcePerSample();
             WaveformStyle style;
             style.peak = content.withMultipliedAlpha (0.55f);
             style.rms = content;
@@ -2173,10 +2174,20 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
         // Fades.
         auto fadeX = [&] (Samples s) { return static_cast<float> (s) / static_cast<float> (r.length) * box.getWidth(); };
         g.setColour (colour (Token::regionText).withAlpha (0.8f));
+        // A speed fade (Speed Up, Slow Down) is dashed.
+        auto fadeLine = [&g] (juce::Line<float> line, bool speed) {
+            if (! speed)
+                g.drawLine (line, 1.0f);
+            else
+            {
+                const float dashes[] = { 3.0f, 3.0f };
+                g.drawDashedLine (line, dashes, 2, 1.5f);
+            }
+        };
         if (r.audio.fadeIn.length > 0)
-            g.drawLine (box.getX(), body.getBottom(), box.getX() + fadeX (r.audio.fadeIn.length), body.getY(), 1.0f);
+            fadeLine ({ box.getX(), body.getBottom(), box.getX() + fadeX (r.audio.fadeIn.length), body.getY() }, r.audio.fadeIn.speed);
         if (r.audio.fadeOut.length > 0)
-            g.drawLine (box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom(), 1.0f);
+            fadeLine ({ box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom() }, r.audio.fadeOut.speed);
     }
     // Audio still on its way (F-COL-10): the part not here yet is hatched, with how far it got.
     juce::String transfer;
@@ -2187,7 +2198,9 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
             const auto total = ref != nullptr ? static_cast<double> (ref->lengthSamples) : 0.0;
             // Where the downloaded prefix ends, in the region's own coordinates.
             const auto have = d->fraction * total - static_cast<double> (r.audio.sourceOffset);
-            const auto split = total > 0 && r.length > 0 ? std::clamp (static_cast<float> (have / static_cast<double> (r.length)), 0.0f, 1.0f) : 0.0f;
+            const auto split = total > 0 && r.length > 0
+                                 ? std::clamp (static_cast<float> (have / static_cast<double> (r.audio.sourceLength (r.length))), 0.0f, 1.0f)
+                                 : 0.0f;
             const auto missing = body.withTrimmedLeft (body.getWidth() * split);
             const juce::Graphics::ScopedSaveState save (g);
             g.reduceClipRegion (missing.toNearestInt());
@@ -2332,6 +2345,18 @@ void Timeline::paint (juce::Graphics& g)
         g.setFont (font (Type::monoValue));
         g.drawText (juce::String (formatBarsBeats (regionDrag->anchorStart(), m.signatures)) + (regionDrag->copying() ? "  (copy)" : ""),
                     juce::Rectangle<float> (lastAt.x + 12, lastAt.y - 22, 160, 18), juce::Justification::left);
+    }
+    if (const auto outline = stretchOutline())
+    {
+        // Time stretch: where the region will end up, and by how much.
+        g.setColour (colour (Token::accent));
+        g.drawRect (*outline, 2.0f);
+        if (const auto* r = m.region (dragRegion); r != nullptr && r->length > 0)
+        {
+            g.setFont (font (Type::monoValue));
+            const auto percent = static_cast<double> (*stretchLength) / static_cast<double> (r->length) * r->audio.stretch * 100.0;
+            g.drawText ("Stretch " + juce::String (percent, 1) + "%", juce::Rectangle<float> (lastAt.x + 12, lastAt.y - 22, 160, 18), juce::Justification::left);
+        }
     }
     if (drag == Drag::rubberBand || drag == Drag::zoomBox)
     {
@@ -2563,10 +2588,12 @@ void Timeline::startRegionDrag (const model::Region& r, Zone zone, juce::Point<f
         case Zone::none:
         case Zone::takes: break;
     }
+    stretching = (drag == Drag::trimStart || drag == Drag::trimEnd) && ! r.isMidi && mods.isCommandDown();
+    stretchLength.reset();
     if (drag != Drag::move && drag != Drag::none)
     {
         static const char* names[] = { "", "", "Trim Region", "Trim Region", "Fade", "Fade", "Loop Region" };
-        s.beginGesture (names[static_cast<int> (drag)]);
+        s.beginGesture (stretching ? "Time Stretch" : names[static_cast<int> (drag)]);
         gestureOpen = true;
     }
     juce::ignoreUnused (p);
@@ -2790,11 +2817,20 @@ void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
             break;
         }
         case Drag::trimStart:
-            if (r != nullptr)
-                s.trimRegionStart (r->id, t);
-            break;
         case Drag::trimEnd:
-            if (r != nullptr)
+            if (r != nullptr && stretching)
+            {
+                const auto startSample = m.tempo.tickToSample (static_cast<double> (r->start));
+                const auto edge = m.tempo.tickToSample (static_cast<double> (t));
+                const auto len = drag == Drag::trimEnd ? edge - startSample : startSample + static_cast<double> (r->length) - edge;
+                // Within the stretch's range (0.25 to 4 times the audio's own length).
+                const auto natural = static_cast<double> (r->length) / r->audio.stretch;
+                stretchLength = static_cast<Samples> (std::llround (std::clamp (len, natural * model::AudioRegionData::minRate, natural * model::AudioRegionData::maxRate)));
+                break;
+            }
+            if (r != nullptr && drag == Drag::trimStart)
+                s.trimRegionStart (r->id, t);
+            else if (r != nullptr)
             {
                 if (r->isMidi)
                     s.trimRegionLength (r->id, std::max<Ticks> (t - r->start, 1));
@@ -2813,9 +2849,9 @@ void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
                 const auto frac = drag == Drag::fadeIn ? (p.x - box.getX()) / box.getWidth() : (box.getRight() - p.x) / box.getWidth();
                 const auto len = static_cast<Samples> (std::clamp (frac, 0.0f, 1.0f) * static_cast<float> (r->length));
                 if (drag == Drag::fadeIn)
-                    s.setRegionFades (r->id, model::Fade { std::min (len, r->length - r->audio.fadeOut.length), r->audio.fadeIn.curve }, std::nullopt);
+                    s.setRegionFades (r->id, model::Fade { std::min (len, r->length - r->audio.fadeOut.length), r->audio.fadeIn.curve, r->audio.fadeIn.speed }, std::nullopt);
                 else
-                    s.setRegionFades (r->id, std::nullopt, model::Fade { std::min (len, r->length - r->audio.fadeIn.length), r->audio.fadeOut.curve });
+                    s.setRegionFades (r->id, std::nullopt, model::Fade { std::min (len, r->length - r->audio.fadeIn.length), r->audio.fadeOut.curve, r->audio.fadeOut.speed });
             }
             break;
         case Drag::loop:
@@ -2871,6 +2907,13 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
             studio.view.zoomAround (2.0, p.x);
         studio.sendChangeMessage();
     }
+    if (stretching)
+    {
+        if (stretchLength)
+            studio.check (studio.session().stretchAudioRegion (dragRegion, *stretchLength, drag == Drag::trimStart));
+        stretching = false;
+        stretchLength.reset();
+    }
     if (gestureOpen)
     {
         studio.session().endGesture();
@@ -2879,6 +2922,21 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
     }
     drag = Drag::none;
     repaint();
+}
+
+std::optional<juce::Rectangle<float>> Timeline::stretchOutline() const
+{
+    const auto* r = studio.model().region (dragRegion);
+    if (! stretching || ! stretchLength || r == nullptr)
+        return std::nullopt;
+    const auto& tempo = studio.model().tempo;
+    auto box = regionBounds (*r);
+    const auto startSample = tempo.tickToSample (static_cast<double> (r->start));
+    if (drag == Drag::trimEnd)
+        box.setRight (static_cast<float> (studio.view.tickToX (tempo.sampleToTick (startSample + static_cast<double> (*stretchLength)))));
+    else
+        box.setLeft (static_cast<float> (studio.view.tickToX (tempo.sampleToTick (startSample + static_cast<double> (r->length - *stretchLength)))));
+    return box;
 }
 
 void Timeline::renameRegion (const Id& regionId)
@@ -2912,6 +2970,8 @@ bool Timeline::cancelDrag()
         regionDrag->cancel();
         regionDrag.reset();
     }
+    stretching = false;
+    stretchLength.reset();
     if (gestureOpen)
     {
         studio.session().cancelGesture();

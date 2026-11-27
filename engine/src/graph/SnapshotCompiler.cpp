@@ -1,4 +1,5 @@
 #include "weft/engine/graph/EngineSnapshot.h"
+#include "weft/engine/dsp/Stretch.h"
 
 #include "weft/model/Automation.h"
 #include "weft/commands/Notes.h"
@@ -217,11 +218,16 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
     {
         const auto& r = *inst.region;
         const auto length = inst.end - inst.start;
-        std::int64_t fadeIn = 0, fadeOut = 0;
+        std::int64_t fadeIn = 0, fadeOut = 0, speedUp = 0, slowDown = 0;
         if (! r.isMidi)
         {
             fadeIn = std::clamp<std::int64_t> (std::llround (static_cast<double> (r.audio.fadeIn.length) * projectToDevice), 0, length);
             fadeOut = std::clamp<std::int64_t> (std::llround (static_cast<double> (r.audio.fadeOut.length) * projectToDevice), 0, length - fadeIn);
+            // Speed fades change the speed, not the level, and so don't crossfade with what's underneath (D-UI-51).
+            if (r.audio.fadeIn.speed)
+                std::swap (speedUp, fadeIn);
+            if (r.audio.fadeOut.speed)
+                std::swap (slowDown, fadeOut);
         }
         const auto visible = takeVisible (covered, inst.start, inst.end, inst.start + fadeIn, inst.end - fadeOut);
         if (visible.empty())
@@ -229,7 +235,9 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
 
         if (! r.isMidi)
         {
-            auto audio = mediaPool.find (r.audio.media);
+            // Stretched or pitch-shifted regions play their derived audio (prepareDerivedMedia).
+            const auto derived = derivedMediaKey (r.audio);
+            auto audio = mediaPool.find (derived.empty() ? r.audio.media : derived);
             if (! audio || audio->numFrames() == 0)
                 continue;
             if (std::find (snap->media.begin(), snap->media.end(), audio) == snap->media.end())
@@ -270,8 +278,11 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
                 seg.regionStart = inst.start;
                 seg.regionEnd = inst.end;
                 seg.media = audio.get();
-                seg.sourceAtRegionStart = static_cast<double> (r.audio.sourceOffset) * audio->sampleRate() / projectRate;
-                seg.sourceStep = audio->sampleRate() / deviceRate;
+                // The derived audio is `stretch` times as long as the file; speed is a faster or slower read.
+                seg.sourceAtRegionStart = static_cast<double> (r.audio.sourceOffset) * r.audio.stretch * audio->sampleRate() / projectRate;
+                seg.sourceStep = r.audio.speed * audio->sampleRate() / deviceRate;
+                seg.speedUp = speedUp;
+                seg.slowDown = slowDown;
                 seg.gain = dbToGain (r.audio.gainDb);
                 seg.fadeIn = fadeIn;
                 seg.fadeOut = fadeOut;

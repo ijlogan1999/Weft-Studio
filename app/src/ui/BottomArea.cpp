@@ -239,7 +239,7 @@ void AudioEditor::playSelection()
     }
     auto from = selectionStart(), to = selectionEnd();
     if (from == to)
-        from = r->audio.sourceOffset, to = r->audio.sourceOffset + r->length;
+        from = r->audio.sourceOffset, to = r->audio.sourceOffset + r->audio.sourceLength (r->length);
     std::string error;
     auto clip = engine::copyMediaFrames (studio.model(), r->audio.media, from, to, studio.media(), studio.mediaDir(), &error);
     if (! clip)
@@ -404,7 +404,7 @@ void AudioEditor::paint (juce::Graphics& g)
                         juce::Justification::centredLeft, false);
             at += step;
         }
-        g.drawText ("Start " + juce::String (r->audio.sourceOffset) + "  ·  Length " + juce::String (r->length) + " samples",
+        g.drawText ("Start " + juce::String (r->audio.sourceOffset) + "  ·  Length " + juce::String (r->audio.sourceLength (r->length)) + " samples",
                     ruler.reduced (6, 0), juce::Justification::centredRight);
         const auto amp = amplitudeLabels();
         const float ys[] = { wave.getY() + 4.0f, wave.getY() + 4.0f + (wave.getHeight() - 8.0f) * 0.25f, wave.getCentreY() };
@@ -414,7 +414,7 @@ void AudioEditor::paint (juce::Graphics& g)
 
     const auto area = waveArea();
     const auto used1 = static_cast<float> (sampleToX (static_cast<double> (r->audio.sourceOffset)));
-    const auto used2 = static_cast<float> (sampleToX (static_cast<double> (r->audio.sourceOffset + r->length)));
+    const auto used2 = static_cast<float> (sampleToX (static_cast<double> (r->audio.sourceOffset + r->audio.sourceLength (r->length))));
     const auto regionCol = colourFor (m.regionColor (*r).palette, m.regionColor (*r).rgb);
     // The part the region plays sits on its body colour; the rest of the file is dimmed.
     g.setColour (regionBody (regionCol));
@@ -461,7 +461,7 @@ AudioEditor::Edge AudioEditor::edgeAt (float x) const
     if (r == nullptr)
         return Edge::none;
     const auto x1 = sampleToX (static_cast<double> (r->audio.sourceOffset));
-    const auto x2 = sampleToX (static_cast<double> (r->audio.sourceOffset + r->length));
+    const auto x2 = sampleToX (static_cast<double> (r->audio.sourceOffset + r->audio.sourceLength (r->length)));
     if (std::abs (x - x1) <= 6)
         return Edge::start;
     if (std::abs (x - x2) <= 6)
@@ -480,10 +480,10 @@ std::int64_t AudioEditor::snapSource (const model::Region& r, double sourceSampl
     // Snap where that sample would play on the timeline, then map back.
     const auto& tempo = studio.model().tempo;
     const auto regionStartSample = tempo.tickToSample (static_cast<double> (r.start));
-    const auto timelineSample = regionStartSample + static_cast<double> (s - r.audio.sourceOffset);
+    const auto timelineSample = regionStartSample + static_cast<double> (s - r.audio.sourceOffset) / r.audio.sourcePerSample();
     const auto tick = static_cast<Ticks> (std::llround (tempo.sampleToTick (timelineSample)));
     const auto snappedSample = tempo.tickToSample (static_cast<double> (studio.snapped (tick)));
-    return static_cast<std::int64_t> (std::llround (snappedSample - regionStartSample)) + r.audio.sourceOffset;
+    return static_cast<std::int64_t> (std::llround ((snappedSample - regionStartSample) * r.audio.sourcePerSample())) + r.audio.sourceOffset;
 }
 
 void AudioEditor::pointerDown (juce::Point<float> p)
@@ -522,7 +522,7 @@ void AudioEditor::pointerDrag (juce::Point<float> p, bool bypassSnap)
     if (dragging == Edge::start)
         studio.session().trimAudioStartSamples (r->id, target);
     else
-        studio.session().trimRegionLength (r->id, std::max<std::int64_t> (target - r->audio.sourceOffset, model::minAudioRegionLength));
+        studio.session().trimRegionLength (r->id, std::max<std::int64_t> (r->audio.timelineLength (target - r->audio.sourceOffset), model::minAudioRegionLength));
     studio.edited();
 }
 

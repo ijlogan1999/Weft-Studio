@@ -650,6 +650,8 @@ juce::Font font (Type type)
     return plex (t.regular, 12.0f);
 }
 
+juce::Font fontAtHeight (Type type, float height) { return font (type).withHeight (height); }
+
 juce::String captionText (const juce::String& s) { return s.toUpperCase(); }
 
 // Depth --------------------------------------------------------------------------------------

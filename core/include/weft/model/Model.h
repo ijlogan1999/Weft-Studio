@@ -179,6 +179,9 @@ struct Fade
 {
     Samples length = 0;
     std::string curve = "equalPower"; // linear | equalPower | sCurve
+    /** A speed fade (D-UI-51) instead of a level fade: a fade in is Speed Up (the audio starts from a standstill and
+        reaches full speed at the end of the fade), a fade out is Slow Down (it winds down to a standstill). */
+    bool speed = false;
 };
 
 struct AudioRegionData
@@ -188,6 +191,20 @@ struct AudioRegionData
     double gainDb = 0.0;
     Fade fadeIn, fadeOut;
     bool reversed = false; // plays a reversed copy of its audio (L-RGN-12); Reverse toggles it
+    // Pitch and time (D-UI-51).
+    int transpose = 0;     // semitones, -24..24; the length stays the same
+    int fineTune = 0;      // cents, -50..50
+    double speed = 1.0;    // tape-style speed, 0.25..4: faster is also higher and the region shorter
+    double stretch = 1.0;  // time stretch, 0.25..4: the region lasts this many times as long at the same pitch
+
+    static constexpr double minRate = 0.25, maxRate = 4.0;
+    /** Source samples played per timeline sample. */
+    double sourcePerSample() const noexcept { return speed / stretch; }
+    /** The part of the source a region this long plays, and the other way round. */
+    Samples sourceLength (Samples timelineLength) const noexcept;
+    Samples timelineLength (Samples sourceSamples) const noexcept;
+    /** Pitch shift in cents. */
+    int cents() const noexcept { return transpose * 100 + fineTune; }
 };
 
 struct RegionQuantize

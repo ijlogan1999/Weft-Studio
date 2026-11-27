@@ -1,4 +1,5 @@
 #include "weft/engine/transport/Engine.h"
+#include "weft/engine/dsp/Stretch.h"
 
 #include "weft/commands/Session.h"
 #include "weft/engine/dsp/BuiltinEffects.h"
@@ -375,6 +376,7 @@ void Engine::refresh()
     if (! lastModel)
         return;
     syncPlugins();
+    prepareDerivedMedia (*lastModel, mediaPool);
     auto snap = compileSnapshot (*lastModel, rate, std::max (1, maxBlock), mediaPool, { rack, effects, mixer }, local, touchedTargets);
     if (cycleSuppressed)
         snap->cycleEnabled = false;
@@ -1250,6 +1252,32 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
         published.dropouts.fetch_add (1, std::memory_order_relaxed);
 }
 
+namespace
+{
+/**
+    Speed fades (D-UI-51): where in the region (as if it played at full speed) the read is at device sample t.
+    Speed Up over the first F samples rises linearly from a standstill and meets the unfaded read at F, so what follows
+    stays in time: x is F/2 + x²/2F there. Slow Down over the last F falls linearly to a standstill at the end.
+*/
+double speedWarp (const AudioSegment& seg, std::int64_t t) noexcept
+{
+    const auto x = static_cast<double> (t - seg.regionStart);
+    const auto length = static_cast<double> (seg.regionEnd - seg.regionStart);
+    if (seg.speedUp > 0 && x < static_cast<double> (seg.speedUp))
+    {
+        const auto f = static_cast<double> (seg.speedUp);
+        return f / 2.0 + x * x / (2.0 * f);
+    }
+    if (seg.slowDown > 0 && x > length - static_cast<double> (seg.slowDown))
+    {
+        const auto f = static_cast<double> (seg.slowDown);
+        const auto left = length - x;
+        return (length - f) + (f * f - left * left) / (2.0 * f);
+    }
+    return x;
+}
+} // namespace
+
 void Engine::mixSegments (const ChannelPlan& channel, std::int64_t from, int frames, float* left, float* right) noexcept
 {
     const auto to = from + frames;
@@ -1266,7 +1294,8 @@ void Engine::mixSegments (const ChannelPlan& channel, std::int64_t from, int fra
         const auto& source = *seg.media;
         const auto s = std::max (from, seg.start), e = std::min (to, seg.end);
         const auto numCh = source.numChannels();
-        const bool direct = seg.sourceStep == 1.0 && seg.sourceAtRegionStart == std::floor (seg.sourceAtRegionStart);
+        const bool warped = seg.speedUp > 0 || seg.slowDown > 0;
+        const bool direct = ! warped && seg.sourceStep == 1.0 && seg.sourceAtRegionStart == std::floor (seg.sourceAtRegionStart);
         const bool mixDown = channel.sourceChannels == 1 && numCh > 1;
         const bool stereo = channel.sourceChannels != 1;
 
@@ -1336,7 +1365,7 @@ void Engine::mixSegments (const ChannelPlan& channel, std::int64_t from, int fra
         const int reach = sinc::reach (cutoff);
         for (auto t = s; t < e; ++t)
         {
-            const double pos = seg.sourceAtRegionStart + static_cast<double> (t - seg.regionStart) * seg.sourceStep;
+            const double pos = seg.sourceAtRegionStart + (warped ? speedWarp (seg, t) : static_cast<double> (t - seg.regionStart)) * seg.sourceStep;
             const auto i = static_cast<std::int64_t> (std::floor (pos));
             const double frac = pos - static_cast<double> (i);
             float v[2] = {};

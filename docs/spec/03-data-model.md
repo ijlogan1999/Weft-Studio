@@ -198,10 +198,16 @@ AudioRegionData {
   fadeIn:  Fade                 // { length: Samples, curve: 'linear'|'equalPower'|'sCurve' }
   fadeOut: Fade
   reversed: bool                // plays a reversed copy (L-RGN-12, D-W4-16)
+  transpose?: int               // semitones -24..24, pitch only (D-UI-51); absent = 0
+  fineTune?: int                // cents -50..50; absent = 0
+  speed?: number                // tape-style speed 0.25..4; absent = 1
+  stretch?: number              // time stretch at the same pitch 0.25..4; absent = 1
 }
 ```
 
-Invariants: `sourceOffset ≥ 0`; `sourceOffset + length ≤ media.lengthSamples`; `fadeIn.length + fadeOut.length ≤ length`.
+A fade may also carry `speed: true` (D-UI-51): the fade in is then Speed Up and the fade out Slow Down, with no level change.
+
+Invariants: `sourceOffset ≥ 0`; `sourceOffset + length × speed / stretch ≤ media.lengthSamples` (the region plays `length × speed / stretch` samples of its file); `fadeIn.length + fadeOut.length ≤ length`.
 
 ### 4.3 MIDI region data
 

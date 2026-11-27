@@ -27,13 +27,20 @@ std::string oneOf (const Value& v, std::initializer_list<std::string_view> allow
     return std::string (fallback);
 }
 
-Value fadeToValue (const Fade& f) { return Value::map().set ("length", f.length).set ("curve", f.curve); }
+Value fadeToValue (const Fade& f)
+{
+    auto v = Value::map().set ("length", f.length).set ("curve", f.curve);
+    if (f.speed)
+        v.set ("speed", true);
+    return v;
+}
 
 Fade fadeFromValue (const Value& v)
 {
     Fade f;
     f.length = std::max<std::int64_t> (0, v["length"].asInt (0));
     f.curve = oneOf (v["curve"], { "linear", "equalPower", "sCurve" }, "equalPower");
+    f.speed = v["speed"].asBool();
     return f;
 }
 
@@ -403,6 +410,10 @@ Region Region::fromValue (const Id& id, const Value& v)
         r.audio.fadeIn = fadeFromValue (a["fadeIn"]);
         r.audio.fadeOut = fadeFromValue (a["fadeOut"]);
         r.audio.reversed = a["reversed"].asBool();
+        r.audio.transpose = static_cast<int> (std::clamp<std::int64_t> (a["transpose"].asInt (0), -24, 24));
+        r.audio.fineTune = static_cast<int> (std::clamp<std::int64_t> (a["fineTune"].asInt (0), -50, 50));
+        r.audio.speed = clampDouble (a["speed"], 1.0, AudioRegionData::minRate, AudioRegionData::maxRate);
+        r.audio.stretch = clampDouble (a["stretch"], 1.0, AudioRegionData::minRate, AudioRegionData::maxRate);
         // Fades never exceed the region (W-3h step 4); shrink proportionally.
         const auto total = r.audio.fadeIn.length + r.audio.fadeOut.length;
         if (total > r.length)
@@ -416,6 +427,16 @@ Region Region::fromValue (const Id& id, const Value& v)
     r.modifiedBy = v["modifiedBy"].asString();
     r.modifiedAt = v["modifiedAt"].asInt();
     return r;
+}
+
+Samples AudioRegionData::sourceLength (Samples timelineLength) const noexcept
+{
+    return static_cast<Samples> (std::llround (static_cast<double> (timelineLength) * sourcePerSample()));
+}
+
+Samples AudioRegionData::timelineLength (Samples sourceSamples) const noexcept
+{
+    return static_cast<Samples> (std::llround (static_cast<double> (sourceSamples) / sourcePerSample()));
 }
 
 Value Region::toValue() const
@@ -455,13 +476,23 @@ Value Region::toValue() const
     }
     else
     {
-        v.set ("audio", Value::map()
-                            .set ("media", audio.media)
-                            .set ("sourceOffset", audio.sourceOffset)
-                            .set ("gainDb", audio.gainDb)
-                            .set ("fadeIn", fadeToValue (audio.fadeIn))
-                            .set ("fadeOut", fadeToValue (audio.fadeOut))
-                            .set ("reversed", audio.reversed));
+        auto a = Value::map()
+                     .set ("media", audio.media)
+                     .set ("sourceOffset", audio.sourceOffset)
+                     .set ("gainDb", audio.gainDb)
+                     .set ("fadeIn", fadeToValue (audio.fadeIn))
+                     .set ("fadeOut", fadeToValue (audio.fadeOut))
+                     .set ("reversed", audio.reversed);
+        // Pitch and time only when changed, so older projects read back the same.
+        if (audio.transpose != 0)
+            a.set ("transpose", audio.transpose);
+        if (audio.fineTune != 0)
+            a.set ("fineTune", audio.fineTune);
+        if (std::abs (audio.speed - 1.0) > 1e-9)
+            a.set ("speed", audio.speed);
+        if (std::abs (audio.stretch - 1.0) > 1e-9)
+            a.set ("stretch", audio.stretch);
+        v.set ("audio", std::move (a));
     }
     return v;
 }

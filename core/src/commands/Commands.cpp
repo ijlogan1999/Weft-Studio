@@ -66,7 +66,13 @@ std::pair<model::Fade, model::Fade> fitFades (model::Fade in, model::Fade out, S
     return { in, out };
 }
 
-Value fadeValue (const model::Fade& f) { return Value::map().set ("length", f.length).set ("curve", f.curve); }
+Value fadeValue (const model::Fade& f)
+{
+    auto v = Value::map().set ("length", f.length).set ("curve", f.curve);
+    if (f.speed)
+        v.set ("speed", true);
+    return v;
+}
 } // namespace
 
 // Project ---------------------------------------------------------------------
@@ -591,16 +597,19 @@ EditResult Session::trimRegionStart (const Id& regionId, Ticks newStart)
     }
     auto delta = static_cast<Samples> (
         std::llround (projection.tempo.tickToSample (static_cast<double> (newStart)) - projection.tempo.tickToSample (static_cast<double> (r->start))));
+    // The source moves by the timeline distance at the region's speed and stretch (D-UI-51).
+    auto sourceDelta = r->audio.sourceLength (delta);
     // Dragging past the start of the file stops there (W-3d step 3).
-    if (r->audio.sourceOffset + delta < 0)
+    if (r->audio.sourceOffset + sourceDelta < 0)
     {
-        delta = -r->audio.sourceOffset;
+        sourceDelta = -r->audio.sourceOffset;
+        delta = r->audio.timelineLength (sourceDelta);
         newStart = static_cast<Ticks> (std::llround (
             projection.tempo.sampleToTick (projection.tempo.tickToSample (static_cast<double> (r->start)) + static_cast<double> (delta))));
         if (newStart < 0)
             return reject ("Regions can't start before the project start.");
     }
-    const auto newOffset = r->audio.sourceOffset + delta;
+    const auto newOffset = r->audio.sourceOffset + sourceDelta;
     const auto newLength = r->length - delta;
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
@@ -623,7 +632,7 @@ EditResult Session::trimAudioStartSamples (const Id& regionId, Samples newOffset
     if (r->isMidi)
         return reject ("Only audio regions trim by samples.");
     newOffset = std::max<Samples> (newOffset, 0);
-    const auto delta = newOffset - r->audio.sourceOffset;
+    const auto delta = r->audio.timelineLength (newOffset - r->audio.sourceOffset);
     const auto newLength = r->length - delta;
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
@@ -677,8 +686,9 @@ EditResult Session::trimRegionLength (const Id& regionId, std::int64_t newLength
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
     // Extending past the end of the file stops at its end (W-3d step 3, AT-ARR-8).
-    if (const auto* m = projection.mediaRef (r->audio.media); m != nullptr && r->audio.sourceOffset + newLength > m->lengthSamples)
-        newLength = std::max<std::int64_t> (m->lengthSamples - r->audio.sourceOffset, model::minAudioRegionLength);
+    if (const auto* m = projection.mediaRef (r->audio.media); m != nullptr && r->audio.sourceOffset + r->audio.sourceLength (newLength) > m->lengthSamples)
+        newLength = std::max<std::int64_t> (static_cast<Samples> (std::floor (static_cast<double> (m->lengthSamples - r->audio.sourceOffset) / r->audio.sourcePerSample())),
+                                            model::minAudioRegionLength);
     const auto [fadeIn, fadeOut] = fitFades (r->audio.fadeIn, r->audio.fadeOut, newLength);
     return run ("Trim Region", [&] (TxnWriter& w) {
         bool good = w.put (base / "length", Value (newLength));
@@ -761,7 +771,7 @@ std::optional<Id> Session::splitRegion (const Id& regionId, Ticks at)
         return std::nullopt;
     }
     right.length = r->length - leftLength;
-    right.audio.sourceOffset = r->audio.sourceOffset + leftLength;
+    right.audio.sourceOffset = r->audio.sourceOffset + r->audio.sourceLength (leftLength);
     right.audio.fadeIn.length = 0;
     right.audio.fadeOut.length = std::min (r->audio.fadeOut.length, right.length);
     const auto leftFadeIn = std::min (r->audio.fadeIn.length, leftLength);
@@ -848,7 +858,10 @@ EditResult Session::joinRegions (const std::vector<Id>& regionIds)
         const auto* b = rs[i];
         const auto aEnd = std::llround (projection.tempo.tickToSample (static_cast<double> (a->start))) + a->length;
         const auto bStart = std::llround (projection.tempo.tickToSample (static_cast<double> (b->start)));
-        if (b->audio.media != first->audio.media || b->audio.sourceOffset != a->audio.sourceOffset + a->length || std::llabs (bStart - aEnd) > 1)
+        const bool samePlayback = b->audio.transpose == a->audio.transpose && b->audio.fineTune == a->audio.fineTune
+                               && std::abs (b->audio.speed - a->audio.speed) < 1e-9 && std::abs (b->audio.stretch - a->audio.stretch) < 1e-9;
+        if (b->audio.media != first->audio.media || ! samePlayback
+            || std::llabs (b->audio.sourceOffset - (a->audio.sourceOffset + a->audio.sourceLength (a->length))) > 1 || std::llabs (bStart - aEnd) > 1)
             return reject ("Only touching regions from the same audio file can be joined.");
         total += b->length;
     }
@@ -986,6 +999,97 @@ EditResult Session::setRegionTranspose (const Id& regionId, int semitones)
         return reject ("Transpose is -96 to +96 semitones.");
     return run ("Region Transpose", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "midi" / "transpose", Value (semitones));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setAudioRegionPitch (const Id& regionId, int semitones, int cents)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (r->isMidi)
+        return reject ("Use the MIDI transpose for MIDI regions.");
+    if (semitones < -24 || semitones > 24)
+        return reject ("Transpose is -24 to +24 semitones.");
+    if (cents < -50 || cents > 50)
+        return reject ("Fine Tune is -50 to +50 cents.");
+    const auto base = regionPath (regionId) / "audio";
+    return run ("Transpose", [&] (TxnWriter& w) {
+        bool good = w.put (base / "transpose", Value (semitones)) && w.put (base / "fineTune", Value (cents));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+namespace
+{
+/** The region's length as `audio` plays it, kept to at least the shortest region; its fades scaled and fitted. */
+struct Rescaled
+{
+    Samples length;
+    model::Fade fadeIn, fadeOut;
+};
+Rescaled rescale (const model::Region& r, double factor)
+{
+    Rescaled out;
+    out.length = std::max<Samples> (model::minAudioRegionLength, static_cast<Samples> (std::llround (static_cast<double> (r.length) * factor)));
+    auto in = r.audio.fadeIn, fadeOut = r.audio.fadeOut;
+    in.length = static_cast<Samples> (std::llround (static_cast<double> (in.length) * factor));
+    fadeOut.length = static_cast<Samples> (std::llround (static_cast<double> (fadeOut.length) * factor));
+    std::tie (out.fadeIn, out.fadeOut) = fitFades (in, fadeOut, out.length);
+    return out;
+}
+} // namespace
+
+EditResult Session::setAudioRegionSpeed (const Id& regionId, double speed)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (r->isMidi)
+        return reject ("Speed applies to audio regions.");
+    if (std::isnan (speed) || speed < model::AudioRegionData::minRate - 1e-9 || speed > model::AudioRegionData::maxRate + 1e-9)
+        return reject ("Speed is 25% to 400%.");
+    speed = std::clamp (speed, model::AudioRegionData::minRate, model::AudioRegionData::maxRate);
+    const auto scaled = rescale (*r, r->audio.speed / speed);
+    const auto base = regionPath (regionId);
+    return run ("Region Speed", [&] (TxnWriter& w) {
+        bool good = w.put (base / "audio" / "speed", Value (speed)) && w.put (base / "length", Value (scaled.length))
+                 && w.put (base / "audio" / "fadeIn", fadeValue (scaled.fadeIn)) && w.put (base / "audio" / "fadeOut", fadeValue (scaled.fadeOut));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::stretchAudioRegion (const Id& regionId, Samples newLength, bool keepEnd)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (r->isMidi)
+        return reject ("Time stretch applies to audio regions.");
+    if (r->length <= 0)
+        return reject ("The region is empty.");
+    // The stretch stays within its range; the length follows it.
+    const auto ratio = static_cast<double> (newLength) / static_cast<double> (r->length);
+    const auto stretch = std::clamp (r->audio.stretch * ratio, model::AudioRegionData::minRate, model::AudioRegionData::maxRate);
+    const auto scaled = rescale (*r, stretch / r->audio.stretch);
+    auto newStart = r->start;
+    if (keepEnd)
+    {
+        const auto endSample = projection.tempo.tickToSample (static_cast<double> (r->start)) + static_cast<double> (r->length);
+        newStart = static_cast<Ticks> (std::llround (projection.tempo.sampleToTick (endSample - static_cast<double> (scaled.length))));
+        if (newStart < 0)
+            return reject ("Regions can't start before the project start.");
+    }
+    const auto base = regionPath (regionId);
+    return run ("Time Stretch", [&] (TxnWriter& w) {
+        bool good = w.put (base / "audio" / "stretch", Value (stretch)) && w.put (base / "length", Value (scaled.length))
+                 && w.put (base / "audio" / "fadeIn", fadeValue (scaled.fadeIn)) && w.put (base / "audio" / "fadeOut", fadeValue (scaled.fadeOut));
+        if (newStart != r->start)
+            good = good && w.put (base / "start", Value (newStart));
         stamp (w, regionId);
         return wrote (good);
     });

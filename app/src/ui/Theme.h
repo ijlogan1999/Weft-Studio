@@ -103,6 +103,8 @@ enum class Type
     monoCounter // 20, Medium: the transport counter
 };
 juce::Font font (Type);
+/** A type style at a height of its own, for displays that grow with their window (the big displays). */
+juce::Font fontAtHeight (Type, float height);
 /** Upper-cases and letter-spaces a caption the way `Type::caption` is meant to read. */
 juce::String captionText (const juce::String&);
 
