@@ -108,7 +108,8 @@ enum class Cmd
     cycleWindows, cycleWindowsBack, minimizeWindow, minimizeAllWindows, zoomWindow, fullScreen, closeProject, cycleWindowViews,
     cycleWindowViewsBack,
     // D-UI-47: notes
-    toggleNotes, mixerNotes, listEditors, openEventList, openMarkerList, openTempoList, openSignatureList, openMarkerText
+    toggleNotes, mixerNotes, listEditors, openEventList, openMarkerList, openTempoList, openSignatureList, openMarkerText,
+    toggleAudioFileEditor
 };
 
 struct CommandInfo

@@ -326,6 +326,10 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-EDA-2** [UI] · L-ATE-3, D-W3-6 · With View › Snap Edits to Zero Crossings on, dragging a region edge in the audio editor lands on the nearest sample, within 10 ms, where the summed signal crosses zero (or the file's start or end); with none in reach the edge goes where it was dragged.
 
+**AT-EDA-3** [E] · D-UI-49 · Inverting frames 100 to 200 of a file changes only those and moves both regions playing it to the new file (keeping its name), one undo step "Edit File: Invert"; undo plays the old file. Normalize with nothing selected brings the peak to 1.0; Change Gain -6 dB halves, Silence zeroes, Fade In ramps, Remove DC Offset centres and Reverse flips a selection. Deleting 1000 frames before region b moves b back 1000 frames and leaves a; deleting inside a shortens it; deleting all of b is refused. Pasting 500 copied frames over 100 moves b 400 frames on. Trim keeps 2000 to 14000 (a and b follow; "Trim Audio File"); a trim that would empty a region is refused, as is one with nothing selected.
+
+**AT-EDA-4** [UI] · D-UI-49 · The audio editor's zoom slider goes from the whole file to 16 px a sample; the amplitude scale reads 100%, 50%, 0 (25% with Wave Zoom; 0 dB, -6 dB, -inf in decibels) and the sample ruler starts at 0; Snap toggles the tracks area's snap. W turns on the Audio File Editor with Functions; dragging selects without trimming. Silence changes the region's file and undo restores it; copying 12000 frames and pasting at 24000 makes the file and region 60000 long and selects the pasted part; Cut takes it out again. Adjust Tempo Using Selection Length on 0.75 s at 120 BPM gives 160 BPM. Play starts and stops the preview. W hides the editor; Alt+double-click opens the region in an Audio Editor window with File on.
+
 ## 7. Piano roll (PRL)
 
 **AT-PRL-1** [UI] · F-PRL-1 · Double-click a MIDI region opens the piano roll; the keyboard labels MIDI 60 as C3; selecting two regions on one track shows notes of both with boundary lines.

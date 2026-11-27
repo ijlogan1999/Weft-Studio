@@ -88,6 +88,40 @@ commands::EditResult joinRegions (commands::Session& session, const std::vector<
 commands::EditResult reverseRegions (commands::Session& session, const std::vector<Id>& regionIds, MediaPool& media,
                                      const std::filesystem::path& mediaDir);
 
+/** The Audio File Editor's functions (D-UI-49). */
+enum class FileEdit
+{
+    reverse,
+    invert,
+    normalize,
+    gain,
+    fadeIn,
+    fadeOut,
+    silence,
+    removeDc,
+    trim,
+    remove,
+    insert
+};
+/** "Reverse", "Invert", "Normalize", "Change Gain", "Fade In", "Fade Out", "Silence", "Remove DC Offset", "Trim", "Delete", "Paste". */
+std::string fileEditName (FileEdit edit);
+/** The whole of a media file: from disk when it's there, else from memory. */
+std::optional<media::AudioData> readMediaFile (const model::ProjectModel& model, const std::string& hash, MediaPool& media,
+                                               const std::filesystem::path& mediaDir, std::string* error = nullptr);
+/** Frames [from, to) of an audio file, as the Audio File Editor's Copy keeps them. */
+std::optional<media::AudioData> copyMediaFrames (const model::ProjectModel& model, const std::string& hash, std::int64_t from, std::int64_t to,
+                                                 MediaPool& media, const std::filesystem::path& mediaDir, std::string* error = nullptr);
+/**
+    A destructive edit to an audio file (D-UI-49): writes a copy of the file with the edit into Media/ and moves
+    every region playing it to the copy, as one undo step "Edit File: <name>" (Trim: "Trim Audio File"). The
+    selection is frames [from, to); empty means the whole file for the edits that keep the length (Normalize
+    brings the loudest sample to 0 dBFS; Change Gain uses gainDb). Trim keeps the selection, Delete removes it and
+    Paste puts `insert` in its place (its channels follow the file's). The old file stays in Media/ for undo.
+*/
+commands::EditResult editAudioFile (commands::Session& session, const std::string& hash, FileEdit edit, std::int64_t from, std::int64_t to,
+                                    MediaPool& media, const std::filesystem::path& mediaDir, double gainDb = 0.0,
+                                    const media::AudioData* insert = nullptr);
+
 /**
     Snap Edits to Zero Crossings (L-ATE-3): the frame nearest `frame`, within `radius`, where
     the signal (all channels summed) changes sign or is 0. `frame` itself when there's none.

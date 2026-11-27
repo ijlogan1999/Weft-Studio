@@ -231,6 +231,12 @@ public:
     PanelLayout layout;
     bool follow = true;
     Id editorRegion; // the region the audio editor shows
+    /** The audio editor is the Audio File Editor (D-UI-49): drags select part of the file for its functions. */
+    bool audioFileMode = false;
+    /** What the Audio File Editor's Copy or Cut kept. */
+    std::shared_ptr<const media::AudioData> audioClipboard;
+    /** A destructive edit to the audio file `hash` (D-UI-49), as one undo step; the status line says why when it can't. */
+    bool editAudioFile (const std::string& hash, engine::FileEdit edit, std::int64_t from, std::int64_t to, double gainDb = 0.0);
     commands::RegionClipboard clipboard;
     juce::String status;
     PianoRollState piano;

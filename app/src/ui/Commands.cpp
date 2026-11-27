@@ -263,6 +263,7 @@ std::vector<CommandInfo> build()
         { Cmd::openTempoList, "Open Tempo List", "Alt+Shift+T", { key ('T', alt | shift) } },
         { Cmd::openSignatureList, "Open Signature List", "", {} },
         { Cmd::openMarkerText, "Open Marker Text", "", {} },
+        { Cmd::toggleAudioFileEditor, "Show/Hide Audio File Editor", "W", { key ('W') } },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },

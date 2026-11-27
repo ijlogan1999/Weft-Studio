@@ -556,3 +556,107 @@ TEST_CASE ("AT-LIB-4 project audio: regions per file, preview, add, rename, dele
                        "Show in File Manager" })
         CHECK (names.contains (name));
 }
+
+TEST_CASE ("AT-EDA-4 the Audio File Editor: its bar, a selection, file functions with undo, tempo from a selection", "[UI][AT-EDA-4]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    const auto id = importSine (ui, bar);
+    const auto original = ui.region (id).audio.media;
+    ui.timeline().pointerDown (ui.centreOf (id), {}, 2);
+    ui.timeline().pointerUp (ui.centreOf (id), {});
+    ui.settle();
+    auto& editor = ui.main->bottom().audioEditor();
+    REQUIRE (editor.region() != nullptr);
+    CHECK (editor.fileButton.isVisible());
+    CHECK (editor.zoom.isVisible());
+    CHECK_FALSE (editor.functions.isVisible());
+
+    // The bar: zoom slider, Waveform Zoom, Snap and the scales.
+    editor.zoom.setValue (1.0, juce::sendNotificationSync);
+    CHECK (editor.samplesPerPixel == Catch::Approx (AudioEditor::maxZoom));
+    editor.zoom.setValue (0.0, juce::sendNotificationSync);
+    CHECK (editor.sampleToX (48000) <= editor.getWidth());
+    CHECK (editor.amplitudeLabels().joinIntoString (",") == "100%,50%,0");
+    editor.waveZoomButton.onClick();
+    CHECK (editor.waveZoom == 4.0f);
+    CHECK (editor.amplitudeLabels()[0] == "25%");
+    editor.waveZoomButton.onClick();
+    editor.amplitudeScale = AudioEditor::AmplitudeScale::decibels;
+    CHECK (editor.amplitudeLabels().joinIntoString (",") == "0 dB,-6 dB,-inf");
+    REQUIRE_FALSE (editor.rulerLabels().isEmpty());
+    editor.rulerScale = AudioEditor::RulerScale::samples;
+    CHECK (editor.rulerLabels()[0] == "0");
+    const bool snap = studio.snapEnabled;
+    editor.snapButton.onClick();
+    ui.settle();
+    CHECK (studio.snapEnabled != snap);
+    CHECK (editor.snapButton.getToggleState() == studio.snapEnabled);
+
+    // W: the Audio File Editor. Dragging selects part of the file.
+    REQUIRE (studio.perform (Cmd::toggleAudioFileEditor));
+    ui.settle();
+    CHECK (studio.audioFileMode);
+    CHECK (editor.functions.isVisible());
+    const auto y = editor.waveArea().getCentreY();
+    editor.pointerDown ({ static_cast<float> (editor.sampleToX (0)), y });
+    editor.pointerDrag ({ static_cast<float> (editor.sampleToX (12000)), y }, true);
+    editor.pointerUp();
+    CHECK (editor.selectionStart() < 200);
+    CHECK (std::abs (editor.selectionEnd() - 12000) < 200);
+    CHECK (ui.region (id).audio.sourceOffset == 0); // selecting doesn't trim
+
+    // Silence the selection: the region plays a new file; undo goes back.
+    editor.setSelection (0, 12000);
+    REQUIRE (editor.apply (engine::FileEdit::silence));
+    CHECK (studio.session().undoName() == "Edit File: Silence");
+    CHECK (ui.region (id).audio.media != original);
+    REQUIRE (studio.session().undo().done);
+    studio.edited();
+    ui.settle();
+    CHECK (ui.region (id).audio.media == original);
+
+    // Copy, then Paste over a point: the file (and the region) grow by the copy.
+    REQUIRE (editor.copySelection());
+    REQUIRE (studio.audioClipboard != nullptr);
+    CHECK (studio.audioClipboard->numFrames() == 12000);
+    editor.setSelection (24000, 24000);
+    REQUIRE (editor.paste());
+    ui.settle();
+    CHECK (ui.m().mediaRef (ui.region (id).audio.media)->lengthSamples == 60000);
+    CHECK (ui.region (id).length == 60000);
+    CHECK (editor.selectionStart() == 24000);
+    CHECK (editor.selectionEnd() == 36000);
+    // Cut takes it out again.
+    REQUIRE (editor.cutSelection());
+    ui.settle();
+    CHECK (ui.region (id).length == 48000);
+    // Select All and Trim with nothing to trim is refused (the file wouldn't change).
+    editor.pickFunction (1);
+    CHECK (editor.selectionEnd() - editor.selectionStart() == 48000);
+
+    // Adjust Tempo Using Selection Length: 0.75 s at 120 BPM is 1.5 beats, rounded to 2, so 160 BPM.
+    editor.setSelection (0, 36000);
+    REQUIRE (editor.adjustTempoToSelection());
+    CHECK (ui.m().tempo.bpmAt (ui.region (id).start) == Catch::Approx (160.0));
+
+    // Play plays the selection; again stops.
+    editor.playSelection();
+    ui.renderAudio (256);
+    CHECK (studio.engine().previewing());
+    editor.playSelection();
+    ui.renderAudio (256);
+    CHECK_FALSE (studio.engine().previewing());
+
+    // W again hides it; Alt+double-click opens a region in the Audio File Editor, in a window.
+    REQUIRE (studio.perform (Cmd::toggleAudioFileEditor));
+    ui.settle();
+    CHECK (studio.layout.bottom == BottomTab::none);
+    studio.audioFileMode = false;
+    const auto altClick = juce::ModifierKeys (juce::ModifierKeys::altModifier | juce::ModifierKeys::leftButtonModifier);
+    ui.timeline().pointerDown (ui.centreOf (id), altClick, 2);
+    ui.timeline().pointerUp (ui.centreOf (id), altClick);
+    ui.settle();
+    CHECK (studio.audioFileMode);
+    CHECK (ui.main->windowNamed ("Audio Editor") != nullptr);
+}

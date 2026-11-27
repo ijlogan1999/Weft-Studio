@@ -2623,7 +2623,12 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
         const bool midi = r->isMidi;
         studio.selection.click (r->id, false);
         if (mods.isAltDown())
+        {
+            // An audio region opens in the Audio File Editor (D-UI-49).
+            if (! midi)
+                studio.audioFileMode = true;
             studio.perform (midi ? Cmd::pianoRollWindow : Cmd::audioEditorWindow);
+        }
         else
             studio.layout.bottom = midi ? BottomTab::pianoRoll : BottomTab::audioEditor;
         studio.sendChangeMessage();

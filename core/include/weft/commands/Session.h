@@ -272,6 +272,16 @@ public:
         position stay.
     */
     EditResult reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed);
+    /**
+        Audio File Editor (D-UI-49): every region playing `oldHash` plays `media` instead (already in Media/),
+        a copy of the file with [from, to) replaced by `inserted` frames. A region's start and end in the file
+        follow the edit (one inside the replaced part moves to its edge); a region it would leave shorter than
+        the shortest audio region is refused. One undo step `name`; positions, gain and fades stay.
+    */
+    EditResult replaceMediaFile (const std::string& oldHash, const model::MediaRef& media, Samples from, Samples to, Samples inserted,
+                                 const std::string& name);
+    /** Trim in the Audio File Editor: the file keeps only [from, to); regions move with it. */
+    EditResult trimMediaFile (const std::string& oldHash, const model::MediaRef& media, Samples from, Samples to);
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);
@@ -563,6 +573,8 @@ private:
     void refreshFor (const Txn& txn);
     UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
     void stamp (TxnWriter& w, const Id& regionId);
+    EditResult replaceFile (const std::string& oldHash, const model::MediaRef& media, const std::function<Samples (Samples, bool)>& map,
+                            const std::string& name);
     /** Writes a move or copy plan. nextZ tracks the next z per track across calls in one edit. */
     bool writePlacement (TxnWriter& w, const RegionClipboard& clip, const MovePlan& plan, bool copy, std::vector<Id>& newTrackIds,
                          std::map<Id, std::int64_t>& nextZ, std::vector<Id>* created);

@@ -1349,7 +1349,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         }
         case 5:
-            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::listEditors, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
+            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::listEditors, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor, Cmd::toggleAudioFileEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             {

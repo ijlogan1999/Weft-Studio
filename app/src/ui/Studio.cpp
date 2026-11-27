@@ -1868,7 +1868,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow: case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow:
         case Cmd::cycleWindows: case Cmd::cycleWindowsBack: case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject: case Cmd::cycleWindowViews: case Cmd::cycleWindowViewsBack:
         case Cmd::toggleNotes: case Cmd::mixerNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList:
-        case Cmd::openTempoList: case Cmd::openSignatureList: case Cmd::openMarkerText:
+        case Cmd::openTempoList: case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::toggleAudioFileEditor:
             break;
     }
     return std::nullopt;
@@ -2445,6 +2445,26 @@ bool Studio::perform (Cmd command)
             break;
         case Cmd::toggleMixer: toggleBottom (layout, BottomTab::mixer); break;
         case Cmd::togglePianoRoll: toggleBottom (layout, BottomTab::pianoRoll); break;
+        case Cmd::toggleAudioFileEditor:
+        {
+            // D-UI-49: the audio editor as the Audio File Editor, on the selected audio region when none is open.
+            if (layout.bottom == BottomTab::audioEditor && audioFileMode)
+            {
+                layout.bottom = BottomTab::none;
+                break;
+            }
+            const auto* open = m.region (editorRegion);
+            if (open == nullptr || open->isMidi)
+                for (const auto& id : selection.regions())
+                    if (const auto* r = m.region (id); r != nullptr && ! r->isMidi)
+                    {
+                        editorRegion = id;
+                        break;
+                    }
+            layout.bottom = BottomTab::audioEditor;
+            audioFileMode = true;
+            break;
+        }
         case Cmd::toggleAudioEditor:
             toggleBottom (layout, BottomTab::audioEditor);
             if (editorRegion.empty() && ! ids.empty())
@@ -3367,6 +3387,16 @@ engine::ImportOutcome Studio::importAtPlayhead (const std::vector<fs::path>& fil
     if (const auto* t = model().track (local.selectedTrack); t != nullptr && t->kind == model::TrackKind::audio)
         target.trackId = t->id;
     return importFiles (files, target);
+}
+
+bool Studio::editAudioFile (const std::string& hash, engine::FileEdit edit, std::int64_t from, std::int64_t to, double gainDb)
+{
+    if (previewing())
+    {
+        setStatus (readOnlyReason());
+        return false;
+    }
+    return check (engine::editAudioFile (*sess, hash, edit, from, to, pool, mediaDir(), gainDb, audioClipboard.get()));
 }
 
 bool Studio::previewFile (const fs::path& file)
