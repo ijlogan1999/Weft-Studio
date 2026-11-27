@@ -100,7 +100,13 @@ enum class Cmd
     toggleGroups, groupsWindow, createGroup, hideGroup1, hideGroup2, hideGroup3, hideGroup4, hideGroup5, hideGroup6, hideGroup7, hideGroup8,
     hideGroup9, newVca,
     // D-W6-17: track stacks
-    createFolderStack, createSummingStack, flattenStack, toggleStack, followStacks
+    createFolderStack, createSummingStack, flattenStack, toggleStack, followStacks,
+    // D-UI-46: windows and screensets
+    screenset1, screenset2, screenset3, screenset4, screenset5, screenset6, screenset7, screenset8, screenset9,
+    screensetTens1, screensetTens2, screensetTens3, screensetTens4, screensetTens5, screensetTens6, screensetTens7, screensetTens8, screensetTens9,
+    undoHistory, openMainWindow, mixerWindow, pianoRollWindow, audioEditorWindow, projectAudioWindow, regionInspectorWindow, closeWindow,
+    cycleWindows, cycleWindowsBack, minimizeWindow, minimizeAllWindows, zoomWindow, fullScreen, closeProject, cycleWindowViews,
+    cycleWindowViewsBack
 };
 
 struct CommandInfo

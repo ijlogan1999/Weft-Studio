@@ -498,6 +498,69 @@ std::vector<Id> Studio::selectedTracksAndRegionTracks() const
     return out;
 }
 
+bool Studio::recallScreenset (int number)
+{
+    if (number < 1 || number > 99)
+        return false;
+    // The screenset left keeps the layout as it is now; one never used starts as a copy of it.
+    screensets[screenset] = layout;
+    screenset = number;
+    if (const auto it = screensets.find (number); it != screensets.end())
+    {
+        // The theme and the control bar's and toolbar's contents aren't part of a screenset.
+        auto next = it->second;
+        next.darkTheme = layout.darkTheme;
+        next.bar = layout.bar;
+        next.barDefault = layout.barDefault;
+        next.toolbarCommands = layout.toolbarCommands;
+        next.toolbarDefault = layout.toolbarDefault;
+        layout = next;
+    }
+    else
+        screensets[number] = layout;
+    setStatus ("Screenset " + juce::String (number) + ".");
+    if (onScreensetsChanged)
+        onScreensetsChanged();
+    sendChangeMessage();
+    return true;
+}
+
+juce::String Studio::screensetsToString() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("current", screenset);
+    auto* sets = new juce::DynamicObject();
+    auto all = screensets;
+    all[screenset] = layout;
+    for (const auto& [n, l] : all)
+        sets->setProperty (juce::String (n), l.toString());
+    o->setProperty ("sets", juce::var (sets));
+    return juce::JSON::toString (juce::var (o), true);
+}
+
+void Studio::screensetsFromString (const juce::String& text)
+{
+    const auto v = juce::JSON::parse (text);
+    screensets.clear();
+    if (auto* sets = v["sets"].getDynamicObject())
+        for (const auto& p : sets->getProperties())
+            if (const int n = p.name.toString().getIntValue(); n >= 1 && n <= 99)
+                screensets[n] = PanelLayout::fromString (p.value.toString());
+    screenset = std::clamp (static_cast<int> (v["current"]), 1, 99);
+}
+
+bool Studio::closeProject()
+{
+    // Close Project (D-UI-46): an empty untitled project takes its place, as at startup.
+    std::string error;
+    if (! newProject (projectParent, {}, &error, true))
+    {
+        setStatus (juce::String (error));
+        return false;
+    }
+    return true;
+}
+
 bool Studio::toggleStack (const Id& trackId, bool all)
 {
     const auto& m = model();
@@ -1800,6 +1863,10 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::recordToggle: case Cmd::toggleReplace: case Cmd::captureRecording:
         case Cmd::toggleGroups: case Cmd::groupsWindow: case Cmd::createGroup: case Cmd::hideGroup1: case Cmd::hideGroup2: case Cmd::hideGroup3: case Cmd::hideGroup4: case Cmd::hideGroup5: case Cmd::hideGroup6: case Cmd::hideGroup7: case Cmd::hideGroup8: case Cmd::hideGroup9: case Cmd::newVca:
         case Cmd::createFolderStack: case Cmd::createSummingStack: case Cmd::flattenStack: case Cmd::toggleStack: case Cmd::followStacks:
+        case Cmd::screenset1: case Cmd::screenset2: case Cmd::screenset3: case Cmd::screenset4: case Cmd::screenset5: case Cmd::screenset6: case Cmd::screenset7: case Cmd::screenset8: case Cmd::screenset9:
+        case Cmd::screensetTens1: case Cmd::screensetTens2: case Cmd::screensetTens3: case Cmd::screensetTens4: case Cmd::screensetTens5: case Cmd::screensetTens6: case Cmd::screensetTens7: case Cmd::screensetTens8: case Cmd::screensetTens9:
+        case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow: case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow:
+        case Cmd::cycleWindows: case Cmd::cycleWindowsBack: case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject: case Cmd::cycleWindowViews: case Cmd::cycleWindowViewsBack:
             break;
     }
     return std::nullopt;
@@ -1808,6 +1875,14 @@ std::optional<bool> Studio::performNotes (Cmd command)
 bool Studio::perform (Cmd command)
 {
     const juce::ScopedValueSetter<bool> asCommand (inCommand, true);
+    // After Recall Screenset Nx, the next number key picks screenset N1 to N9 (D-UI-46).
+    if (screensetTens > 0)
+    {
+        const int tens = std::exchange (screensetTens, 0);
+        const int n = static_cast<int> (command) - static_cast<int> (Cmd::marker1) + 1;
+        if (n >= 1 && n <= 9)
+            return recallScreenset (tens * 10 + n);
+    }
     endPluginGesture();
     if (previewing() && changesDocument (command))
     {
@@ -2923,6 +2998,29 @@ bool Studio::perform (Cmd command)
             return true;
         case Cmd::followStacks:
             mixerFollowStacks = ! mixerFollowStacks;
+            break;
+        case Cmd::screenset1: case Cmd::screenset2: case Cmd::screenset3: case Cmd::screenset4: case Cmd::screenset5:
+        case Cmd::screenset6: case Cmd::screenset7: case Cmd::screenset8: case Cmd::screenset9:
+            return recallScreenset (static_cast<int> (command) - static_cast<int> (Cmd::screenset1) + 1);
+        case Cmd::screensetTens1: case Cmd::screensetTens2: case Cmd::screensetTens3: case Cmd::screensetTens4: case Cmd::screensetTens5:
+        case Cmd::screensetTens6: case Cmd::screensetTens7: case Cmd::screensetTens8: case Cmd::screensetTens9:
+            // The next number key gives the second digit (D-UI-46).
+            screensetTens = static_cast<int> (command) - static_cast<int> (Cmd::screensetTens1) + 1;
+            setStatus ("Screenset " + juce::String (screensetTens) + "x: press 1 to 9.");
+            return true;
+        case Cmd::cycleWindowViews:
+        case Cmd::cycleWindowViewsBack:
+        {
+            // The bottom area's views in turn: none, Mixer, Piano Roll, Audio Editor (D-UI-46).
+            const int step = command == Cmd::cycleWindowViews ? 1 : 3;
+            layout.bottom = static_cast<BottomTab> ((static_cast<int> (layout.bottom) + step) % 4);
+            break;
+        }
+        case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow:
+        case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow: case Cmd::cycleWindows: case Cmd::cycleWindowsBack:
+        case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject:
+            if (uiCommand)
+                uiCommand (command);
             break;
         case Cmd::createGroup:
         {

@@ -129,6 +129,9 @@ public:
     bool canRedo() const noexcept { return ! redoStack.empty() && ! gesture; }
     std::string undoName() const { return undoStack.empty() ? std::string() : undoStack.back().name; }
     std::string redoName() const { return redoStack.empty() ? std::string() : redoStack.back().name; }
+    /** Undo History (D-UI-46): the steps that can be undone, oldest first; and those that can be redone, the next last. */
+    std::vector<std::string> undoNames() const;
+    std::vector<std::string> redoNames() const;
     UndoResult undo();
     UndoResult redo();
 

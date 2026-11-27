@@ -275,6 +275,17 @@ public:
     bool mixerAudio = true, mixerInstrument = true, mixerBus = true;
     /** View › Follow Track Stacks (P-MX-10): the mixer hides a closed stack's members as the tracks area does. */
     bool mixerFollowStacks = true;
+    /** Screensets (D-UI-46): numbered panel layouts, 1 to 99, this machine's. The current one follows the layout as
+        it changes; recalling another keeps this one as it was left. */
+    std::map<int, PanelLayout> screensets;
+    int screenset = 1;
+    int screensetTens = 0; // after Recall Screenset Nx: the next number key picks N1 to N9
+    bool recallScreenset (int number);
+    juce::String screensetsToString() const;
+    void screensetsFromString (const juce::String& text);
+    std::function<void()> onScreensetsChanged;
+    /** Close Project: an empty untitled project replaces this one (ask about unsaved changes first). */
+    bool closeProject();
     /** Opens or closes a stack (the main track's, or a member's stack); with `all`, every stack takes that state (M-MIX-31). */
     bool toggleStack (const Id& trackId, bool all = false);
     /** The channels the mixer shows, left to right (the master is pinned apart and not listed). */

@@ -3,6 +3,7 @@
 #include "UiFixture.h"
 
 #include "ui/ProjectDialogs.h"
+#include "ui/UndoHistory.h"
 
 #include <cstdlib>
 #include <tuple>
@@ -706,4 +707,82 @@ TEST_CASE ("AT-UI-14 customize the control bar, its master control and display f
     REQUIRE (meter != nullptr);
     CHECK (meter->getWidth() == 520);
     CHECK (meter->text().startsWith ("CPU "));
+}
+
+TEST_CASE ("AT-UI-15 screensets, Undo History, panes in their own windows, window views and Close Project", "[UI][AT-UI-15]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+
+    // Screensets: each keeps the layout it was left with; one never used starts as a copy.
+    REQUIRE (studio.layout.inspector);
+    REQUIRE (studio.perform (Cmd::screenset2));
+    CHECK (studio.screenset == 2);
+    REQUIRE (studio.perform (Cmd::toggleInspector));
+    CHECK_FALSE (studio.layout.inspector);
+    REQUIRE (studio.perform (Cmd::screenset1));
+    CHECK (studio.layout.inspector);
+    REQUIRE (studio.perform (Cmd::screenset2));
+    CHECK_FALSE (studio.layout.inspector);
+    // Recall Screenset 1x, then 3: screenset 13.
+    REQUIRE (studio.perform (Cmd::screensetTens1));
+    REQUIRE (studio.perform (Cmd::marker3));
+    CHECK (studio.screenset == 13);
+    CHECK (studio.playhead() == 0); // the number key didn't go to a marker
+    // They're kept as text by the app and read back.
+    const auto saved = studio.screensetsToString();
+    studio.screensets.clear();
+    studio.screensetsFromString (saved);
+    CHECK (studio.screenset == 13);
+    CHECK (studio.screensets.size() == 3);
+    CHECK_FALSE (studio.screensets.at (2).inspector);
+
+    // Undo History lists the steps; clicking a step goes back or forward to it.
+    auto& s = studio.session();
+    const auto track = ui.m().trackOrder.front();
+    REQUIRE (s.renameTrack (track, "One"));
+    REQUIRE (s.renameTrack (track, "Two"));
+    studio.edited();
+    REQUIRE (studio.perform (Cmd::undoHistory));
+    auto* window = ui.main->windowNamed ("Undo History");
+    REQUIRE (window != nullptr);
+    auto* history = dynamic_cast<UndoHistory*> (window->getContentComponent());
+    REQUIRE (history != nullptr);
+    const auto rows = history->getNumRows();
+    CHECK (history->rowText (0) == "Start");
+    CHECK (history->rowText (rows - 1) == "Rename Track");
+    CHECK (history->currentRow() == rows - 1);
+    history->goTo (rows - 3);
+    CHECK (ui.m().track (track)->name == "Audio 1");
+    CHECK (history->getNumRows() == rows); // the undone steps stay listed, to redo
+    history->goTo (rows - 1);
+    CHECK (ui.m().track (track)->name == "Two");
+    REQUIRE (studio.perform (Cmd::undoHistory)); // already open: brought forward, not doubled
+    CHECK (ui.main->floatingWindows().size() == 1);
+
+    // The panes in their own windows; Close Window closes the last one opened.
+    REQUIRE (studio.perform (Cmd::mixerWindow));
+    REQUIRE (studio.perform (Cmd::pianoRollWindow));
+    REQUIRE (studio.perform (Cmd::regionInspectorWindow));
+    CHECK (ui.main->windowNamed ("Mixer") != nullptr);
+    CHECK (dynamic_cast<MixerView*> (ui.main->windowNamed ("Mixer")->getContentComponent()) != nullptr);
+    CHECK (ui.main->windowNamed ("Piano Roll") != nullptr);
+    CHECK (ui.main->floatingWindows().size() == 4);
+    REQUIRE (studio.perform (Cmd::closeWindow));
+    CHECK (ui.main->windowNamed ("Inspector") == nullptr);
+    CHECK (ui.main->floatingWindows().size() == 3);
+
+    // Cycle Through Window Views: none, Mixer, Piano Roll, Audio Editor, and back.
+    studio.layout.bottom = BottomTab::none;
+    REQUIRE (studio.perform (Cmd::cycleWindowViews));
+    CHECK (studio.layout.bottom == BottomTab::mixer);
+    REQUIRE (studio.perform (Cmd::cycleWindowViewsBack));
+    REQUIRE (studio.perform (Cmd::cycleWindowViewsBack));
+    CHECK (studio.layout.bottom == BottomTab::audioEditor);
+
+    // Close Project: an empty untitled project in its place.
+    const auto before = ui.m().info.id;
+    REQUIRE (studio.closeProject());
+    CHECK (ui.m().info.id != before);
+    CHECK (ui.m().trackOrder.size() == 1);
 }

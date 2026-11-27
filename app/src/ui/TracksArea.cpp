@@ -2605,10 +2605,14 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
 
     if (clicks >= 2 && r != nullptr)
     {
-        // Double-click opens the matching editor (spec 04 §7).
+        // Double-click opens the matching editor (spec 04 §7); Alt+double-click opens it in its own window (D-UI-46).
         studio.editorRegion = r->id;
-        studio.layout.bottom = r->isMidi ? BottomTab::pianoRoll : BottomTab::audioEditor;
+        const bool midi = r->isMidi;
         studio.selection.click (r->id, false);
+        if (mods.isAltDown())
+            studio.perform (midi ? Cmd::pianoRollWindow : Cmd::audioEditorWindow);
+        else
+            studio.layout.bottom = midi ? BottomTab::pianoRoll : BottomTab::audioEditor;
         studio.sendChangeMessage();
         return;
     }

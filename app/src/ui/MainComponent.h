@@ -117,6 +117,11 @@ public:
     void openFloating (Cmd kind, int scale = 1);
     /** The Groups window (D-W6-15), or null when it's closed. Cmd::groupsWindow opens and closes it. */
     FloatingWindow* groupsWindow() const noexcept { return groups.get(); }
+    /** A window holding `content` (closing it deletes it), and the open one with that title. */
+    FloatingWindow* openWindow (const juce::String& title, std::unique_ptr<juce::Component> content);
+    FloatingWindow* windowNamed (const juce::String& title) const;
+    /** Undo History, the panes as windows, Close / Cycle / Minimize / Zoom / Full Screen, Close Project (D-UI-46). */
+    void windowCommand (Cmd command);
     Inspector& inspector() noexcept { return inspectorPanel; }
     TracksArea& tracks() noexcept { return tracksArea; }
     BottomArea& bottom() noexcept { return bottomArea; }
@@ -191,6 +196,7 @@ private:
     Toolbar toolbarRow { studio };
     juce::OwnedArray<FloatingWindow> floating;
     std::unique_ptr<FloatingWindow> groups;
+    int frontWindow = 0; // Cycle Through Windows: the one brought forward last
     Inspector inspectorPanel;
     TracksArea tracksArea;
     BottomArea bottomArea;

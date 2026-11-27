@@ -8,6 +8,7 @@
 #include "PluginSearch.h"
 #include "ProjectDialogs.h"
 #include "ShareDialogs.h"
+#include "UndoHistory.h"
 
 namespace weft::ui
 {
@@ -601,6 +602,8 @@ void MainComponent::handleUiCommand (Cmd command)
                                                    if (safe != nullptr)
                                                        safe->control.pickCustomize (item);
                                                });
+    else if (command >= Cmd::undoHistory && command <= Cmd::closeProject)
+        windowCommand (command);
     else if (command == Cmd::groupsWindow)
     {
         if (groups != nullptr)
@@ -637,13 +640,112 @@ void MainComponent::openFloating (Cmd kind, int scale)
         content = std::make_unique<BigDisplay> (studio, beats ? BigDisplay::Mode::beats : BigDisplay::Mode::time);
         title = beats ? "Bars and Beats" : "Time";
     }
-    floating.add (new FloatingWindow (title, std::move (content), [safe = juce::Component::SafePointer<MainComponent> (this)] (FloatingWindow* w) {
+    openWindow (title, std::move (content));
+}
+
+FloatingWindow* MainComponent::openWindow (const juce::String& title, std::unique_ptr<juce::Component> content)
+{
+    return floating.add (new FloatingWindow (title, std::move (content), [safe = juce::Component::SafePointer<MainComponent> (this)] (FloatingWindow* w) {
         // Deleted after the close click returns.
         juce::MessageManager::callAsync ([safe, w] {
             if (safe != nullptr)
                 safe->floating.removeObject (w);
         });
     }));
+}
+
+FloatingWindow* MainComponent::windowNamed (const juce::String& title) const
+{
+    for (auto* w : floating)
+        if (w->getName() == title)
+            return w;
+    return nullptr;
+}
+
+void MainComponent::windowCommand (Cmd command)
+{
+    // D-UI-46: panes in their own windows, and the window commands.
+    const auto pane = [this] (const juce::String& title, std::unique_ptr<juce::Component> content, int w, int h) {
+        if (auto* existing = windowNamed (title))
+        {
+            existing->toFront (true);
+            return;
+        }
+        content->setSize (w, h);
+        openWindow (title, std::move (content));
+    };
+    auto* main = findParentComponentOfClass<juce::DocumentWindow>();
+    if (command == Cmd::undoHistory)
+        pane ("Undo History", std::make_unique<UndoHistory> (studio), 300, 400);
+    else if (command == Cmd::mixerWindow)
+        pane ("Mixer", std::make_unique<MixerView> (studio), 900, 460);
+    else if (command == Cmd::pianoRollWindow)
+        pane ("Piano Roll", std::make_unique<PianoRoll> (studio), 900, 420);
+    else if (command == Cmd::audioEditorWindow)
+        pane ("Audio Editor", std::make_unique<AudioEditor> (studio), 900, 320);
+    else if (command == Cmd::projectAudioWindow)
+        pane ("Project Audio", std::make_unique<MediaList> (studio), 360, 420);
+    else if (command == Cmd::regionInspectorWindow)
+        pane ("Inspector", std::make_unique<Inspector> (studio), 260, 640);
+    else if (command == Cmd::openMainWindow)
+    {
+        if (main != nullptr)
+        {
+            main->setMinimised (false);
+            main->toFront (true);
+        }
+    }
+    else if (command == Cmd::closeWindow)
+    {
+        // The window opened last; the main window stays (Close Project closes the project).
+        if (groups != nullptr && floating.isEmpty())
+            groups.reset();
+        else if (! floating.isEmpty())
+            floating.removeObject (floating.getLast());
+        else
+            studio.setStatus ("No window to close.");
+    }
+    else if (command == Cmd::cycleWindows || command == Cmd::cycleWindowsBack)
+    {
+        std::vector<juce::Component*> all;
+        if (main != nullptr)
+            all.push_back (main);
+        for (auto* w : floating)
+            all.push_back (w);
+        if (groups != nullptr)
+            all.push_back (groups.get());
+        if (all.size() < 2)
+        {
+            studio.setStatus ("No other window.");
+            return;
+        }
+        const auto n = static_cast<int> (all.size());
+        frontWindow = ((frontWindow + (command == Cmd::cycleWindows ? 1 : n - 1)) % n + n) % n;
+        all[static_cast<std::size_t> (frontWindow)]->toFront (true);
+    }
+    else if (command == Cmd::minimizeWindow || command == Cmd::minimizeAllWindows)
+    {
+        if (command == Cmd::minimizeAllWindows)
+            for (auto* w : floating)
+                w->setMinimised (true);
+        if (main != nullptr)
+            main->setMinimised (true);
+    }
+    else if (command == Cmd::zoomWindow)
+    {
+        if (main != nullptr)
+            main->setFullScreen (! main->isFullScreen());
+    }
+    else if (command == Cmd::fullScreen)
+    {
+        if (main != nullptr)
+        {
+            auto& desktop = juce::Desktop::getInstance();
+            desktop.setKioskModeComponent (desktop.getKioskModeComponent() == main ? nullptr : main, false);
+        }
+    }
+    else if (command == Cmd::closeProject)
+        whenSaved ([this] { studio.closeProject(); });
 }
 
 void MainComponent::whenSignedIn (std::function<void()> next)
@@ -936,6 +1038,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         {
             add (Cmd::newProject);
             add (Cmd::openProject);
+            add (Cmd::closeProject);
             juce::PopupMenu recentMenu;
             const auto& items = studio.recentProjects().items();
             for (std::size_t i = 0; i < items.size(); ++i)
@@ -1223,6 +1326,34 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 for (auto c : { Cmd::customizeControlBar, Cmd::bigBeatsDisplay, Cmd::bigTimeDisplay, Cmd::performanceMeter })
                     bars.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
                 menu.addSubMenu ("Control Bar and Displays", bars);
+            }
+            {
+                // D-UI-46: screensets, panes as windows and the window commands.
+                juce::PopupMenu windows, sets, tens;
+                const auto item = [] (juce::PopupMenu& to, Cmd c, bool ticked = false) {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item i (info.name);
+                    i.itemID = static_cast<int> (c) + 1;
+                    i.shortcutKeyDescription = info.shortcut;
+                    i.isTicked = ticked;
+                    to.addItem (i);
+                };
+                for (int n = 1; n <= 9; ++n)
+                {
+                    item (sets, static_cast<Cmd> (static_cast<int> (Cmd::screenset1) + n - 1), studio.screenset == n);
+                    item (tens, static_cast<Cmd> (static_cast<int> (Cmd::screensetTens1) + n - 1), studio.screenset / 10 == n);
+                }
+                sets.addSubMenu ("Screensets 11 to 99", tens);
+                windows.addSubMenu ("Screensets", sets);
+                windows.addSeparator();
+                for (auto c : { Cmd::openMainWindow, Cmd::mixerWindow, Cmd::pianoRollWindow, Cmd::audioEditorWindow, Cmd::projectAudioWindow,
+                                Cmd::regionInspectorWindow, Cmd::undoHistory })
+                    item (windows, c);
+                windows.addSeparator();
+                for (auto c : { Cmd::cycleWindows, Cmd::cycleWindowsBack, Cmd::cycleWindowViews, Cmd::cycleWindowViewsBack, Cmd::closeWindow,
+                                Cmd::minimizeWindow, Cmd::minimizeAllWindows, Cmd::zoomWindow, Cmd::fullScreen })
+                    item (windows, c);
+                menu.addSubMenu ("Windows", windows);
             }
             {
                 // D-W8-7: automation modes for every track, the selected track's toggles, and the used-parameter cycle.

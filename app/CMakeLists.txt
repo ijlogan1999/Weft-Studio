@@ -23,6 +23,7 @@ add_library(weft_app_lib STATIC
     src/ui/ControlBar.cpp
     src/ui/Displays.cpp
     src/ui/GroupsPanel.cpp
+    src/ui/UndoHistory.cpp
     src/ui/Inspector.cpp
     src/ui/MainComponent.cpp
     src/ui/Mixer.cpp

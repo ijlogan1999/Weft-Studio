@@ -401,6 +401,22 @@ void Session::cancelGesture()
     refreshFor (txn);
 }
 
+std::vector<std::string> Session::undoNames() const
+{
+    std::vector<std::string> out;
+    for (const auto& t : undoStack)
+        out.push_back (t.name);
+    return out;
+}
+
+std::vector<std::string> Session::redoNames() const
+{
+    std::vector<std::string> out;
+    for (const auto& t : redoStack)
+        out.push_back (t.name);
+    return out;
+}
+
 UndoResult Session::undo() { return invert (undoStack, redoStack, "Undo"); }
 
 UndoResult Session::redo() { return invert (redoStack, undoStack, "Redo"); }

@@ -238,6 +238,23 @@ std::vector<CommandInfo> build()
         { Cmd::flattenStack, "Flatten Stack", "", {} },
         { Cmd::toggleStack, "Open/Close Track Stack", "", {} },
         { Cmd::followStacks, "Follow Track Stacks", "", {} },
+        { Cmd::undoHistory, "Undo History", "Alt+Z", { key ('Z', alt) } },
+        { Cmd::openMainWindow, "Open Main Window", "", {} },
+        { Cmd::mixerWindow, "Open Mixer", "Alt+X", { key ('X', alt) } },
+        { Cmd::pianoRollWindow, "Open Piano Roll", "", {} },
+        { Cmd::audioEditorWindow, "Open Audio Editor", "", {} },
+        { Cmd::projectAudioWindow, "Open Project Audio", "", {} },
+        { Cmd::regionInspectorWindow, "Region Inspector Float", "", {} },
+        { Cmd::closeWindow, "Close Window", "Ctrl+W", { key ('W', ctrl) } },
+        { Cmd::cycleWindows, "Cycle Through Windows", "Ctrl+`", { key ('`', ctrl) } },
+        { Cmd::cycleWindowsBack, "Cycle Through Windows (Backwards)", "Ctrl+Shift+`", { key ('`', ctrl | shift) } },
+        { Cmd::minimizeWindow, "Minimize Window", "", {} },
+        { Cmd::minimizeAllWindows, "Minimize All Windows", "", {} },
+        { Cmd::zoomWindow, "Zoom Window", "", {} },
+        { Cmd::fullScreen, "Enter/Exit Full Screen", "F11", { key (K::F11Key) } },
+        { Cmd::closeProject, "Close Project", "Ctrl+Alt+W", { key ('W', ctrl | alt) } },
+        { Cmd::cycleWindowViews, "Cycle Through Window Views", "", {} },
+        { Cmd::cycleWindowViewsBack, "Cycle Through Window Views (Backwards)", "", {} },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
@@ -247,6 +264,12 @@ std::vector<CommandInfo> build()
         { Cmd::automationLatchRead, "Toggle Track Automation Latch/Read", "Ctrl+Alt+Shift+L", { key ('L', ctrl | alt | shift) } },
         { Cmd::cycleAutomationParameter, "Cycle Through Used Automation Parameters", "Ctrl+Alt+Shift+A", { key ('A', ctrl | alt | shift) } },
     };
+    for (int n = 1; n <= 9; ++n)
+    {
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::screenset1) + n - 1), "Recall Screenset " + juce::String (n),
+                       "Alt+Shift+" + juce::String (n), { key ('0' + n, alt | shift) } });
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::screensetTens1) + n - 1), "Recall Screenset " + juce::String (n) + "x", "", {} });
+    }
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::hideGroup1) + n - 1), "Toggle Hide Group " + juce::String (n),
                        "Ctrl+Shift+" + juce::String (n), { key ('0' + n, ctrl | shift) } });

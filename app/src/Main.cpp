@@ -60,8 +60,14 @@ public:
         const auto music = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
         content = new weft::ui::MainComponent (*studio, music.isDirectory() ? music : documents);
         content->devices = devices.get();
+        studio->screensetsFromString (settings->getValue ("screensets"));
+        studio->onScreensetsChanged = [this] {
+            settings->setValue ("screensets", studio->screensetsToString());
+            settings->saveIfNeeded();
+        };
         content->onLayoutChanged = [this] (const weft::ui::PanelLayout& l) {
             settings->setValue ("layout", l.toString());
+            settings->setValue ("screensets", studio->screensetsToString()); // the current screenset follows the layout
             settings->saveIfNeeded();
         };
 
