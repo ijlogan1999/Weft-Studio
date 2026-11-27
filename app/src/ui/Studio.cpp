@@ -94,6 +94,8 @@ juce::var ControlBarLayout::toVar() const
     static const char* const formats[] = { "milliseconds", "samples", "timecode24", "timecode25", "timecode30" };
     o->setProperty ("time", formats[static_cast<int> (timeFormat)]);
     o->setProperty ("tempoDecimals", tempoDecimals);
+    static const char* const units[] = { "percent", "tempo", "semitones", "tuning" };
+    o->setProperty ("varispeedUnit", units[static_cast<int> (varispeedUnit)]);
     return juce::var (o);
 }
 
@@ -103,7 +105,7 @@ ControlBarLayout ControlBarLayout::fromVar (const juce::var& v)
     if (! v.isObject())
         return l;
     if (v.hasProperty ("items"))
-        l.items = static_cast<int> (v["items"]) & allItems;
+        l.items = static_cast<int> (v["items"]) & knownItems;
     const auto master = v["master"].toString();
     l.master = master == "none" ? Master::none : master == "meter" ? Master::meter : Master::volume;
     const auto time = v["time"].toString();
@@ -114,6 +116,9 @@ ControlBarLayout ControlBarLayout::fromVar (const juce::var& v)
                                           : TimeFormat::milliseconds;
     const int decimals = v.hasProperty ("tempoDecimals") ? static_cast<int> (v["tempoDecimals"]) : 2;
     l.tempoDecimals = decimals <= 0 ? 0 : decimals >= 4 ? 4 : 2;
+    using U = engine::varispeed::Unit;
+    const auto unit = v["varispeedUnit"].toString();
+    l.varispeedUnit = unit == "tempo" ? U::tempo : unit == "semitones" ? U::semitones : unit == "tuning" ? U::tuning : U::percent;
     return l;
 }
 
@@ -296,10 +301,10 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     live = std::make_unique<engine::LiveAutomation> (*eng);
     midiRouter = std::make_unique<engine::MidiInputRouter> (*eng);
     // Controllers from MIDI devices also reach the Smart Controls, on the message thread.
-    midiRouter->setControllerTap ([weak = std::weak_ptr<bool> (alive), this] (std::uint8_t status, std::uint8_t d1, std::uint8_t d2) {
-        juce::MessageManager::callAsync ([weak, this, status, d1, d2] {
+    midiRouter->setControllerTap ([weak = std::weak_ptr<bool> (alive), this] (std::uint8_t kind, std::uint8_t d1, std::uint8_t d2) {
+        juce::MessageManager::callAsync ([weak, this, kind, d1, d2] {
             if (weak.lock())
-                smartControlMidi (status, d1, d2);
+                smartControlMidi (kind, d1, d2);
         });
     });
     catalog = std::make_unique<engine::PluginCatalog> (settingsFolder() / "plugins.json");
@@ -1167,23 +1172,23 @@ juce::String Studio::targetValueText (const Id& trackId, const model::Automation
     return juce::String (juce::roundToInt (normalized * 100.0)) + "%";
 }
 
-model::SmartControls Studio::smartControls (const Id& trackId, int layout) const
+model::SmartControls Studio::smartControls (const Id& trackId, int knobs) const
 {
     const auto* t = model().track (trackId);
     if (t != nullptr && t->smartControls)
     {
         auto own = *t->smartControls;
-        if (layout > 0 && layout != own.layout)
+        if (knobs > 0 && knobs != own.layout)
         {
-            own.layout = layout;
-            own.controls.resize (static_cast<std::size_t> (layout));
+            own.layout = knobs;
+            own.controls.resize (static_cast<std::size_t> (knobs));
         }
         return own;
     }
     // Automatic: the plug-ins' parameters (instrument first, then inserts in slot order) and the sends on the
     // first knobs, Volume and Pan on the last two.
     model::SmartControls out;
-    out.layout = layout > 0 ? layout : 8;
+    out.layout = knobs > 0 ? knobs : 8;
     out.controls.resize (static_cast<std::size_t> (out.layout));
     if (t == nullptr)
         return out;
@@ -1260,14 +1265,14 @@ void Studio::releaseSmartControl (const Id& trackId, int index)
             releaseControl (trackId, m.target);
 }
 
-bool Studio::smartControlMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2)
+bool Studio::smartControlMidi (std::uint8_t kind, std::uint8_t data1, std::uint8_t data2)
 {
-    if ((status & 0xF0) != 0xB0 || data1 > 127)
+    if ((kind & 0xF0) != 0xB0 || data1 > 127)
         return false;
     const auto trackId = selectedTrack();
     if (trackId.empty() || model().track (trackId) == nullptr)
         return false;
-    const int channel = (status & 0x0F) + 1;
+    const int channel = (kind & 0x0F) + 1;
     auto controls = smartControls (trackId);
     if (smartLearn)
     {
@@ -2015,7 +2020,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
             piano.selection.clear();
             sendChangeMessage();
             return true;
-        case Cmd::playStop: case Cmd::record: case Cmd::cycle: case Cmd::metronome: case Cmd::goToStart: case Cmd::goToEnd:
+        case Cmd::playStop: case Cmd::record: case Cmd::cycle: case Cmd::metronome: case Cmd::toggleVarispeed: case Cmd::goToStart: case Cmd::goToEnd:
         case Cmd::previousBar: case Cmd::nextBar: case Cmd::autopunch: case Cmd::followPlayhead: case Cmd::save: case Cmd::newTrack:
         case Cmd::undo: case Cmd::redo: case Cmd::split: case Cmd::join: case Cmd::muteRegions:
         case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::setCycleToSelection: case Cmd::zoomToFit: case Cmd::zoomIn:
@@ -2276,6 +2281,9 @@ bool Studio::perform (Cmd command)
                 setStatus (settings.metronomeOn ? "Click on." : "Click off.");
             break;
         }
+        case Cmd::toggleVarispeed:
+            setVarispeed (! varispeedEnabled, varispeedValue);
+            break;
         case Cmd::goToStart: locate (0); break;
         case Cmd::goToCycleStart:
         case Cmd::goToCycleEnd:
@@ -4046,6 +4054,7 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     settings.clickOnlyCountIn = before.clickOnlyCountIn;
     settings.clickTone = before.clickTone;
     eng->setSettings (settings);
+    varispeedEnabled = false; // Varispeed is off in a project just opened (D-ARCH-55)
     loadProjectMedia();
     syncEngine();
     loadViewState();
@@ -5047,6 +5056,23 @@ void Studio::setOnline (bool online)
     if (syncClient != nullptr)
         syncClient->setOnline (online);
     sendChangeMessage();
+}
+
+void Studio::setVarispeed (bool on, double rate)
+{
+    // D-ARCH-55: this user's only; the project and other collaborators' playback don't change.
+    varispeedEnabled = on;
+    varispeedValue = engine::varispeed::clampRate (rate);
+    auto settings = eng->settings();
+    settings.varispeed = on ? varispeedValue : 1.0;
+    eng->setSettings (settings);
+    setStatus (on ? "Varispeed " + varispeedText() + "." : juce::String ("Varispeed off."));
+    sendChangeMessage();
+}
+
+juce::String Studio::varispeedText() const
+{
+    return juce::String (engine::varispeed::text (varispeedValue, layout.bar.varispeedUnit, model().tempo.bpmAt (playhead())));
 }
 
 bool Studio::tapTempo (double nowMs)

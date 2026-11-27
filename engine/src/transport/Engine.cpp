@@ -818,6 +818,7 @@ void Engine::setSettings (const TransportSettings& s)
     c.clickOnlyCountIn = s.clickOnlyCountIn;
     c.clickPattern = { s.clickBars, s.clickBeats, s.clickDivisions };
     c.clickTone = std::clamp (s.clickTone, 0, Metronome::numTones - 1);
+    c.speed = varispeed::clampRate (s.varispeed);
     send (c);
 }
 
@@ -893,6 +894,17 @@ void Engine::prepare (const DeviceConfig& config)
     rampRight.assign (block, 0.0f);
     rampSend.assign (block, 0.0f);
     metronome.prepare (rate);
+    // Varispeed: a block at rate 2 renders up to twice the frames, plus the kernel's reach either side.
+    vsCapacity = 4 * static_cast<std::int64_t> (maxBlock) + 8 * vsReach;
+    for (auto& r : vsRing)
+        r.assign (static_cast<std::size_t> (vsCapacity), 0.0f);
+    vsIn.assign (static_cast<std::size_t> (numInputs), std::vector<float> (static_cast<std::size_t> (vsCapacity)));
+    vsInChunk.assign (static_cast<std::size_t> (numInputs), std::vector<float> (block));
+    vsInPtrs.assign (static_cast<std::size_t> (numInputs), nullptr);
+    for (std::size_t c = 0; c < vsInChunk.size(); ++c)
+        vsInPtrs[c] = vsInChunk[c].data();
+    vsClick.assign (block, 0.0f);
+    vsActive = false;
     rack.prepare (rate, maxBlock);
     effects.prepare (rate, maxBlock);
 
@@ -1010,6 +1022,7 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
             clickOnlyCountIn = c.clickOnlyCountIn;
             clickPattern = c.clickPattern;
             clickTone = c.clickTone;
+            vsTarget = c.speed;
             break;
     }
 }
@@ -1032,184 +1045,25 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
 
     if (snap != nullptr)
     {
-        for (auto& m : mix)
-            std::fill_n (m.data(), numFrames, 0.0f);
-        const auto blockStart = position;
-        numRolledSpans = 0;
-
-        int offset = 0;
-        while (offset < numFrames)
-        {
-            const int remaining = numFrames - offset;
-            switch (transport)
-            {
-                case TransportState::stopped:
-                    renderSpan (*snap, inputs, position, offset, remaining, false);
-                    renderClicks (*snap, position, offset, remaining, false);
-                    offset = numFrames;
-                    break;
-
-                case TransportState::countIn:
-                {
-                    // Count-in: click only (D-ARCH-13); regions start playing at the record position.
-                    const auto n = static_cast<int> (std::min<std::int64_t> (remaining, recordStart - position));
-                    if (n > 0)
-                    {
-                        renderSpan (*snap, inputs, position, offset, n, false);
-                        renderClicks (*snap, position, offset, n, true);
-                        position += n;
-                        offset += n;
-                    }
-                    if (position >= recordStart)
-                        transport = pass != nullptr ? TransportState::recording : TransportState::playing;
-                    break;
-                }
-
-                case TransportState::playing:
-                case TransportState::recording:
-                {
-                    auto end = position + remaining;
-                    // Cycle (F-TRN-6): wrap when playback reaches the end; the end is exclusive.
-                    // Recording cycles too: each pass becomes a take (W-1c).
-                    const bool cycling = snap->cycleEnabled && position < snap->cycleEnd;
-                    if (cycling)
-                        end = std::min (end, snap->cycleEnd);
-                    const auto n = static_cast<int> (end - position);
-                    if (numRolledSpans < rolledSpans.size())
-                        rolledSpans[numRolledSpans++] = { offset, n, position };
-                    renderSpan (*snap, inputs, position, offset, n, true);
-                    const bool audible = clickOn && ! clickOnlyCountIn && (transport == TransportState::recording ? clickInRecord : clickInPlay);
-                    renderClicks (*snap, position, offset, n, audible);
-                    if (transport == TransportState::recording && pass != nullptr)
-                        captureSpan (inputs, position, offset, n);
-                    else
-                        captureLive (position, offset, n);
-                    position = end;
-                    offset += n;
-                    if (cycling && position >= snap->cycleEnd)
-                    {
-                        if (transport == TransportState::recording && pass != nullptr)
-                            captureWrap (position);
-                        else if (const auto k = liveLane->count.load (std::memory_order_relaxed); k < liveLane->events.size())
-                        {
-                            liveLane->events[k] = { position, 0, 0, 0 }; // a cycle wrap
-                            liveLane->count.store (k + 1, std::memory_order_release);
-                        }
-                        position = snap->cycleStart;
-                        flushAllNotes (snap);
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Master (F-MIX-11): inserts process the whole mix, then the fader and balance, ramped
-        // over the block. Its automation reads the block's timeline position (F-AUT-11).
-        const bool rolling = transport == TransportState::playing || transport == TransportState::recording;
-        const auto masterFrom = rolling ? blockStart : position;
-        const auto masterTo = rolling ? blockStart + numFrames : position;
-        float masterGain = snap->masterGain, masterLeft = snap->masterPanLeft, masterRight = snap->masterPanRight;
-        bool masterAudible = snap->masterAudible;
-        bool masterAutomatesInserts = false;
-        const AutomationPlan* masterVolumeLane = nullptr;
-        const AutomationPlan* masterPanLane = nullptr;
-        for (const auto& a : snap->masterAutomation)
-            switch (a.kind)
-            {
-                case AutomationKind::volume:
-                    masterGain = dbToGain (automation::toDb (a.valueAt (masterTo, numFrames)));
-                    if (rolling && a.followsLane())
-                        masterVolumeLane = &a;
-                    break;
-                case AutomationKind::pan:
-                    std::tie (masterLeft, masterRight) = balanceGains (automation::toPan (a.valueAt (masterTo, numFrames)));
-                    if (rolling && a.followsLane())
-                        masterPanLane = &a;
-                    break;
-                case AutomationKind::mute:
-                    masterAudible = ! automation::toMute (a.valueAt (masterFrom, numFrames));
-                    break;
-                case AutomationKind::param:
-                    masterAutomatesInserts = masterAutomatesInserts || a.index >= 0;
-                    break;
-                case AutomationKind::send:
-                    break;
-            }
-        if (masterAutomatesInserts)
-            runAutomatedInserts (snap->masterInserts, snap->masterAutomation, masterFrom, mix[0].data(), mix[1].data(), numFrames);
+        if (vsActive || ! same (vsTarget, 1.0))
+            processVarispeed (*snap, inputs, outputs, numFrames);
         else
-            runInserts (snap->masterInserts, mix[0].data(), mix[1].data(), numFrames);
-        float targetL = masterAudible ? masterGain * masterLeft : 0.0f, targetR = masterAudible ? masterGain * masterRight : 0.0f;
-        const float startL = masterGainSet ? masterGainLeft : targetL, startR = masterGainSet ? masterGainRight : targetR;
-        const bool masterGrid = masterAudible && (masterVolumeLane != nullptr || masterPanLane != nullptr) && numRolledSpans > 0;
-        if (masterGrid)
         {
-            // Lane-following volume or pan: the timeline grid, span by span (cycle wraps split spans).
-            const auto at = [&] (std::int64_t t) noexcept {
-                const float g = masterVolumeLane != nullptr ? dbToGain (automation::toDb (masterVolumeLane->laneValue (t))) : masterGain;
-                auto [l, r] = masterPanLane != nullptr ? balanceGains (automation::toPan (masterPanLane->laneValue (t))) : std::pair { masterLeft, masterRight };
-                return std::pair { g * l, g * r };
-            };
-            // Frames outside a rolling span (a count-in ending mid-block) keep the static gain.
-            std::fill_n (rampLeft.data(), numFrames, targetL);
-            std::fill_n (rampRight.data(), numFrames, targetR);
-            for (std::size_t sp = 0; sp < numRolledSpans; ++sp)
+            renderBlock (*snap, inputs, numFrames);
+            for (std::size_t ch = 0; ch < 2; ++ch)
             {
-                const auto& span = rolledSpans[sp];
-                gridGains (span.position, span.frames, rampLeft.data() + span.offset, rampRight.data() + span.offset, at);
+                auto& h = vsHistory[ch];
+                const int keep = std::max (0, vsReach - numFrames);
+                std::copy (h.end() - keep, h.end(), h.begin());
+                std::copy (mix[ch].begin() + (numFrames - (vsReach - keep)), mix[ch].begin() + numFrames, h.begin() + keep);
             }
-            targetL = rampLeft[static_cast<std::size_t> (numFrames - 1)];
-            targetR = rampRight[static_cast<std::size_t> (numFrames - 1)];
-        }
-        masterGainLeft = targetL;
-        masterGainRight = targetR;
-        masterGainSet = true;
-        float masterPeak = 0;
-        double masterPower = 0;
-        for (int i = 0; i < numFrames; ++i)
-        {
-            const auto k = static_cast<std::size_t> (i);
-            if (masterGrid)
-            {
-                mix[0][k] *= rampLeft[k];
-                mix[1][k] *= rampRight[k];
-            }
-            else
-            {
-                const float x = static_cast<float> (i + 1) / static_cast<float> (numFrames);
-                mix[0][k] *= startL + (targetL - startL) * x;
-                mix[1][k] *= startR + (targetR - startR) * x;
-            }
-            masterPeak = std::max ({ masterPeak, std::abs (mix[0][k]), std::abs (mix[1][k]) });
-            masterPower += static_cast<double> (mix[0][k]) * mix[0][k] + static_cast<double> (mix[1][k]) * mix[1][k];
-        }
-        for (std::size_t ch = 0; ch < 2; ++ch)
-            if (static_cast<int> (ch) < numOutputs)
+            for (std::size_t ch = 0; ch < 2; ++ch)
+                if (static_cast<int> (ch) < numOutputs)
+                    for (int i = 0; i < numFrames; ++i)
+                        outputs[ch][i] = mix[ch][static_cast<std::size_t> (i)] + mix[2][static_cast<std::size_t> (i)];
+            if (numOutputs == 1) // mono device: fold right into left
                 for (int i = 0; i < numFrames; ++i)
-                    outputs[ch][i] = mix[ch][static_cast<std::size_t> (i)] + mix[2][static_cast<std::size_t> (i)];
-        if (numOutputs == 1) // mono device: fold right into left
-            for (int i = 0; i < numFrames; ++i)
-                outputs[0][i] += mix[1][static_cast<std::size_t> (i)];
-        if (snap->masterState)
-        {
-            snap->masterState->meter.add (masterPeak);
-            snap->masterState->meter.addPower (masterPower, 2 * numFrames, numFrames, snap->sampleRate);
-        }
-        if (auto* cap = capture.load (std::memory_order_acquire); cap != nullptr && rolling)
-        {
-            // Real-time bounce: the master output by timeline position (cycle is suppressed).
-            const auto capacity = static_cast<std::int64_t> (cap->left.size());
-            auto filled = cap->written.load (std::memory_order_relaxed);
-            for (int i = 0; i < numFrames; ++i)
-            {
-                const auto t = blockStart + i - cap->startSample;
-                if (t < 0 || t >= capacity)
-                    continue;
-                cap->left[static_cast<std::size_t> (t)] = mix[0][static_cast<std::size_t> (i)];
-                cap->right[static_cast<std::size_t> (t)] = mix[1][static_cast<std::size_t> (i)];
-                filled = std::max (filled, t + 1);
-            }
-            cap->written.store (filled, std::memory_order_release);
+                    outputs[0][i] += mix[1][static_cast<std::size_t> (i)];
         }
     }
 
@@ -1822,8 +1676,363 @@ void Engine::renderClicks (const EngineSnapshot& snap, std::int64_t from, int of
             clickLevels[static_cast<std::size_t> (i)] = clickScratch[static_cast<std::size_t> (i)].level;
         }
     }
+    if (vsRendering)
+    {
+        // Varispeed: the clicks sound at device rate where their beats come out (processVarispeed).
+        for (int i = 0; i < count && vsNumClicks < maxClicksPerSpan; ++i)
+        {
+            vsClickAt[static_cast<std::size_t> (vsNumClicks)] = vsChunkStart + offset + clickOffsets[static_cast<std::size_t> (i)];
+            vsClickLevel[static_cast<std::size_t> (vsNumClicks++)] = clickLevels[static_cast<std::size_t> (i)];
+        }
+        return;
+    }
     float* click = mix[2].data();
     metronome.render (&click, 1, offset, frames, clickOffsets.data(), clickLevels.data(), count, clickGain, clickTone);
+}
+
+void Engine::renderBlock (const EngineSnapshot& snap, const float* const* inputs, int frames) noexcept
+{
+    for (auto& m : mix)
+        std::fill_n (m.data(), frames, 0.0f);
+    const auto blockStart = position;
+    numRolledSpans = 0;
+
+    int offset = 0;
+    while (offset < frames)
+    {
+        const int remaining = frames - offset;
+        switch (transport)
+        {
+            case TransportState::stopped:
+                renderSpan (snap, inputs, position, offset, remaining, false);
+                renderClicks (snap, position, offset, remaining, false);
+                offset = frames;
+                break;
+
+            case TransportState::countIn:
+            {
+                // Count-in: click only (D-ARCH-13); regions start playing at the record position.
+                const auto n = static_cast<int> (std::min<std::int64_t> (remaining, recordStart - position));
+                if (n > 0)
+                {
+                    renderSpan (snap, inputs, position, offset, n, false);
+                    renderClicks (snap, position, offset, n, true);
+                    position += n;
+                    offset += n;
+                }
+                if (position >= recordStart)
+                    transport = pass != nullptr ? TransportState::recording : TransportState::playing;
+                break;
+            }
+
+            case TransportState::playing:
+            case TransportState::recording:
+            {
+                auto end = position + remaining;
+                // Cycle (F-TRN-6): wrap when playback reaches the end; the end is exclusive.
+                // Recording cycles too: each pass becomes a take (W-1c).
+                const bool cycling = snap.cycleEnabled && position < snap.cycleEnd;
+                if (cycling)
+                    end = std::min (end, snap.cycleEnd);
+                const auto n = static_cast<int> (end - position);
+                if (numRolledSpans < rolledSpans.size())
+                    rolledSpans[numRolledSpans++] = { offset, n, position };
+                renderSpan (snap, inputs, position, offset, n, true);
+                const bool audible = clickOn && ! clickOnlyCountIn && (transport == TransportState::recording ? clickInRecord : clickInPlay);
+                renderClicks (snap, position, offset, n, audible);
+                if (transport == TransportState::recording && pass != nullptr)
+                    captureSpan (inputs, position, offset, n);
+                else
+                    captureLive (position, offset, n);
+                position = end;
+                offset += n;
+                if (cycling && position >= snap.cycleEnd)
+                {
+                    if (transport == TransportState::recording && pass != nullptr)
+                        captureWrap (position);
+                    else if (const auto k = liveLane->count.load (std::memory_order_relaxed); k < liveLane->events.size())
+                    {
+                        liveLane->events[k] = { position, 0, 0, 0 }; // a cycle wrap
+                        liveLane->count.store (k + 1, std::memory_order_release);
+                    }
+                    position = snap.cycleStart;
+                    flushAllNotes (&snap);
+                }
+                break;
+            }
+        }
+    }
+
+    // Master (F-MIX-11): inserts process the whole mix, then the fader and balance, ramped
+    // over the block. Its automation reads the block's timeline position (F-AUT-11).
+    const bool rolling = transport == TransportState::playing || transport == TransportState::recording;
+    const auto masterFrom = rolling ? blockStart : position;
+    const auto masterTo = rolling ? blockStart + frames : position;
+    float masterGain = snap.masterGain, masterLeft = snap.masterPanLeft, masterRight = snap.masterPanRight;
+    bool masterAudible = snap.masterAudible;
+    bool masterAutomatesInserts = false;
+    const AutomationPlan* masterVolumeLane = nullptr;
+    const AutomationPlan* masterPanLane = nullptr;
+    for (const auto& a : snap.masterAutomation)
+        switch (a.kind)
+        {
+            case AutomationKind::volume:
+                masterGain = dbToGain (automation::toDb (a.valueAt (masterTo, frames)));
+                if (rolling && a.followsLane())
+                    masterVolumeLane = &a;
+                break;
+            case AutomationKind::pan:
+                std::tie (masterLeft, masterRight) = balanceGains (automation::toPan (a.valueAt (masterTo, frames)));
+                if (rolling && a.followsLane())
+                    masterPanLane = &a;
+                break;
+            case AutomationKind::mute:
+                masterAudible = ! automation::toMute (a.valueAt (masterFrom, frames));
+                break;
+            case AutomationKind::param:
+                masterAutomatesInserts = masterAutomatesInserts || a.index >= 0;
+                break;
+            case AutomationKind::send:
+                break;
+        }
+    if (masterAutomatesInserts)
+        runAutomatedInserts (snap.masterInserts, snap.masterAutomation, masterFrom, mix[0].data(), mix[1].data(), frames);
+    else
+        runInserts (snap.masterInserts, mix[0].data(), mix[1].data(), frames);
+    float targetL = masterAudible ? masterGain * masterLeft : 0.0f, targetR = masterAudible ? masterGain * masterRight : 0.0f;
+    const float startL = masterGainSet ? masterGainLeft : targetL, startR = masterGainSet ? masterGainRight : targetR;
+    const bool masterGrid = masterAudible && (masterVolumeLane != nullptr || masterPanLane != nullptr) && numRolledSpans > 0;
+    if (masterGrid)
+    {
+        // Lane-following volume or pan: the timeline grid, span by span (cycle wraps split spans).
+        const auto at = [&] (std::int64_t t) noexcept {
+            const float g = masterVolumeLane != nullptr ? dbToGain (automation::toDb (masterVolumeLane->laneValue (t))) : masterGain;
+            auto [l, r] = masterPanLane != nullptr ? balanceGains (automation::toPan (masterPanLane->laneValue (t))) : std::pair { masterLeft, masterRight };
+            return std::pair { g * l, g * r };
+        };
+        // Frames outside a rolling span (a count-in ending mid-block) keep the static gain.
+        std::fill_n (rampLeft.data(), frames, targetL);
+        std::fill_n (rampRight.data(), frames, targetR);
+        for (std::size_t sp = 0; sp < numRolledSpans; ++sp)
+        {
+            const auto& span = rolledSpans[sp];
+            gridGains (span.position, span.frames, rampLeft.data() + span.offset, rampRight.data() + span.offset, at);
+        }
+        targetL = rampLeft[static_cast<std::size_t> (frames - 1)];
+        targetR = rampRight[static_cast<std::size_t> (frames - 1)];
+    }
+    masterGainLeft = targetL;
+    masterGainRight = targetR;
+    masterGainSet = true;
+    float masterPeak = 0;
+    double masterPower = 0;
+    for (int i = 0; i < frames; ++i)
+    {
+        const auto k = static_cast<std::size_t> (i);
+        if (masterGrid)
+        {
+            mix[0][k] *= rampLeft[k];
+            mix[1][k] *= rampRight[k];
+        }
+        else
+        {
+            const float x = static_cast<float> (i + 1) / static_cast<float> (frames);
+            mix[0][k] *= startL + (targetL - startL) * x;
+            mix[1][k] *= startR + (targetR - startR) * x;
+        }
+        masterPeak = std::max ({ masterPeak, std::abs (mix[0][k]), std::abs (mix[1][k]) });
+        masterPower += static_cast<double> (mix[0][k]) * mix[0][k] + static_cast<double> (mix[1][k]) * mix[1][k];
+    }
+    if (snap.masterState)
+    {
+        snap.masterState->meter.add (masterPeak);
+        snap.masterState->meter.addPower (masterPower, 2 * frames, frames, snap.sampleRate);
+    }
+    if (auto* cap = capture.load (std::memory_order_acquire); cap != nullptr && rolling)
+    {
+        // Real-time bounce: the master output by timeline position (cycle is suppressed).
+        const auto capacity = static_cast<std::int64_t> (cap->left.size());
+        auto filled = cap->written.load (std::memory_order_relaxed);
+        for (int i = 0; i < frames; ++i)
+        {
+            const auto t = blockStart + i - cap->startSample;
+            if (t < 0 || t >= capacity)
+                continue;
+            cap->left[static_cast<std::size_t> (t)] = mix[0][static_cast<std::size_t> (i)];
+            cap->right[static_cast<std::size_t> (t)] = mix[1][static_cast<std::size_t> (i)];
+            filled = std::max (filled, t + 1);
+        }
+        cap->written.store (filled, std::memory_order_release);
+    }
+}
+
+void Engine::processVarispeed (const EngineSnapshot& snap, const float* const* inputs, float* const* outputs, int numFrames) noexcept
+{
+    // D-ARCH-55. The timeline renders into a ring at its own rate; the device reads it at `rate` frames per
+    // frame through the sinc kernel, so everything (instruments, effects and recordings included) plays faster
+    // and higher or slower and lower. The click keeps its pitch: it sounds at device rate where its beat comes out.
+    if (! vsActive)
+    {
+        for (std::size_t ch = 0; ch < 2; ++ch)
+        {
+            std::fill (vsRing[ch].begin(), vsRing[ch].end(), 0.0f);
+            std::copy (vsHistory[ch].begin(), vsHistory[ch].end(), vsRing[ch].begin()); // what just played, for the kernel
+        }
+        for (auto& r : vsIn)
+            std::fill (r.begin(), r.end(), 0.0f);
+        vsWritten = vsReach; // silence before the first frame, for the kernel's reach
+        vsRead = vsReach;
+        vsInWritten = vsReach + 2;
+        vsInRead = 0;
+        vsNumClicks = 0;
+        vsRate = 1.0;
+        vsActive = true;
+    }
+    const double r0 = vsRate, r1 = vsTarget, n = numFrames;
+    // Read position of output frame j: the rate ramps from r0 to r1 over the block.
+    const auto advance = [&] (int j) noexcept {
+        const double m = j;
+        return m * r0 + (r1 - r0) * (m * (m + 1.0) / 2.0) / n;
+    };
+    const double last = vsRead + advance (numFrames - 1);
+    const auto needed = static_cast<std::int64_t> (std::floor (last)) + vsReach + 1;
+    const int frames = static_cast<int> (std::max<std::int64_t> (0, needed - vsWritten));
+    const auto ring = [this] (std::int64_t i) noexcept { return static_cast<std::size_t> (((i % vsCapacity) + vsCapacity) % vsCapacity); };
+
+    // The device input joins its ring; the timeline reads it at 1 / rate (N device frames over `frames`).
+    const bool haveInput = inputs != nullptr && numInputs > 0;
+    if (haveInput)
+        for (int c = 0; c < numInputs; ++c)
+            for (int i = 0; i < numFrames; ++i)
+                vsIn[static_cast<std::size_t> (c)][ring (vsInWritten + i)] = inputs[c][i];
+    vsInWritten += numFrames;
+    const double inStep = frames > 0 ? n / frames : 1.0;
+    const double inCutoff = sinc::cutoff (inStep);
+    const int inReach = std::min (vsReach - 1, sinc::reach (inCutoff));
+
+    // Live MIDI arrived at device offsets: place it at the timeline offsets that play then.
+    for (int i = 0; i < numLive; ++i)
+    {
+        auto& e = liveEvents[static_cast<std::size_t> (i)];
+        e.offset = frames > 0 ? static_cast<int> (static_cast<std::int64_t> (e.offset) * frames / numFrames) : 0;
+    }
+
+    vsRendering = true;
+    for (int done = 0; done < frames;)
+    {
+        const int k = std::min (frames - done, maxBlock);
+        const float* const* chunkInputs = inputs;
+        if (haveInput)
+        {
+            for (int i = 0; i < k; ++i)
+            {
+                const double pos = vsInRead + static_cast<double> (done + i) * inStep;
+                const auto base = static_cast<std::int64_t> (std::floor (pos));
+                const double frac = pos - static_cast<double> (base);
+                std::array<float, 2 * vsReach + 2> w;
+                float sum = 0.0f;
+                for (int j = 0; j < 2 * inReach; ++j)
+                {
+                    w[static_cast<std::size_t> (j)] = sincKernel ((static_cast<double> (j - inReach + 1) - frac) * inCutoff);
+                    sum += w[static_cast<std::size_t> (j)];
+                }
+                const float scale = sum != 0.0f ? 1.0f / sum : 0.0f;
+                for (int c = 0; c < numInputs; ++c)
+                {
+                    const auto& src = vsIn[static_cast<std::size_t> (c)];
+                    float acc = 0.0f;
+                    for (int j = 0; j < 2 * inReach; ++j)
+                        acc += w[static_cast<std::size_t> (j)] * src[ring (base - inReach + 1 + j)];
+                    vsInChunk[static_cast<std::size_t> (c)][static_cast<std::size_t> (i)] = acc * scale;
+                }
+            }
+            chunkInputs = vsInPtrs.data();
+        }
+        vsChunkStart = vsWritten;
+        renderBlock (snap, chunkInputs, k);
+        for (int i = 0; i < k; ++i)
+        {
+            vsRing[0][ring (vsWritten + i)] = mix[0][static_cast<std::size_t> (i)];
+            vsRing[1][ring (vsWritten + i)] = mix[1][static_cast<std::size_t> (i)];
+        }
+        vsWritten += k;
+        for (int i = 0; i < numLive; ++i)
+            liveEvents[static_cast<std::size_t> (i)].offset -= k;
+        done += k;
+    }
+    vsRendering = false;
+    vsInRead += n;
+
+    // The timeline's output at the device rate.
+    const double cutoff = sinc::cutoff (std::max (r0, r1));
+    const int reach = std::min (vsReach - 1, sinc::reach (cutoff));
+    float peak = 0.0f;
+    for (int j = 0; j < numFrames; ++j)
+    {
+        const double pos = vsRead + advance (j);
+        const auto base = static_cast<std::int64_t> (std::floor (pos));
+        const double frac = pos - static_cast<double> (base);
+        std::array<float, 2 * vsReach + 2> w;
+        float sum = 0.0f;
+        for (int t = 0; t < 2 * reach; ++t)
+        {
+            w[static_cast<std::size_t> (t)] = sincKernel ((static_cast<double> (t - reach + 1) - frac) * cutoff);
+            sum += w[static_cast<std::size_t> (t)];
+        }
+        const float scale = sum != 0.0f ? 1.0f / sum : 0.0f;
+        float l = 0.0f, r = 0.0f;
+        for (int t = 0; t < 2 * reach; ++t)
+        {
+            const auto at = ring (base - reach + 1 + t);
+            l += w[static_cast<std::size_t> (t)] * vsRing[0][at];
+            r += w[static_cast<std::size_t> (t)] * vsRing[1][at];
+        }
+        mix[0][static_cast<std::size_t> (j)] = l * scale;
+        mix[1][static_cast<std::size_t> (j)] = r * scale;
+        peak = std::max ({ peak, std::abs (l), std::abs (r) });
+    }
+
+    // Clicks: each where its frame comes out (the first output frame at or past it); later ones wait.
+    int count = 0, kept = 0;
+    for (int c = 0; c < vsNumClicks; ++c)
+    {
+        const auto at = vsClickAt[static_cast<std::size_t> (c)];
+        int j = 0;
+        while (j < numFrames && vsRead + advance (j) < static_cast<double> (at))
+            ++j;
+        if (j < numFrames)
+        {
+            clickOffsets[static_cast<std::size_t> (count)] = j;
+            clickLevels[static_cast<std::size_t> (count++)] = vsClickLevel[static_cast<std::size_t> (c)];
+        }
+        else
+        {
+            vsClickAt[static_cast<std::size_t> (kept)] = at;
+            vsClickLevel[static_cast<std::size_t> (kept++)] = vsClickLevel[static_cast<std::size_t> (c)];
+        }
+    }
+    vsNumClicks = kept;
+    std::fill_n (vsClick.data(), numFrames, 0.0f);
+    float* click = vsClick.data();
+    metronome.render (&click, 1, 0, numFrames, clickOffsets.data(), clickLevels.data(), count, clickGain, clickTone);
+
+    for (std::size_t ch = 0; ch < 2; ++ch)
+        if (static_cast<int> (ch) < numOutputs)
+            for (int i = 0; i < numFrames; ++i)
+                outputs[ch][i] = mix[ch][static_cast<std::size_t> (i)] + vsClick[static_cast<std::size_t> (i)];
+    if (numOutputs == 1)
+        for (int i = 0; i < numFrames; ++i)
+            outputs[0][i] += mix[1][static_cast<std::size_t> (i)];
+
+    vsRead += advance (numFrames);
+    vsRate = r1;
+    // Back at normal speed with the transport stopped: the plain path again (the ring's few frames of delay go).
+    if (same (vsRate, 1.0) && same (vsTarget, 1.0) && transport == TransportState::stopped && peak < 1.0e-6f && count == 0 && vsNumClicks == 0)
+    {
+        vsActive = false;
+        for (auto& h : vsHistory)
+            h.fill (0.0f);
+    }
 }
 
 void Engine::takeLiveMidi (int numFrames, int filter) noexcept

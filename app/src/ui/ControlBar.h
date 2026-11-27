@@ -41,6 +41,14 @@ public:
     static constexpr int itemShowBase = 200, itemMasterBase = 300, itemTimeBase = 310, itemTempoBase = 320, itemBigBeats = 330, itemBigTime = 331,
                          itemPerformance = 332, itemApplyDefaults = 340, itemSaveDefault = 341, itemRevert = 342;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    /** Varispeed (D-ARCH-55), when the control bar shows it: the on/off button and the value (drag or type it;
+        right-click picks the unit). */
+    CommandButton& varispeedButton() noexcept { return varispeed; }
+    juce::Label& varispeedField() noexcept { return varispeedValue; }
+    juce::PopupMenu varispeedMenu() const;
+    void pickVarispeed (int item);
+    static constexpr int itemVarispeedUnit = 400, itemVarispeedReset = 410;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     juce::Slider& masterVolumeSlider() noexcept { return masterVolume; }
     OutputMeter& outputMeterView() noexcept { return outputMeter; }
@@ -64,7 +72,10 @@ private:
         play { "Play", Cmd::playStop, true }, record { "Record", Cmd::record, true }, cycle { "Cycle", Cmd::cycle, true };
     CommandButton metronome { "Click", Cmd::metronome, true }, punch { "Punch", Cmd::autopunch, true }, replace { "Replace", Cmd::toggleReplace, true },
         snap { "Snap", Cmd::snapToggle, true },
-        follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true };
+        follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true },
+        varispeed { "Varispeed", Cmd::toggleVarispeed, true };
+    juce::Label varispeedValue;
+    double dragStartRate = 1.0;
     juce::Label position, time, tempo, signature, key, cpu;
     juce::ComboBox countIn, snapBox;
     juce::TextButton more { juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")) };

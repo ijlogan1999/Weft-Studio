@@ -7,6 +7,7 @@
 #include "weft/engine/record/RecordWriter.h"
 #include "weft/engine/rt/SpscQueue.h"
 #include "weft/engine/transport/Metronome.h"
+#include "weft/engine/transport/Varispeed.h"
 #include "weft/model/ProjectModel.h"
 
 #include <array>
@@ -60,6 +61,8 @@ struct TransportSettings
     /** Navigate › Metronome (D-W1-11): which clicks sound, whether only the count-in clicks, and the tone. */
     bool clickBars = true, clickBeats = true, clickDivisions = false, clickOnlyCountIn = false;
     int clickTone = Metronome::middleTone; // 0 (low) to Metronome::numTones - 1 (high)
+    /** Varispeed (D-ARCH-55): the rate everything plays at, 0.5 to 2; 1 is off. Bounces ignore it. */
+    double varispeed = 1.0;
 
     static TransportSettings fromDefaults (const model::MetronomeSettings& m);
 };
@@ -276,6 +279,7 @@ private:
         float clickGain = 1;
         Metronome::Pattern clickPattern {};
         int clickTone = Metronome::middleTone;
+        double speed = 1.0;
     };
 
     static constexpr std::int64_t fromPlayhead = INT64_MIN;
@@ -294,6 +298,10 @@ private:
                               float* right, int frames) noexcept;
     bool monitoring (const ChannelPlan& channel) const noexcept;
     void renderClicks (const EngineSnapshot& snap, std::int64_t from, int offset, int frames, bool audible) noexcept;
+    /** One block on the timeline into mix: the transport, the channels, the master and a real-time bounce. */
+    void renderBlock (const EngineSnapshot& snap, const float* const* inputs, int frames) noexcept;
+    /** Varispeed (D-ARCH-55): renders as many timeline frames as the rate needs and resamples them to the device. */
+    void processVarispeed (const EngineSnapshot& snap, const float* const* inputs, float* const* outputs, int numFrames) noexcept;
     void flushAllNotes (const EngineSnapshot* snap) noexcept;
     void finishCapture() noexcept;
     void captureSpan (const float* const* inputs, std::int64_t from, int offset, int frames) noexcept;
@@ -421,5 +429,21 @@ private:
     std::array<int, maxClicksPerSpan> clickOffsets {};
     std::array<Metronome::Level, maxClicksPerSpan> clickLevels {};
     Metronome metronome;
+
+    // Varispeed (audio thread; buffers sized in prepare). The timeline's output goes into a ring, read at
+    // the rate; the device input goes into another, read at 1 / rate for monitoring and recording.
+    static constexpr int vsReach = 17; // sinc taps each side at the lowest cutoff (rate 2)
+    double vsTarget = 1.0, vsRate = 1.0;
+    bool vsActive = false, vsRendering = false;
+    std::array<std::vector<float>, 2> vsRing;
+    std::array<std::array<float, vsReach>, 2> vsHistory {}; // the plain path's last frames: Varispeed starts without a gap
+    std::vector<std::vector<float>> vsIn, vsInChunk;
+    std::vector<const float*> vsInPtrs;
+    std::vector<float> vsClick;
+    std::int64_t vsCapacity = 0, vsWritten = 0, vsInWritten = 0, vsChunkStart = 0;
+    double vsRead = 0, vsInRead = 0;
+    std::array<std::int64_t, maxClicksPerSpan> vsClickAt {}; // queued clicks, by ring frame
+    std::array<Metronome::Level, maxClicksPerSpan> vsClickLevel {};
+    int vsNumClicks = 0;
 };
 } // namespace weft::engine

@@ -775,3 +775,38 @@ TEST_CASE ("AT-EXP-18 Export Selection as MIDI File: one file track per project 
     // Nothing MIDI selected: no tracks.
     CHECK (midiSelectionFile (rig.session.model(), {}).tracks.empty());
 }
+
+TEST_CASE ("AT-VS-3 bounces ignore Varispeed: offline and real time, the file is at normal speed", "[E][bounce][varispeed][AT-VS-3]")
+{
+    Rig rig (256);
+    rig.addAudioRegion (rig.audioTrack(), 0, 3 * barSamples);
+    TempFolder out;
+    auto s = wavSettings (out, 2);
+    const auto normal = bounce (rig, s);
+    REQUIRE (normal.ok);
+    const auto expected = readBack (normal.files[0]);
+
+    // Varispeed at +50% on the live engine (this user's playback).
+    auto ts = rig.engine.settings();
+    ts.varispeed = 1.5;
+    rig.engine.setSettings (ts);
+    REQUIRE (rig.device.render (1024));
+    s.name = "Offline";
+    const auto offline = bounce (rig, s);
+    REQUIRE (offline.ok);
+    CHECK (readBack (offline.files[0]).channels == expected.channels);
+
+    s.realtime = true;
+    s.name = "Live";
+    BounceJob job (rig.session.model(), s, context (rig));
+    const auto live = bounceRealtime (rig, job);
+    REQUIRE (live.ok);
+    const auto captured = readBack (live.files[0]);
+    REQUIRE (captured.numFrames() == expected.numFrames());
+    int beyondOneLsb = 0;
+    for (std::size_t ch = 0; ch < 2; ++ch)
+        for (std::size_t i = 0; i < static_cast<std::size_t> (expected.numFrames()); ++i)
+            if (std::abs (captured.channels[ch][i] - expected.channels[ch][i]) > 1.5f / 8388608.0f)
+                ++beyondOneLsb;
+    CHECK (beyondOneLsb == 0);
+}

@@ -696,6 +696,28 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-SYS-1** [UI][U] · F-SYS-1 · Help › About shows the version and lists every third-party component with its license text; a build check fails if any linked dependency is missing from the license manifest.
 
+## 17a. Varispeed (VS)
+
+All D-ARCH-55. Speed Only (pitch held) is out of scope (Ian, 2026-11-22), so there is no AT-VS-9.
+
+**AT-VS-1** [E] · A 1 kHz sine region a second long plays at 1.5 kHz and lasts 2/3 s at +50%, at 500 Hz and 2 s at -50%, and at 2 kHz and 1/2 s at +100% (frequency by zero crossings within 0.1%; length within 40 frames); the playhead moves through the timeline at the rate.
+
+**AT-VS-2** [E] · With Varispeed back off (and the transport stopped), playback is bit-identical to an engine that never used it.
+
+**AT-VS-3** [E] · With Varispeed at +50% on the live engine, an offline bounce is bit-identical to one made with it off, and a real-time bounce matches within 1 LSB: bounces are at normal speed.
+
+**AT-VS-4** [E] · At +25% the click comes every 19,200 samples (150 bpm, within a sample) and sounds the same as at normal speed, sample for sample.
+
+**AT-VS-5** [U] · 0% = 0 st = 440 Hz = the tempo; +100% = +12 st = 880 Hz = twice the tempo; -50% = -12 st = 220 Hz; -15% from 120 bpm reads 102 bpm, and typing 138 bpm is +15%; values outside the range clamp to -50% or +100%; the field reads "+15.0%", "138.00 bpm", "+12.00 st", "220.0 Hz".
+
+**AT-VS-6** [E] · Turning Varispeed on, changing it (+50%, -30%, +100%, block sizes 256, 128 and 77) and turning it off during playback of a sine makes no jump bigger than the sine's own fastest step at that speed, and the audio thread allocates nothing and doesn't block.
+
+**AT-VS-7** [E] · A take of a 1 kHz input recorded for two seconds at -50% is a second long on the timeline and, at normal speed, plays at 2 kHz.
+
+**AT-VS-8** [UI] · Varispeed is hidden in the control bar until Customize shows it. Typing -15 in its field turns it on at 85% (the engine plays at 0.85; the field reads "-15.0%" in the warning colour, the button lit); the tempo unit reads 102.00 bpm and typing 138 makes it +15%; the tuning unit reads 506.0 Hz; -24 semitones clamps to -12.00 st. Dragging the field up 20 px adds 10%. Transport › Varispeed turns it off (the engine at normal speed, the value kept, the field dimmed) and on again; Reset goes back to +0.0%. None of it makes an undo step or changes the project document; the control bar keeps the choice and the unit.
+
+**AT-VS-10** [E] · An input monitored at +50% comes out at its own pitch (1 kHz in, 1 kHz out).
+
 ## 18. Real-time safety and engine robustness (cross-cutting)
 
 These protect non-functional requirements stated in the brief and apply to all audio features.

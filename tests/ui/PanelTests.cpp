@@ -1367,7 +1367,7 @@ TEST_CASE ("AT-LIB-5 Library: views, locations, tags, search, smart searches, ne
     // Replace mode: a click puts the item on the track at once.
     lib.replaceMode = true;
     lib.selectResult (0);
-    lib.list.getModel()->listBoxItemClicked (0, mouse (lib.list, {}));
+    lib.list.getListBoxModel()->listBoxItemClicked (0, mouse (lib.list, {}));
     ui.settle();
     CHECK (ui.m().track (*synth)->strip.inserts.size() == 2);
     lib.replaceMode = false;
@@ -1455,4 +1455,74 @@ TEST_CASE ("AT-LIB-5 Library: views, locations, tags, search, smart searches, ne
     CHECK (library.removeLocation (loops));
     plugin_settings::remove (Studio::pluginSettingsRoot(), effect, "Library Test");
     std::filesystem::remove (patchFile);
+}
+
+TEST_CASE ("AT-VS-8 Varispeed: the control bar's control, units, the command, and nothing in the project", "[UI][varispeed][AT-VS-8]")
+{
+    Ui ui;
+    auto& bar = *(&ui.main->controlBar());
+    const auto undoBefore = ui.studio.session().undoNames();
+    const auto docBefore = doc::encode (ui.studio.session().document().root());
+
+    // Hidden until chosen in Customize Control Bar.
+    CHECK_FALSE (bar.varispeedButton().isVisible());
+    CHECK_FALSE (bar.varispeedField().isVisible());
+    bar.pickCustomize (ControlBar::itemShowBase + 13); // Varispeed
+    CHECK (ui.studio.layout.bar.shows (ControlBarLayout::varispeedControl));
+    CHECK (bar.varispeedButton().isVisible());
+    CHECK (bar.varispeedField().isVisible());
+    CHECK (bar.varispeedField().getText() == "+0.0%");
+    CHECK_FALSE (bar.varispeedButton().getToggleState());
+
+    // Typing a value turns it on at that rate; the field reads in the warning colour.
+    bar.varispeedField().setText ("-15", juce::sendNotificationSync);
+    CHECK (ui.studio.varispeedOn());
+    CHECK (ui.studio.varispeedRate() == Catch::Approx (0.85));
+    CHECK (ui.studio.engine().settings().varispeed == Catch::Approx (0.85));
+    CHECK (bar.varispeedField().getText() == "-15.0%");
+    CHECK (bar.varispeedButton().getToggleState());
+    CHECK (bar.varispeedField().findColour (juce::Label::textColourId) == colour (Token::warning));
+
+    // The same rate in the other units; typing in a unit converts back.
+    bar.pickVarispeed (ControlBar::itemVarispeedUnit + static_cast<int> (engine::varispeed::Unit::tempo));
+    CHECK (bar.varispeedField().getText() == "102.00 bpm");
+    bar.varispeedField().setText ("138", juce::sendNotificationSync);
+    CHECK (ui.studio.varispeedRate() == Catch::Approx (1.15));
+    bar.pickVarispeed (ControlBar::itemVarispeedUnit + static_cast<int> (engine::varispeed::Unit::tuning));
+    CHECK (bar.varispeedField().getText() == "506.0 Hz");
+    bar.pickVarispeed (ControlBar::itemVarispeedUnit + static_cast<int> (engine::varispeed::Unit::semitones));
+    bar.varispeedField().setText ("-24", juce::sendNotificationSync); // clamped
+    CHECK (ui.studio.varispeedRate() == Catch::Approx (0.5));
+    CHECK (bar.varispeedField().getText() == "-12.00 st");
+    bar.pickVarispeed (ControlBar::itemVarispeedUnit + static_cast<int> (engine::varispeed::Unit::percent));
+
+    // Dragging up speeds it up.
+    bar.mouseDown (mouse (bar.varispeedField(), { 10, 10 }));
+    bar.mouseDrag (mouse (bar.varispeedField(), { 10, -10 }, {}, 1, juce::Point<float> { 10, 10 }));
+    CHECK (ui.studio.varispeedRate() == Catch::Approx (0.6));
+
+    // The command (Transport menu) turns it off and on again, keeping the value; Reset goes back to 0%.
+    ui.studio.perform (Cmd::toggleVarispeed);
+    CHECK_FALSE (ui.studio.varispeedOn());
+    CHECK (ui.studio.engine().settings().varispeed == Catch::Approx (1.0));
+    CHECK (ui.studio.varispeedRate() == Catch::Approx (0.6));
+    ui.settle();
+    CHECK (bar.varispeedField().findColour (juce::Label::textColourId) == colour (Token::textDim));
+    ui.studio.perform (Cmd::toggleVarispeed);
+    CHECK (ui.studio.engine().settings().varispeed == Catch::Approx (0.6));
+    bar.pickVarispeed (ControlBar::itemVarispeedReset);
+    CHECK (ui.studio.varispeedRate() == Catch::Approx (1.0));
+    CHECK (bar.varispeedField().getText() == "+0.0%");
+
+    // This user's only: no undo step, no change to the project.
+    CHECK (ui.studio.session().undoNames() == undoBefore);
+    CHECK (doc::encode (ui.studio.session().document().root()) == docBefore);
+
+    // The control bar keeps the choice and the unit.
+    ui.studio.layout.bar.varispeedUnit = engine::varispeed::Unit::tuning;
+    const auto back = ControlBarLayout::fromVar (ui.studio.layout.bar.toVar());
+    CHECK (back.shows (ControlBarLayout::varispeedControl));
+    CHECK (back.varispeedUnit == engine::varispeed::Unit::tuning);
+    CHECK_FALSE (ControlBarLayout().shows (ControlBarLayout::varispeedControl));
+    ui.studio.setVarispeed (false, 1.0);
 }

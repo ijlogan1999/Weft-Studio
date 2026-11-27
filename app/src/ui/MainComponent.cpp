@@ -1333,6 +1333,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::renameMarker, Cmd::deleteMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
             {
+                juce::PopupMenu::Item vs (commandInfo (Cmd::toggleVarispeed).name); // D-ARCH-55
+                vs.itemID = static_cast<int> (Cmd::toggleVarispeed) + 1;
+                vs.isTicked = studio.varispeedOn();
+                menu.addItem (vs);
+            }
+            {
                 juce::PopupMenu::Item replace (commandInfo (Cmd::toggleReplace).name); // D-W1-12: MIDI and audio
                 replace.itemID = static_cast<int> (Cmd::toggleReplace) + 1;
                 replace.isTicked = studio.engine().settings().replace;

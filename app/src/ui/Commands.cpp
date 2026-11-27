@@ -270,6 +270,7 @@ std::vector<CommandInfo> build()
         { Cmd::toggleLibrary, "Library", "Y", { key ('Y') } },
         { Cmd::loopBrowser, "Loops", "O", { key ('O') } },
         { Cmd::searchLibrary, "Search Library", "Alt+F", { key ('F', alt) } },
+        { Cmd::toggleVarispeed, "Varispeed", "", {} },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },

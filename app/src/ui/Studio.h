@@ -92,9 +92,10 @@ struct ControlBarLayout
     {
         panelButtons = 1, toolbarButton = 2, transportMoves = 4, // Go to Start, Previous and Next Bar
         timeDisplay = 8, tempoDisplay = 16, signatureDisplay = 32, keyDisplay = 64,
-        clickAndPunch = 128, countInMenu = 256, snapControls = 512, followButton = 1024, keysButton = 2048, cpuMeter = 4096
+        clickAndPunch = 128, countInMenu = 256, snapControls = 512, followButton = 1024, keysButton = 2048, cpuMeter = 4096,
+        varispeedControl = 8192 // not shown until chosen (D-ARCH-55)
     };
-    static constexpr int allItems = 8191;
+    static constexpr int allItems = 8191, knownItems = 16383;
     enum class Master { none, volume, meter };
     enum class TimeFormat { milliseconds, samples, timecode24, timecode25, timecode30 };
 
@@ -102,6 +103,7 @@ struct ControlBarLayout
     Master master = Master::volume;
     TimeFormat timeFormat = TimeFormat::milliseconds;
     int tempoDecimals = 2; // 0, 2 or 4
+    engine::varispeed::Unit varispeedUnit = engine::varispeed::Unit::percent;
 
     bool shows (Item i) const noexcept { return (items & i) != 0; }
     juce::var toVar() const;
@@ -374,6 +376,12 @@ public:
     bool perform (Cmd command);
     /** Tap Tempo (L-TMP-9): one tap at `nowMs` (a millisecond clock). */
     bool tapTempo (double nowMs);
+    /** Varispeed (D-ARCH-55): this user's playback rate, 0.5 to 2, kept while it's off; never in the project. */
+    bool varispeedOn() const noexcept { return varispeedEnabled; }
+    double varispeedRate() const noexcept { return varispeedValue; }
+    void setVarispeed (bool on, double rate);
+    /** The rate in the control bar's unit: "-15.0%", "102.00 bpm", "-2.81 st", "374.0 Hz". */
+    juce::String varispeedText() const;
     /** Keyboard MIDI mode gets the key first (AT-REC-20). True when it used the key. */
     bool keyboardMidiKey (const juce::KeyPress& key, bool down);
     bool keyboardMidiOn() const noexcept { return keys.enabled(); }
@@ -603,7 +611,7 @@ public:
     // Smart Controls (D-UI-52) ---------------------------------------------------------------
     /** The track's Smart Controls: its own, or mapped automatically (its plug-ins' parameters and its sends on the
         first knobs, Volume and Pan on the last two). `layout` 0 keeps the track's own knob count. */
-    model::SmartControls smartControls (const Id& trackId, int layout = 0) const;
+    model::SmartControls smartControls (const Id& trackId, int knobs = 0) const;
     /** A knob's position 0..1, from its first mapping that still exists; nothing when nothing it maps is there. */
     std::optional<double> smartControlPosition (const Id& trackId, const model::SmartControl& control) const;
     juce::String smartControlName (const Id& trackId, const model::SmartControl& control) const;
@@ -616,7 +624,7 @@ public:
         the controller is assigned to it ("Smart Controls"); otherwise it turns the selected track's knobs assigned
         to it, one undo step per burst. True when it was used.
     */
-    bool smartControlMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2);
+    bool smartControlMidi (std::uint8_t kind, std::uint8_t data1, std::uint8_t data2);
     /** The selected track's knob waiting for a controller (Learn), if any. */
     std::optional<int> smartLearn;
 
@@ -813,6 +821,8 @@ private:
     std::optional<Ticks> discardRecordingFrom;
     Ticks recordPressedAt = 0; // the playhead when Record was pressed
     std::vector<double> taps;  // Tap Tempo: the last taps, in ms
+    bool varispeedEnabled = false;
+    double varispeedValue = 1.0;
     bool tapCommitted = false; // this run of taps has its undo step
     double lastMediaRefresh = 0;
     std::string deviceIdText;

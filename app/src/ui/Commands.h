@@ -111,7 +111,7 @@ enum class Cmd
     // D-UI-47: notes
     toggleNotes, mixerNotes, listEditors, openEventList, openMarkerList, openTempoList, openSignatureList, openMarkerText,
     toggleAudioFileEditor, keyCommands, toggleSmartControls, smartControlsWindow,
-    toggleLibrary, loopBrowser, searchLibrary
+    toggleLibrary, loopBrowser, searchLibrary, toggleVarispeed
 };
 
 struct CommandInfo

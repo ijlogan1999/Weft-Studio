@@ -84,6 +84,21 @@ ControlBar::ControlBar (Studio& s) : studio (s)
     describe (signature, "Time signature", "Time signature at the playhead (double-click to type, e.g. 3/4)");
     describe (key, "Key", "The project's key (double-click to type, e.g. F# minor or Bb)");
     describe (cpu, "CPU", "Audio thread load and dropouts");
+    describe (varispeed, "Varispeed", "Varispeed: play everything faster and higher, or slower and lower (only for you; bounces ignore it)");
+    describe (varispeedValue, "Varispeed amount", "Drag up or down, or double-click to type. Right-click: percent, tempo, semitones or tuning");
+    varispeedValue.setJustificationType (juce::Justification::centred);
+    varispeedValue.setFont (font (Type::monoValue));
+    varispeedValue.setEditable (false, true);
+    varispeedValue.onTextChange = [this] {
+        // Typed in the shown unit; typing turns Varispeed on.
+        const auto typed = varispeedValue.getText().retainCharacters ("0123456789.,+-").replaceCharacter (',', '.');
+        if (typed.containsAnyOf ("0123456789"))
+            studio.setVarispeed (true, engine::varispeed::fromUnit (typed.getDoubleValue(), studio.layout.bar.varispeedUnit,
+                                                                    studio.model().tempo.bpmAt (studio.playhead())));
+        refresh();
+    };
+    varispeedValue.addMouseListener (this, false);
+    addChildComponent (varispeedValue);
     position.setEditable (false, true);
     tempo.setEditable (false, true);
     signature.setEditable (false, true);
@@ -183,7 +198,7 @@ ControlBar::~ControlBar()
 std::vector<CommandButton*> ControlBar::commandButtons()
 {
     return { &inspector, &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle, &start, &rewind, &forward, &stop, &play, &record, &cycle,
-             &metronome, &punch, &replace, &snap, &follow, &keyboard };
+             &metronome, &punch, &replace, &snap, &follow, &keyboard, &varispeed };
 }
 
 void ControlBar::refresh()
@@ -199,6 +214,11 @@ void ControlBar::refresh()
     editor.setToggleState (l.bottom == BottomTab::audioEditor, juce::dontSendNotification);
     smart.setToggleState (l.bottom == BottomTab::smartControls, juce::dontSendNotification);
     global.setToggleState (l.globalTracks, juce::dontSendNotification);
+    varispeed.setToggleState (studio.varispeedOn(), juce::dontSendNotification);
+    if (! varispeedValue.isBeingEdited())
+        varispeedValue.setText (studio.varispeedText(), juce::dontSendNotification);
+    // On, it reads in the warning colour so nobody forgets it (D-ARCH-55).
+    varispeedValue.setColour (juce::Label::textColourId, colour (studio.varispeedOn() ? Token::warning : Token::textDim));
     toolbarToggle.setToggleState (l.toolbar, juce::dontSendNotification);
     if (const auto* master = m.track (m.info.masterTrackId); master != nullptr && ! masterVolume.isMouseButtonDown())
         masterVolume.setValue (std::clamp (master->strip.volumeDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
@@ -293,7 +313,8 @@ std::vector<std::vector<juce::Button*>> ControlBar::groups()
              { &start, &rewind, &forward, &stop, &play, &record, &cycle },
              { &metronome, &punch, &replace },
              { &snap },
-             { &follow, &keyboard } };
+             { &follow, &keyboard },
+             { &varispeed } };
 }
 
 juce::Rectangle<int> ControlBar::displayBounds() const
@@ -372,6 +393,8 @@ void ControlBar::resized()
     items.push_back ({ &snapBox, 80 });
     items.push_back ({ &follow, 56 });
     items.push_back ({ &keyboard, 48 });
+    items.push_back ({ &varispeed, 80 });
+    items.push_back ({ &varispeedValue, 88 });
     items.push_back ({ &cpu, 64, 2 });
     items.push_back ({ &more, 32, -1 }); // only while something is dropped
     avatarsWidth = avatars.preferredWidth();
@@ -453,6 +476,7 @@ constexpr ShowItem showItems[] = {
     { ControlBarLayout::clickAndPunch, "Metronome and Autopunch" }, { ControlBarLayout::countInMenu, "Count-in" },
     { ControlBarLayout::snapControls, "Snap and Grid" },       { ControlBarLayout::followButton, "Follow" },
     { ControlBarLayout::keysButton, "Keyboard MIDI" },         { ControlBarLayout::cpuMeter, "CPU Meter" },
+    { ControlBarLayout::varispeedControl, "Varispeed" },
 };
 int bitIndex (ControlBarLayout::Item item)
 {
@@ -491,6 +515,8 @@ bool ControlBar::allowed (const juce::Component* c) const
         return bar.shows (L::keysButton);
     if (c == &cpu)
         return bar.shows (L::cpuMeter);
+    if (c == &varispeed || c == &varispeedValue)
+        return bar.shows (L::varispeedControl);
     if (c == &masterVolume)
         return bar.master == L::Master::volume;
     if (c == &outputMeter)
@@ -548,7 +574,7 @@ void ControlBar::pickCustomize (int item)
 {
     using L = ControlBarLayout;
     auto next = studio.layout.bar;
-    if (item >= itemShowBase && item < itemShowBase + 13)
+    if (item >= itemShowBase && item < itemShowBase + 14)
         next.items ^= 1 << (item - itemShowBase);
     else if (item >= itemMasterBase && item <= itemMasterBase + 2)
         next.master = static_cast<L::Master> (item - itemMasterBase);
@@ -585,12 +611,62 @@ void ControlBar::pickCustomize (int item)
 
 void ControlBar::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.eventComponent == &varispeedValue)
+    {
+        dragStartRate = studio.varispeedRate();
+        if (e.mods.isPopupMenu())
+            varispeedMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (varispeedValue),
+                                           [safe = juce::Component::SafePointer<ControlBar> (this)] (int item) {
+                                               if (safe != nullptr)
+                                                   safe->pickVarispeed (item);
+                                           });
+        return;
+    }
     if (! e.mods.isPopupMenu())
         return;
     customizeMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe = juce::Component::SafePointer<ControlBar> (this)] (int item) {
         if (safe != nullptr)
             safe->pickCustomize (item);
     });
+}
+
+void ControlBar::mouseDrag (const juce::MouseEvent& e)
+{
+    // Varispeed: 0.5% a pixel up or down (Shift for 0.1%); dragging turns it on.
+    if (e.eventComponent != &varispeedValue || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 2)
+        return;
+    const double step = e.mods.isShiftDown() ? 0.001 : 0.005;
+    studio.setVarispeed (true, dragStartRate - step * e.getDistanceFromDragStartY());
+}
+
+juce::PopupMenu ControlBar::varispeedMenu() const
+{
+    using U = engine::varispeed::Unit;
+    juce::PopupMenu menu;
+    menu.addItem (static_cast<int> (Cmd::toggleVarispeed) + 1000, "Varispeed", true, studio.varispeedOn());
+    menu.addSeparator();
+    menu.addSectionHeader ("Show As");
+    const std::pair<U, const char*> units[] = { { U::percent, "Percent" }, { U::tempo, "Resulting Tempo" }, { U::semitones, "Detune (Semitones)" },
+                                                { U::tuning, "Tuning Reference (Hz)" } };
+    for (const auto& [u, name] : units)
+        menu.addItem (itemVarispeedUnit + static_cast<int> (u), name, true, studio.layout.bar.varispeedUnit == u);
+    menu.addSeparator();
+    menu.addItem (itemVarispeedReset, "Reset to Normal Speed", ! (std::abs (studio.varispeedRate() - 1.0) < 1e-9));
+    return menu;
+}
+
+void ControlBar::pickVarispeed (int item)
+{
+    if (item == static_cast<int> (Cmd::toggleVarispeed) + 1000)
+        studio.perform (Cmd::toggleVarispeed);
+    else if (item >= itemVarispeedUnit && item < itemVarispeedUnit + 4)
+    {
+        studio.layout.bar.varispeedUnit = static_cast<engine::varispeed::Unit> (item - itemVarispeedUnit);
+        studio.sendChangeMessage();
+    }
+    else if (item == itemVarispeedReset)
+        studio.setVarispeed (studio.varispeedOn(), 1.0);
+    refresh();
 }
 
 void ControlBar::mouseDoubleClick (const juce::MouseEvent& e)
