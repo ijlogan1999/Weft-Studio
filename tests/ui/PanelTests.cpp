@@ -2,6 +2,7 @@
 
 #include "UiFixture.h"
 
+#include "ui/KeyCommands.h"
 #include "ui/ProjectDialogs.h"
 #include "ui/UndoHistory.h"
 
@@ -1026,4 +1027,96 @@ TEST_CASE ("AT-UI-17 the Event, Marker, Tempo and Signature lists", "[UI][AT-UI-
     REQUIRE (text != nullptr);
     CHECK (text->textAreaShown());
     CHECK (text->markerText.getText() == "Bring in the strings.");
+}
+
+TEST_CASE ("AT-UI-18 Key Commands: search, show, learn, add, clear, default, conflicts and saving", "[UI][AT-UI-18]")
+{
+    struct Restore
+    {
+        ~Restore() { resetAllKeys(); }
+    } restore;
+    using K = juce::KeyPress;
+    using M = juce::ModifierKeys;
+    const auto ctrlJ = K ('J', M (M::commandModifier), 0);
+
+    // Key text, both ways.
+    CHECK (keyDescription (ctrlJ) == "Ctrl+J");
+    CHECK (keyDescription (K (K::F11Key, M (M::commandModifier | M::altModifier | M::shiftModifier), 0)) == "Ctrl+Alt+Shift+F11");
+    for (const auto* text : { "Ctrl+Alt+Shift+F11", "Numpad 3", ",", "Shift+Space", "Alt+Page Down" })
+    {
+        const auto parsed = parseKeyDescription (text);
+        REQUIRE (parsed);
+        CHECK (keyDescription (*parsed) == text);
+    }
+    CHECK_FALSE (parseKeyDescription ("Ctrl+Nothing"));
+
+    Ui ui;
+    // Alt+K opens it in a window of its own, once.
+    REQUIRE (commandForKey (K ('k', M (M::altModifier), 0)) == Cmd::keyCommands);
+    REQUIRE (ui.main->run (Cmd::keyCommands));
+    REQUIRE (ui.main->run (Cmd::keyCommands));
+    auto* window = ui.main->windowNamed ("Key Commands");
+    REQUIRE (window != nullptr);
+    auto* panel = dynamic_cast<KeyCommandsPanel*> (window->getContentComponent());
+    REQUIRE (panel != nullptr);
+
+    // Search by name or key; show the unassigned ones.
+    panel->setSearch ("metronome");
+    REQUIRE (std::find (panel->listed().begin(), panel->listed().end(), Cmd::metronome) != panel->listed().end());
+    CHECK (panel->keysText (Cmd::metronome) == "K");
+    panel->setSearch ("Ctrl+J");
+    REQUIRE (panel->listed().size() == 1);
+    CHECK (panel->listed().front() == Cmd::join);
+    panel->setSearch ({});
+    panel->setShow (KeyCommandsPanel::Show::unassigned);
+    REQUIRE_FALSE (panel->listed().empty());
+    for (const auto c : panel->listed())
+        CHECK (commandInfo (c).keys.empty());
+    panel->setShow (KeyCommandsPanel::Show::all);
+
+    // Learn: Esc cancels; a key another command has moves to this one.
+    REQUIRE (panel->selectCommand (Cmd::metronome));
+    panel->startLearning();
+    CHECK (panel->learning());
+    CHECK (panel->keyPressed (K (K::escapeKey)));
+    CHECK_FALSE (panel->learning());
+    CHECK (panel->keysText (Cmd::metronome) == "K");
+    panel->startLearning();
+    CHECK (panel->keyPressed (ctrlJ));
+    CHECK_FALSE (panel->learning());
+    CHECK (commandForKey (ctrlJ) == Cmd::metronome);
+    CHECK (commandInfo (Cmd::join).keys.empty());
+    CHECK (commandInfo (Cmd::metronome).shortcut == "Ctrl+J");
+    CHECK (tooltipFor (Cmd::metronome) == "Metronome (Ctrl+J)");
+    CHECK (panel->message.getText().contains ("Join"));
+    CHECK_FALSE (commandForKey (K ('K', M(), 0)).has_value());
+    // Add Key keeps the others.
+    REQUIRE (panel->addKey (K ('K', M(), 0)));
+    CHECK (panel->keysText (Cmd::metronome) == "Ctrl+J, K");
+
+    // The changes are saved as text and read back.
+    const auto saved = keyAssignmentsToString();
+    CHECK (saved.contains ("Metronome"));
+    CHECK (saved.contains ("Join"));
+    CHECK_FALSE (saved.contains ("Play/Stop"));
+    panel->resetAll();
+    CHECK (panel->keysText (Cmd::metronome) == "K");
+    CHECK (commandForKey (ctrlJ) == Cmd::join);
+    keyAssignmentsFromString (saved);
+    CHECK (panel->keysText (Cmd::metronome) == "Ctrl+J, K");
+    CHECK (commandInfo (Cmd::join).keys.empty());
+
+    // Clear and Default.
+    REQUIRE (panel->selectCommand (Cmd::metronome));
+    panel->clearSelected();
+    CHECK (commandInfo (Cmd::metronome).keys.empty());
+    CHECK (commandInfo (Cmd::metronome).shortcut.isEmpty());
+    panel->defaultSelected();
+    CHECK (panel->keysText (Cmd::metronome) == "K");
+    CHECK (commandInfo (Cmd::metronome).shortcut == "K");
+    // Delete keeps its two default keys and its "Delete" text.
+    REQUIRE (panel->selectCommand (Cmd::deleteSelection));
+    panel->defaultSelected();
+    CHECK (commandInfo (Cmd::deleteSelection).shortcut == "Delete");
+    CHECK (commandInfo (Cmd::deleteSelection).keys.size() == 2);
 }

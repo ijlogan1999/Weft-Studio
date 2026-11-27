@@ -9,6 +9,7 @@
 #include "ProjectDialogs.h"
 #include "ShareDialogs.h"
 #include "UndoHistory.h"
+#include "KeyCommands.h"
 
 namespace weft::ui
 {
@@ -611,6 +612,14 @@ void MainComponent::handleUiCommand (Cmd command)
             sidePanel.showTab (SidePanel::notesTab);
         studio.sendChangeMessage();
     }
+    else if (command == Cmd::keyCommands)
+    {
+        // D-UI-50: Key Commands, in a window of its own.
+        if (auto* existing = windowNamed ("Key Commands"))
+            existing->toFront (true);
+        else
+            openWindow ("Key Commands", std::make_unique<KeyCommandsPanel> (studio));
+    }
     else if (command == Cmd::listEditors)
     {
         // List Editors (D-UI-48): the side panel's Lists tab; again while it shows, the side panel closes.
@@ -1126,6 +1135,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);
             add (Cmd::settings);
+            add (Cmd::keyCommands);
             menu.addSeparator();
             add (Cmd::quit);
             break;

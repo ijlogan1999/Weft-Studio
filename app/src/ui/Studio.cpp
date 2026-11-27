@@ -1869,6 +1869,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::cycleWindows: case Cmd::cycleWindowsBack: case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject: case Cmd::cycleWindowViews: case Cmd::cycleWindowViewsBack:
         case Cmd::toggleNotes: case Cmd::mixerNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList:
         case Cmd::openTempoList: case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::toggleAudioFileEditor:
+        case Cmd::keyCommands:
             break;
     }
     return std::nullopt;
@@ -3042,7 +3043,7 @@ bool Studio::perform (Cmd command)
         case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow: case Cmd::cycleWindows: case Cmd::cycleWindowsBack:
         case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject:
         case Cmd::toggleNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList: case Cmd::openTempoList:
-        case Cmd::openSignatureList: case Cmd::openMarkerText:
+        case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::keyCommands:
             if (uiCommand)
                 uiCommand (command);
             break;

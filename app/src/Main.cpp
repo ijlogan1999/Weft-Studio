@@ -61,6 +61,12 @@ public:
         content = new weft::ui::MainComponent (*studio, music.isDirectory() ? music : documents);
         content->devices = devices.get();
         studio->screensetsFromString (settings->getValue ("screensets"));
+        // Key Commands (D-UI-50): this computer's own keys.
+        weft::ui::keyAssignmentsFromString (settings->getValue ("keyCommands"));
+        weft::ui::onKeyAssignmentsChanged() = [this] {
+            settings->setValue ("keyCommands", weft::ui::keyAssignmentsToString());
+            settings->saveIfNeeded();
+        };
         studio->onScreensetsChanged = [this] {
             settings->setValue ("screensets", studio->screensetsToString());
             settings->saveIfNeeded();
@@ -104,6 +110,7 @@ public:
 
     void shutdown() override
     {
+        weft::ui::onKeyAssignmentsChanged() = nullptr;
         if (mainWindow != nullptr)
             mainWindow = nullptr; // deletes the content
         else

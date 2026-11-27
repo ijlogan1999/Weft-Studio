@@ -264,6 +264,7 @@ std::vector<CommandInfo> build()
         { Cmd::openSignatureList, "Open Signature List", "", {} },
         { Cmd::openMarkerText, "Open Marker Text", "", {} },
         { Cmd::toggleAudioFileEditor, "Show/Hide Audio File Editor", "W", { key ('W') } },
+        { Cmd::keyCommands, "Key Commands...", "Alt+K", { key ('K', alt) } },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
@@ -293,12 +294,199 @@ std::vector<CommandInfo> build()
                        "Ctrl+Numpad " + juce::String (n - 10), { key (pad[n - 10], ctrl) } });
     return t;
 }
-} // namespace
 
-const std::vector<CommandInfo>& commandTable()
+std::vector<CommandInfo>& liveTable()
+{
+    static auto table = build();
+    return table;
+}
+
+const std::vector<CommandInfo>& defaultTable()
 {
     static const auto table = build();
     return table;
+}
+
+std::pair<int, int> normalKey (const juce::KeyPress& k)
+{
+    // Letters arrive as their upper or lower case character; compare on the key code, case-insensitively.
+    auto code = k.getKeyCode();
+    if (code >= 'a' && code <= 'z')
+        code -= 'a' - 'A';
+    return { code, k.getModifiers().withoutMouseButtons().getRawFlags() & (ctrl | shift | alt) };
+}
+
+void changed()
+{
+    if (onKeyAssignmentsChanged())
+        onKeyAssignmentsChanged()();
+}
+} // namespace
+
+std::function<void()>& onKeyAssignmentsChanged()
+{
+    static std::function<void()> callback;
+    return callback;
+}
+
+const std::vector<CommandInfo>& commandTable() { return liveTable(); }
+
+namespace
+{
+CommandInfo& liveInfo (Cmd id)
+{
+    for (auto& c : liveTable())
+        if (c.id == id)
+            return c;
+    jassertfalse;
+    return liveTable().front();
+}
+} // namespace
+
+const std::vector<juce::KeyPress>& defaultKeys (Cmd id)
+{
+    for (const auto& c : defaultTable())
+        if (c.id == id)
+            return c.keys;
+    static const std::vector<juce::KeyPress> none;
+    return none;
+}
+
+void setCommandKeys (Cmd id, std::vector<juce::KeyPress> keys)
+{
+    for (const auto& k : keys)
+        for (auto& c : liveTable())
+            if (c.id != id)
+            {
+                const auto before = c.keys.size();
+                std::erase_if (c.keys, [&] (const juce::KeyPress& other) { return normalKey (other) == normalKey (k); });
+                if (c.keys.size() != before)
+                    c.shortcut = c.keys.empty() ? juce::String() : keyDescription (c.keys.front());
+            }
+    auto& info = liveInfo (id);
+    info.keys = std::move (keys);
+    const auto& defaults = defaultKeys (id);
+    // The default text where the keys are the defaults ("Delete" for Delete and Backspace), else the first key's.
+    const bool same = info.keys.size() == defaults.size()
+                   && std::equal (info.keys.begin(), info.keys.end(), defaults.begin(), [] (const auto& a, const auto& b) { return normalKey (a) == normalKey (b); });
+    for (const auto& d : defaultTable())
+        if (d.id == id)
+            info.shortcut = same ? d.shortcut : info.keys.empty() ? juce::String() : keyDescription (info.keys.front());
+    changed();
+}
+
+void resetAllKeys()
+{
+    liveTable() = defaultTable();
+    changed();
+}
+
+std::optional<Cmd> commandUsingKey (const juce::KeyPress& key, std::optional<Cmd> except)
+{
+    for (const auto& c : commandTable())
+        if (! except || c.id != *except)
+            for (const auto& k : c.keys)
+                if (normalKey (k) == normalKey (key))
+                    return c.id;
+    return std::nullopt;
+}
+
+namespace
+{
+const std::vector<std::pair<int, const char*>>& keyNames()
+{
+    static const std::vector<std::pair<int, const char*>> names {
+        { K::spaceKey, "Space" },     { K::homeKey, "Home" },          { K::endKey, "End" },          { K::deleteKey, "Delete" },
+        { K::backspaceKey, "Backspace" }, { K::leftKey, "Left" },       { K::rightKey, "Right" },      { K::upKey, "Up" },
+        { K::downKey, "Down" },       { K::pageUpKey, "Page Up" },     { K::pageDownKey, "Page Down" }, { K::escapeKey, "Esc" },
+        { K::returnKey, "Return" },   { K::tabKey, "Tab" },            { K::insertKey, "Insert" },
+        { K::F1Key, "F1" },           { K::F2Key, "F2" },              { K::F3Key, "F3" },            { K::F4Key, "F4" },
+        { K::F5Key, "F5" },           { K::F6Key, "F6" },              { K::F7Key, "F7" },            { K::F8Key, "F8" },
+        { K::F9Key, "F9" },           { K::F10Key, "F10" },            { K::F11Key, "F11" },          { K::F12Key, "F12" },
+        { K::numberPad0, "Numpad 0" }, { K::numberPad1, "Numpad 1" },  { K::numberPad2, "Numpad 2" }, { K::numberPad3, "Numpad 3" },
+        { K::numberPad4, "Numpad 4" }, { K::numberPad5, "Numpad 5" },  { K::numberPad6, "Numpad 6" }, { K::numberPad7, "Numpad 7" },
+        { K::numberPad8, "Numpad 8" }, { K::numberPad9, "Numpad 9" },
+    };
+    return names;
+}
+} // namespace
+
+juce::String keyDescription (const juce::KeyPress& key)
+{
+    const auto [code, mods] = normalKey (key);
+    juce::String out;
+    if ((mods & ctrl) != 0)
+        out << "Ctrl+";
+    if ((mods & alt) != 0)
+        out << "Alt+";
+    if ((mods & shift) != 0)
+        out << "Shift+";
+    for (const auto& [c, name] : keyNames())
+        if (c == code)
+            return out + name;
+    return out + juce::String::charToString (static_cast<juce::juce_wchar> (code));
+}
+
+std::optional<juce::KeyPress> parseKeyDescription (const juce::String& text)
+{
+    auto rest = text.trim();
+    int mods = 0;
+    for (bool more = true; more;)
+    {
+        more = false;
+        for (const auto& [prefix, flag] : { std::pair { "Ctrl+", ctrl }, std::pair { "Alt+", alt }, std::pair { "Shift+", shift } })
+            if (rest.startsWith (prefix) && rest.length() > juce::String (prefix).length())
+            {
+                mods |= flag;
+                rest = rest.substring (juce::String (prefix).length());
+                more = true;
+            }
+    }
+    for (const auto& [c, name] : keyNames())
+        if (rest == name)
+            return key (c, mods);
+    if (rest.length() == 1)
+        return key (static_cast<int> (juce::CharacterFunctions::toUpperCase (rest[0])), mods);
+    return std::nullopt;
+}
+
+juce::String keyAssignmentsToString()
+{
+    auto* object = new juce::DynamicObject();
+    for (const auto& c : commandTable())
+    {
+        const auto& defaults = defaultKeys (c.id);
+        const bool same = c.keys.size() == defaults.size()
+                       && std::equal (c.keys.begin(), c.keys.end(), defaults.begin(), [] (const auto& a, const auto& b) { return normalKey (a) == normalKey (b); });
+        if (same)
+            continue;
+        juce::Array<juce::var> keys;
+        for (const auto& k : c.keys)
+            keys.add (keyDescription (k));
+        object->setProperty (juce::Identifier (c.name.isEmpty() ? juce::String ("?") : c.name), keys);
+    }
+    return juce::JSON::toString (juce::var (object), true);
+}
+
+void keyAssignmentsFromString (const juce::String& json)
+{
+    const auto parsed = juce::JSON::parse (json);
+    auto* object = parsed.getDynamicObject();
+    if (object == nullptr)
+        return;
+    const auto callback = std::exchange (onKeyAssignmentsChanged(), nullptr); // loading isn't a change to save
+    for (const auto& [name, value] : object->getProperties())
+        for (const auto& c : defaultTable())
+            if (c.name == name.toString() && value.isArray())
+            {
+                std::vector<juce::KeyPress> keys;
+                for (const auto& k : *value.getArray())
+                    if (const auto press = parseKeyDescription (k.toString()))
+                        keys.push_back (*press);
+                setCommandKeys (c.id, keys);
+                break;
+            }
+    onKeyAssignmentsChanged() = callback;
 }
 
 const CommandInfo& commandInfo (Cmd id)
@@ -316,20 +504,5 @@ juce::String tooltipFor (Cmd id)
     return c.shortcut.isEmpty() ? c.name : c.name + " (" + c.shortcut + ")";
 }
 
-std::optional<Cmd> commandForKey (const juce::KeyPress& pressed)
-{
-    // Letters arrive as their upper or lower case character; compare on the key code, case-insensitively.
-    auto normal = [] (const juce::KeyPress& k) {
-        auto code = k.getKeyCode();
-        if (code >= 'a' && code <= 'z')
-            code -= 'a' - 'A';
-        return std::pair { code, k.getModifiers().withoutMouseButtons().getRawFlags() & (ctrl | shift | alt) };
-    };
-    const auto p = normal (pressed);
-    for (const auto& c : commandTable())
-        for (const auto& k : c.keys)
-            if (normal (k) == p)
-                return c.id;
-    return std::nullopt;
-}
+std::optional<Cmd> commandForKey (const juce::KeyPress& pressed) { return commandUsingKey (pressed); }
 } // namespace weft::ui

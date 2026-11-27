@@ -5,6 +5,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -109,7 +110,7 @@ enum class Cmd
     cycleWindowViewsBack,
     // D-UI-47: notes
     toggleNotes, mixerNotes, listEditors, openEventList, openMarkerList, openTempoList, openSignatureList, openMarkerText,
-    toggleAudioFileEditor
+    toggleAudioFileEditor, keyCommands
 };
 
 struct CommandInfo
@@ -125,4 +126,21 @@ const CommandInfo& commandInfo (Cmd id);
 /** "Play/Stop (Space)", or just the name when there's no shortcut (F-UI-10). */
 juce::String tooltipFor (Cmd id);
 std::optional<Cmd> commandForKey (const juce::KeyPress& key);
+
+// Key Commands (D-UI-50): this computer's own keys, in place of a command's defaults. Menus and tooltips follow.
+/** Gives a command these keys (none clears it); a key another command had is taken from it. */
+void setCommandKeys (Cmd id, std::vector<juce::KeyPress> keys);
+const std::vector<juce::KeyPress>& defaultKeys (Cmd id);
+/** Every command back to its default keys. */
+void resetAllKeys();
+/** The command a key runs now, other than `except`. */
+std::optional<Cmd> commandUsingKey (const juce::KeyPress& key, std::optional<Cmd> except = std::nullopt);
+/** "Ctrl+Alt+K", as menus show a key; and back. */
+juce::String keyDescription (const juce::KeyPress& key);
+std::optional<juce::KeyPress> parseKeyDescription (const juce::String& text);
+/** The assignments that differ from the defaults, as JSON ({"Metronome": ["Ctrl+K"]}); and back (unknown names are skipped). */
+juce::String keyAssignmentsToString();
+void keyAssignmentsFromString (const juce::String& json);
+/** Called after any change, so the app can save the assignments. */
+std::function<void()>& onKeyAssignmentsChanged();
 } // namespace weft::ui
