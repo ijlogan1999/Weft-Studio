@@ -55,8 +55,8 @@ struct TransportSettings
     /** MIDI recording over an existing region: merge into it, or a new region on top (F-REC-7). */
     bool midiMergeLinear = false;
     bool midiMergeCycle = true;
-    /** MIDI Recording › Replace (L-MREC-6): a pass deletes what was on the track where it recorded. */
-    bool midiReplace = false;
+    /** Replace (L-MREC-6, D-W1-12): a pass deletes what was on the track where it recorded, MIDI and audio. */
+    bool replace = false;
     /** Navigate › Metronome (D-W1-11): which clicks sound, whether only the count-in clicks, and the tone. */
     bool clickBars = true, clickBeats = true, clickDivisions = false, clickOnlyCountIn = false;
     int clickTone = Metronome::middleTone; // 0 (low) to Metronome::numTones - 1 (high)
@@ -137,6 +137,14 @@ public:
     /** Starts recording at the playhead (or `from`), with the count-in from the settings. */
     RecordResult record();
     RecordResult record (Ticks from);
+    /** Record Toggle (D-W1-12): while playing, starts recording right where the playhead is, with no
+        count-in; while recording, stops recording and keeps playing; stopped, records as usual. */
+    RecordResult recordToggle();
+    /** Capture as Recording (D-W1-13): the MIDI played since the transport last started (and not
+        captured yet) becomes a recording on `trackId`, as if it had been recorded. */
+    RecordingOutcome captureRecording (commands::Session& session, const Id& trackId);
+    /** MIDI waiting to be captured (D-W1-13). */
+    bool canCapture() const noexcept;
     /** Ends the recording pass but keeps playing (R while recording, D-W1-2). */
     void stopRecording();
     void locate (Ticks to);
@@ -290,6 +298,8 @@ private:
     void finishCapture() noexcept;
     void captureSpan (const float* const* inputs, std::int64_t from, int offset, int frames) noexcept;
     void captureWrap (std::int64_t at) noexcept;
+    void captureLive (std::int64_t from, int offset, int frames) noexcept;
+    RecordResult startRecording (Ticks from, bool onTheFly);
     void takeLiveMidi (int numFrames, int filter) noexcept;
 
     MediaPool& mediaPool;
@@ -328,6 +338,13 @@ private:
         std::unique_ptr<RecordWriter> writer;
     };
     std::vector<Pass> passes; // oldest first; the audio thread fills the newest
+    // Capture as Recording (D-W1-13): the audio thread keeps the live MIDI it plays while not
+    // recording; it starts over each time the transport starts.
+    std::unique_ptr<RecordPass::MidiLane> liveLane;
+    std::atomic<std::uint64_t> liveGeneration { 0 };
+    std::atomic<std::int64_t> liveStart { 0 }, liveEnd { 0 }; // timeline samples it covers
+    std::uint64_t capturedGeneration = 0; // message thread: what was captured already
+    std::size_t capturedCount = 0;
     std::atomic<bool> running { false };
     double rate = 48000;
     int maxBlock = 0;

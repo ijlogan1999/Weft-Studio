@@ -258,6 +258,7 @@ juce::String Preferences::toString() const
     o->setProperty ("widePlayhead", widePlayhead);
     o->setProperty ("middleC", middleC);
     o->setProperty ("helpTags", helpTags);
+    o->setProperty ("autoArmMidi", autoArmMidi);
     return juce::JSON::toString (juce::var (o), true);
 }
 
@@ -282,6 +283,7 @@ Preferences Preferences::fromString (const juce::String& text)
     p.widePlayhead = get ("widePlayhead", p.widePlayhead);
     p.middleC = get ("middleC", p.middleC) == 4 ? 4 : 3;
     p.helpTags = get ("helpTags", p.helpTags);
+    p.autoArmMidi = get ("autoArmMidi", p.autoArmMidi);
     return p;
 }
 
@@ -417,6 +419,21 @@ void Studio::selectTrack (const Id& trackId)
 {
     local.selectedTrack = trackId;
     eng->setSelectedTrack (trackId);
+    // MIDI auto record enable (D-W1-14): the selected instrument track is armed, and the one armed
+    // that way before is disarmed; tracks armed by hand stay. Not while recording.
+    if (prefs.autoArmMidi && ! recording())
+        if (const auto* t = model().track (trackId); t != nullptr && t->kind == model::TrackKind::instrument && trackId != autoArmed)
+        {
+            if (! autoArmed.empty() && local.armed.contains (autoArmed))
+                local.armed.erase (autoArmed);
+            autoArmed.clear();
+            if (! local.armed.contains (trackId))
+            {
+                local.armed.insert (trackId);
+                autoArmed = trackId;
+            }
+            eng->setArmedTracks (local.armed);
+        }
     sendChangeMessage();
 }
 
@@ -1689,6 +1706,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::toggleControlBar: case Cmd::toggleToolbar: case Cmd::customizeControlBar: case Cmd::bigBeatsDisplay: case Cmd::bigTimeDisplay: case Cmd::performanceMeter:
         case Cmd::configureGlobalTracks: case Cmd::showSingleGlobalTrack: case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack: case Cmd::markerTrackOnly: case Cmd::createSignatureChange: case Cmd::createKeyChange: case Cmd::addSection:
         case Cmd::exportSelectionMidi: case Cmd::exportTrackAudio: case Cmd::exportAllTracksAudio:
+        case Cmd::recordToggle: case Cmd::toggleReplace: case Cmd::captureRecording:
             break;
     }
     return std::nullopt;
@@ -1824,6 +1842,38 @@ bool Studio::perform (Cmd command)
             discardRecordingFrom = recordPressedAt;
             eng->stop();
             break;
+        case Cmd::recordToggle:
+        {
+            if (! recording() && ! audioOk)
+            {
+                setStatus ("Recording needs an audio device: choose one in Audio & MIDI Settings.");
+                return false;
+            }
+            if (! recording())
+                recordPressedAt = playhead();
+            const auto result = eng->recordToggle();
+            if (! result.message.empty())
+                setStatus (juce::String (result.message));
+            break;
+        }
+        case Cmd::toggleReplace:
+        {
+            auto ts = eng->settings();
+            ts.replace = ! ts.replace;
+            eng->setSettings (ts);
+            setStatus (ts.replace ? "Replace on: recording replaces what's under it." : "Replace off.");
+            sendChangeMessage();
+            break;
+        }
+        case Cmd::captureRecording:
+        {
+            const auto outcome = eng->captureRecording (*sess, selectedTrack());
+            setStatus (juce::String (outcome.message));
+            if (! outcome.committed)
+                return false;
+            edited();
+            break;
+        }
         case Cmd::record:
         {
             if (recording())
@@ -3472,7 +3522,7 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     settings.returnToStartOnStop = before.returnToStartOnStop;
     settings.midiMergeLinear = before.midiMergeLinear;
     settings.midiMergeCycle = before.midiMergeCycle;
-    settings.midiReplace = before.midiReplace;
+    settings.replace = before.replace;
     settings.clickBars = before.clickBars;
     settings.clickBeats = before.clickBeats;
     settings.clickDivisions = before.clickDivisions;

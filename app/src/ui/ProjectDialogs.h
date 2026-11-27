@@ -126,6 +126,7 @@ public:
     juce::ToggleButton softwareMonitoring { "Software monitoring" };
     juce::ToggleButton monitorSelectedOnly { "Monitor only the selected track" };
     juce::ToggleButton overloadMessage { "Say when the audio drops out" };
+    juce::ToggleButton autoArmMidi { "Record-enable the selected instrument track" };
     juce::TextButton audioDevice { "Audio & MIDI Settings..." };
     // View
     juce::ComboBox appearance; // 1 dark, 2 light, 3 follow the system

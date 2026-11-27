@@ -162,6 +162,14 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-23** [E] · D-UI-41 · A track with monitoring On plays its input; with software monitoring off it doesn't; with Monitor only the selected track it doesn't while another track is selected, and does once it is selected.
 
+**AT-REC-24** [E] · D-W1-12 · Playing from bar 1 with an armed track and a 2-bar count-in set, Record Toggle half a bar in starts recording at once without moving the playhead back; Record Toggle a bar later stops recording and playback goes on; the recording starts half a bar in, at least a bar long; stopping returns to bar 1.
+
+**AT-REC-25** [E] · D-W1-12 · With Replace on, recording a bar from half a bar into a 2-bar audio region leaves its first half-bar, the recording, and its last half-bar, in one undo step "Record"; undo restores the 2-bar region.
+
+**AT-REC-26** [E] · D-W1-13 · A note played at beat 3 while playing (not recording) is captured onto the instrument track as a region at bar 1 with the note at tick 1920, one beat long, undo step "Record"; an audio track is refused; a second capture finds nothing; playing again starts over.
+
+**AT-REC-27** [UI] · D-W1-12 to D-W1-14 · Navigate lists Record Toggle (Alt+R), Capture as Recording (Ctrl+Shift+R) and Replace (unticked). Replace from the command lights the control bar's Replace button, and MIDI Recording › Replace turns it off again. Capture with nothing played says "Nothing to capture". With the auto record enable setting on (shown in Settings and kept), selecting an instrument track arms it and selecting another moves the arm to it.
+
 ## 4. Tracks (TRK)
 
 **AT-TRK-1** [E] · F-TRK-1 · A mono audio track's region is output equally to L and R at center pan (−3 dB each per pan law); a stereo track preserves channel separation.

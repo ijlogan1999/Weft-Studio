@@ -61,7 +61,8 @@ private:
         toolbarToggle { "Toolbar", Cmd::toggleToolbar, true };
     CommandButton start { "Go to Start", Cmd::goToStart }, rewind { "Previous Bar", Cmd::previousBar }, forward { "Next Bar", Cmd::nextBar }, stop { "Stop", Cmd::playStop },
         play { "Play", Cmd::playStop, true }, record { "Record", Cmd::record, true }, cycle { "Cycle", Cmd::cycle, true };
-    CommandButton metronome { "Click", Cmd::metronome, true }, punch { "Punch", Cmd::autopunch, true }, snap { "Snap", Cmd::snapToggle, true },
+    CommandButton metronome { "Click", Cmd::metronome, true }, punch { "Punch", Cmd::autopunch, true }, replace { "Replace", Cmd::toggleReplace, true },
+        snap { "Snap", Cmd::snapToggle, true },
         follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true };
     juce::Label position, time, tempo, signature, key, cpu;
     juce::ComboBox countIn, snapBox;

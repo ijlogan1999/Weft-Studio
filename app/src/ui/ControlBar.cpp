@@ -183,7 +183,7 @@ ControlBar::~ControlBar()
 std::vector<CommandButton*> ControlBar::commandButtons()
 {
     return { &inspector, &side, &mixer, &editor, &global, &toolbarToggle, &start, &rewind, &forward, &stop, &play, &record, &cycle,
-             &metronome, &punch, &snap, &follow, &keyboard };
+             &metronome, &punch, &replace, &snap, &follow, &keyboard };
 }
 
 void ControlBar::refresh()
@@ -211,6 +211,7 @@ void ControlBar::refresh()
     cycle.setToggleState (m.info.cycle.enabled, juce::dontSendNotification);
     metronome.setToggleState (studio.engine().settings().metronomeOn, juce::dontSendNotification);
     punch.setToggleState (m.info.punch.enabled, juce::dontSendNotification);
+    replace.setToggleState (studio.engine().settings().replace, juce::dontSendNotification);
     snap.setToggleState (studio.snapEnabled, juce::dontSendNotification);
     follow.setToggleState (studio.follow, juce::dontSendNotification);
     keyboard.setToggleState (studio.keyboardMidiOn(), juce::dontSendNotification);
@@ -289,7 +290,7 @@ std::vector<std::vector<juce::Button*>> ControlBar::groups()
 {
     return { { &inspector, &side, &mixer, &editor, &global, &toolbarToggle },
              { &start, &rewind, &forward, &stop, &play, &record, &cycle },
-             { &metronome, &punch },
+             { &metronome, &punch, &replace },
              { &snap },
              { &follow, &keyboard } };
 }
@@ -362,6 +363,7 @@ void ControlBar::resized()
     gap (space::s2);
     items.push_back ({ &metronome, 48 });
     items.push_back ({ &punch, 56 });
+    items.push_back ({ &replace, 64, 2 });
     items.push_back ({ &countIn, 128, 3 });
     items.push_back ({ &masterVolume, 96, 1 });
     items.push_back ({ &outputMeter, 96, 1 });
@@ -476,7 +478,7 @@ bool ControlBar::allowed (const juce::Component* c) const
         return bar.shows (L::signatureDisplay);
     if (c == &key)
         return bar.shows (L::keyDisplay);
-    if (c == &metronome || c == &punch)
+    if (c == &metronome || c == &punch || c == &replace)
         return bar.shows (L::clickAndPunch);
     if (c == &countIn)
         return bar.shows (L::countInMenu);

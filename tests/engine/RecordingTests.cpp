@@ -685,7 +685,7 @@ TEST_CASE ("AT-REC-22: MIDI Replace deletes what was on the track where the pass
     Rig rig;
     recordSettings (rig);
     auto s = rig.engine.settings();
-    s.midiReplace = true;
+    s.replace = true;
     s.midiMergeLinear = true; // Replace wins over merging
     rig.engine.setSettings (s);
     auto [keys, probe] = probeTrack (rig);
@@ -865,4 +865,111 @@ TEST_CASE ("AT-PRJ-19: the project's MIDI input filter keeps ignored kinds out o
     CHECK (count ([] (const MidiEvent& e) { return e.isNoteOn() && e.data1 == 64; }) == 1);
     CHECK (count ([] (const MidiEvent& e) { return e.isNoteOff() && e.data1 == 64; }) == 1);
     CHECK (count ([] (const MidiEvent& e) { return e.isNoteOn() && e.data1 == 65; }) == 0);
+}
+
+// W39: Record Toggle, Replace for audio, Capture as Recording -------------------------------------
+
+TEST_CASE ("AT-REC-24: Record Toggle punches in and out while playing, with no count-in and no jump", "[E][record][AT-REC-24]")
+{
+    Rig rig;
+    auto s = TransportSettings {};
+    s.metronomeOn = false;
+    s.countInBars = 2; // ignored on the fly
+    rig.engine.setSettings (s);
+    constantInputs (rig, 0.25f);
+    const auto track = inputTrack (rig, "Audio 1", 1, 0);
+    rig.engine.setArmedTracks ({ track });
+    rig.engine.play (0);
+    rig.run (barSamples / 2);
+    const auto before = rig.engine.positionSamples();
+    REQUIRE (rig.engine.recordToggle().recording);
+    rig.run (512);
+    CHECK (rig.engine.state() == TransportState::recording);
+    CHECK (rig.engine.positionSamples() >= before); // no count-in, no jump back
+    rig.run (barSamples);
+    REQUIRE (rig.engine.recordToggle().started); // punch out: recording stops, playback goes on
+    rig.run (512);
+    CHECK (rig.engine.state() == TransportState::playing);
+    const auto outcome = rig.engine.finishRecording (rig.session);
+    REQUIRE (outcome);
+    REQUIRE (outcome->committed);
+    const auto regions = rig.regionsOn (track);
+    REQUIRE (regions.size() == 1);
+    CHECK (std::abs (regions[0]->start - barTicks / 2) <= 20);
+    CHECK (regions[0]->length >= barSamples);
+    // The punch kept where playback started: stopping returns there.
+    rig.engine.stop();
+    rig.run (256);
+    CHECK (rig.engine.positionSamples() == 0);
+}
+
+TEST_CASE ("AT-REC-25: Replace on an audio track removes what the recording covers, in one undo step", "[E][record][AT-REC-25]")
+{
+    Rig rig;
+    recordSettings (rig);
+    auto s = rig.engine.settings();
+    s.replace = true;
+    rig.engine.setSettings (s);
+    constantInputs (rig, 0.25f);
+    const auto track = rig.audioTrack();
+    REQUIRE (rig.session.setTrackMonitor (track, "off"));
+    const auto old = rig.addAudioRegion (track, 0, 2 * barSamples);
+    rig.engine.setArmedTracks ({ track });
+    REQUIRE (rig.engine.record (barTicks / 2).recording);
+    rig.run (barSamples);
+    REQUIRE (rig.finishRecording());
+    CHECK (rig.session.undoName() == "Record");
+    auto regions = rig.regionsOn (track);
+    REQUIRE (regions.size() == 3); // the old region's two ends and the recording
+    std::sort (regions.begin(), regions.end(), [] (const auto* a, const auto* b) { return a->start < b->start; });
+    CHECK (regions[0]->id == old);
+    CHECK (regions[0]->start == 0);
+    CHECK (rig.session.model().regionEndTick (*regions[0]) == Catch::Approx (barTicks / 2).margin (0.5));
+    CHECK (regions[1]->start == barTicks / 2);
+    CHECK (regions[1]->audio.media != regions[0]->audio.media);
+    CHECK (regions[2]->start == barTicks / 2 + barTicks);
+    CHECK (rig.session.model().regionEndTick (*regions[2]) == Catch::Approx (2 * barTicks).margin (0.5));
+    // One undo brings the old region back whole.
+    REQUIRE (rig.session.undo().done);
+    regions = rig.regionsOn (track);
+    REQUIRE (regions.size() == 1);
+    CHECK (regions[0]->length == 2 * barSamples);
+}
+
+TEST_CASE ("AT-REC-26: Capture as Recording turns MIDI played without recording into a recording", "[E][record][midi][AT-REC-26]")
+{
+    Rig rig;
+    recordSettings (rig);
+    auto [keys, probe] = probeTrack (rig);
+    CHECK_FALSE (rig.engine.canCapture());
+    rig.engine.play (0);
+    const auto base = rig.engine.deviceFrames();
+    REQUIRE (rig.engine.sendMidi (0x90, 64, 90, base + 48000));
+    REQUIRE (rig.engine.sendMidi (0x80, 64, 0, base + 72000));
+    rig.run (barSamples);
+    CHECK (rig.engine.canCapture());
+    // Only onto an instrument track.
+    const auto audio = rig.audioTrack();
+    CHECK_FALSE (rig.engine.captureRecording (rig.session, audio).committed);
+    const auto outcome = rig.engine.captureRecording (rig.session, keys);
+    REQUIRE (outcome.committed);
+    CHECK (outcome.message == "Captured as a recording.");
+    CHECK (rig.session.undoName() == "Record");
+    const auto regions = rig.regionsOn (keys);
+    REQUIRE (regions.size() == 1);
+    CHECK (regions[0]->start == 0);
+    const auto notes = notesOf (rig, *regions[0]);
+    REQUIRE (notes.size() == 1);
+    CHECK (notes[0]->pos == 1920);
+    CHECK (notes[0]->length == 960);
+    CHECK (notes[0]->pitch == 64);
+    // Captured once: there's nothing more until something new is played.
+    CHECK_FALSE (rig.engine.canCapture());
+    CHECK_FALSE (rig.engine.captureRecording (rig.session, keys).committed);
+    // Playing again starts the buffer over.
+    rig.engine.stop();
+    rig.run (256);
+    rig.engine.play (0);
+    rig.run (256);
+    CHECK_FALSE (rig.engine.canCapture());
 }

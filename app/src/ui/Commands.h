@@ -93,7 +93,9 @@ enum class Cmd
     configureGlobalTracks, showSingleGlobalTrack, toggleArrangementTrack, toggleMarkerTrack, toggleTempoTrack, toggleSignatureTrack, toggleKeyTrack,
     markerTrackOnly, createSignatureChange, createKeyChange, addSection,
     // D-W9-9, D-W9-10: exports
-    exportSelectionMidi, exportTrackAudio, exportAllTracksAudio
+    exportSelectionMidi, exportTrackAudio, exportAllTracksAudio,
+    // D-W1-12, D-W1-13: recording
+    recordToggle, toggleReplace, captureRecording
 };
 
 struct CommandInfo

@@ -329,7 +329,7 @@ SettingsDialog::SettingsDialog (Studio& s) : studio (s)
     for (int n : { 5, 10, 20, 50 })
         recentItems.addItem (juce::String (n), n);
     recentItems.setSelectedId (p.recentItems, juce::dontSendNotification);
-    describe (recentItems, "Recent projects", "How many projects File › Open Recent lists");
+    describe (recentItems, "Recent projects", juce::String::fromUTF8 ("How many projects File › Open Recent lists"));
     recentItems.onChange = [this] { change ([this] (Preferences& x) { x.recentItems = recentItems.getSelectedId(); }); };
 
     softwareMonitoring.setToggleState (p.softwareMonitoring, juce::dontSendNotification);
@@ -341,6 +341,9 @@ SettingsDialog::SettingsDialog (Studio& s) : studio (s)
     overloadMessage.setToggleState (p.overloadMessage, juce::dontSendNotification);
     describe (overloadMessage, "Say when the audio drops out", "A message in the status bar when the audio engine can't keep up");
     overloadMessage.onClick = [this] { change ([this] (Preferences& x) { x.overloadMessage = overloadMessage.getToggleState(); }); };
+    autoArmMidi.setToggleState (p.autoArmMidi, juce::dontSendNotification);
+    describe (autoArmMidi, "Record-enable the selected instrument track", "MIDI auto record enable: selecting an instrument track arms it for recording");
+    autoArmMidi.onClick = [this] { change ([this] (Preferences& x) { x.autoArmMidi = autoArmMidi.getToggleState(); }); };
     describe (audioDevice, Cmd::audioSettings);
     audioDevice.onClick = [this] {
         if (onAudioSettings)
@@ -375,10 +378,10 @@ SettingsDialog::SettingsDialog (Studio& s) : studio (s)
             onClose();
     };
     close.addShortcut (juce::KeyPress (juce::KeyPress::escapeKey));
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &startup, &recentItems, &softwareMonitoring, &monitorSelectedOnly, &overloadMessage, &audioDevice,
-                                                                          &appearance, &middleC, &widePlayhead, &helpTags, &close })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &startup, &recentItems, &softwareMonitoring, &monitorSelectedOnly, &overloadMessage, &autoArmMidi,
+                                                                          &audioDevice, &appearance, &middleC, &widePlayhead, &helpTags, &close })
         addAndMakeVisible (c);
-    setSize (520, 16 + 12 * rowHeight + 50);
+    setSize (520, 16 + 13 * rowHeight + 50);
 }
 
 void SettingsDialog::change (const std::function<void (Preferences&)>& edit)
@@ -394,11 +397,11 @@ void SettingsDialog::paint (juce::Graphics& g)
     // Section captions, then the labels of the rows that have them.
     g.setFont (font (Type::strong));
     g.setColour (colour (Token::text));
-    for (const auto& [row, text] : { std::pair { 0, "General" }, { 3, "Audio" }, { 8, "View" } })
+    for (const auto& [row, text] : { std::pair { 0, "General" }, { 3, "Audio" }, { 9, "View" } })
         g.drawText (text, labelX, 16 + row * rowHeight, controlX - labelX, 26, juce::Justification::centredLeft);
     g.setFont (font (Type::body));
     g.setColour (colour (Token::textDim));
-    for (const auto& [row, text] : { std::pair { 1, "On start" }, { 2, "Recent" }, { 9, "Appearance" }, { 10, "Middle C" } })
+    for (const auto& [row, text] : { std::pair { 1, "On start" }, { 2, "Recent" }, { 10, "Appearance" }, { 11, "Middle C" } })
         g.drawText (text, labelX, 16 + row * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
 }
 
@@ -411,11 +414,12 @@ void SettingsDialog::resized()
     softwareMonitoring.setBounds (controlX, at (4), w, 26);
     monitorSelectedOnly.setBounds (controlX, at (5), w, 26);
     overloadMessage.setBounds (controlX, at (6), w, 26);
-    audioDevice.setBounds (controlX, at (7), 200, 26);
-    appearance.setBounds (controlX, at (9), 200, 26);
-    middleC.setBounds (controlX, at (10), 200, 26);
-    widePlayhead.setBounds (controlX, at (11), w / 2, 26);
-    helpTags.setBounds (controlX + w / 2, at (11), w / 2, 26);
+    autoArmMidi.setBounds (controlX, at (7), w, 26);
+    audioDevice.setBounds (controlX, at (8), 200, 26);
+    appearance.setBounds (controlX, at (10), 200, 26);
+    middleC.setBounds (controlX, at (11), 200, 26);
+    widePlayhead.setBounds (controlX, at (12), w / 2, 26);
+    helpTags.setBounds (controlX + w / 2, at (12), w / 2, 26);
     close.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);
 }
 

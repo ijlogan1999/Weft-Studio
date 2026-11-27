@@ -169,6 +169,7 @@ struct Preferences
     bool widePlayhead = false;
     int middleC = 3;                 // note 60 is C3 or C4
     bool helpTags = true;            // tooltips
+    bool autoArmMidi = false;        // selecting an instrument track record-enables it (D-W1-14)
 
     juce::String toString() const;
     static Preferences fromString (const juce::String& text);
@@ -302,6 +303,8 @@ public:
     bool moveTrackTo (const Id& trackId, std::size_t index);
     const commands::LocalView& localView() const noexcept { return local; }
     void toggleArm (const Id& trackId);
+    /** The instrument track that MIDI auto record enable armed (D-W1-14). */
+    Id autoArmed;
     void toggleSolo (const Id& trackId, bool exclusive = false);
     /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */
     void toggleMute (const Id& trackId);

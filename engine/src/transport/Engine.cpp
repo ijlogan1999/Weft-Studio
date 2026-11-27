@@ -130,6 +130,8 @@ Engine::Engine (MediaPool& media, InstrumentRack& instruments)
                   [this] { return running.load(); } })
 {
     setSettings (currentSettings);
+    liveLane = std::make_unique<RecordPass::MidiLane>();
+    liveLane->events.resize (65536);
     instrumentFactory = [this] (const model::Track& track) -> std::shared_ptr<Instrument> {
         const auto& inst = track.strip.instrument;
         if (! inst)
@@ -495,7 +497,25 @@ void Engine::togglePlay()
 
 RecordResult Engine::record() { return record (static_cast<Ticks> (std::llround (positionTicks()))); }
 
-RecordResult Engine::record (Ticks from)
+RecordResult Engine::record (Ticks from) { return startRecording (from, false); }
+
+RecordResult Engine::recordToggle()
+{
+    const auto s = state();
+    if (s == TransportState::recording || s == TransportState::countIn)
+    {
+        stopRecording();
+        RecordResult r;
+        r.started = true;
+        return r;
+    }
+    const auto at = static_cast<Ticks> (std::llround (positionTicks()));
+    if (s == TransportState::playing && ! local.armed.empty())
+        return startRecording (at, true);
+    return record (at);
+}
+
+RecordResult Engine::startRecording (Ticks from, bool onTheFly)
 {
     RecordResult result;
     if (local.armed.empty())
@@ -602,7 +622,8 @@ RecordResult Engine::record (Ticks from)
     }
 
     streamer.hint (newPass->recordStart);
-    Command c { CommandType::record, newPass->recordStart, currentSettings.countInBars };
+    // On the fly the audio thread starts the pass where it is, so playback doesn't jump.
+    Command c { CommandType::record, onTheFly ? fromPlayhead : newPass->recordStart, onTheFly ? 0 : currentSettings.countInBars };
     c.pass = newPass.get();
     if (! send (c))
         return result;
@@ -715,17 +736,65 @@ std::optional<RecordingOutcome> Engine::finishRecording (commands::Session& sess
     for (const auto& lane : p.midi)
     {
         auto m = layoutMidi (p, *lane, tempo, signatures, currentSettings.midiMergeLinear, currentSettings.midiMergeCycle,
-                             currentSettings.midiReplace);
+                             currentSettings.replace);
         if (! m.notes.empty() || ! m.controllers.empty())
             midi.push_back (std::move (m));
     }
 
     if (! audio.empty() || ! midi.empty())
     {
+        // Replace (D-W1-12): the parts of audio regions under each new recording go, in the same
+        // undo step.
+        const bool replaceAudio = currentSettings.replace && ! audio.empty();
+        if (replaceAudio)
+        {
+            session.beginGesture ("Record");
+            for (const auto& rec : audio)
+            {
+                if (rec.takes.empty() || session.model().track (rec.trackId) == nullptr)
+                    continue;
+                Ticks a = rec.takes.front().start, b = a;
+                for (const auto& t : rec.takes)
+                {
+                    a = std::min (a, t.start);
+                    const auto endSample = tempo.tickToSample (static_cast<double> (t.start)) + static_cast<double> (t.length);
+                    b = std::max (b, static_cast<Ticks> (std::llround (tempo.sampleToTick (endSample))));
+                }
+                if (rec.takeFolder)
+                {
+                    a = rec.folderStart;
+                    b = rec.folderEnd;
+                }
+                const auto under = [&] {
+                    std::vector<Id> ids;
+                    for (const auto* r : session.model().regionsOnTrack (rec.trackId))
+                        if (! r->isMidi && r->start < b && session.model().regionEndTick (*r) > static_cast<double> (a))
+                            ids.push_back (r->id);
+                    return ids;
+                };
+                if (auto ids = under(); ! ids.empty())
+                    session.splitRegionsAt (ids, a);
+                if (auto ids = under(); ! ids.empty())
+                    session.splitRegionsAt (ids, b);
+                std::vector<Id> inside;
+                for (const auto* r : session.model().regionsOnTrack (rec.trackId))
+                    if (! r->isMidi && r->start >= a && session.model().regionEndTick (*r) <= static_cast<double> (b) + 0.5)
+                        inside.push_back (r->id);
+                if (! inside.empty())
+                    session.deleteRegions (inside);
+            }
+        }
         const auto result = session.commitRecording (audio, midi);
         out.committed = result.ok;
         if (! result.ok)
             problems.push_back (result.error);
+        if (replaceAudio)
+        {
+            if (result.ok)
+                session.endGesture();
+            else
+                session.cancelGesture();
+        }
         setProject (session.model());
     }
     if (out.droppedFrames > 0)
@@ -881,6 +950,11 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
             playStart = position;
             transport = TransportState::playing;
             flushAllNotes (snap);
+            // Capture as Recording starts over (D-W1-13).
+            liveLane->count.store (0, std::memory_order_relaxed);
+            liveStart.store (position, std::memory_order_relaxed);
+            liveEnd.store (position, std::memory_order_relaxed);
+            liveGeneration.fetch_add (1, std::memory_order_release);
             break;
         case CommandType::stop:
             if (transport == TransportState::stopped)
@@ -905,13 +979,16 @@ void Engine::apply (const Command& c, const EngineSnapshot* snap) noexcept
                 break;
             finishCapture();
             recordStart = c.a == fromPlayhead ? position : c.a;
+            if (c.a == fromPlayhead && c.pass != nullptr)
+                c.pass->recordStart = recordStart; // read by the message thread only once the pass has finished
             const auto recordTick = static_cast<Ticks> (std::llround (snap->tempo.sampleToTick (static_cast<double> (recordStart))));
             // Bars (1 to 6) or beats (-1, -2) of the meter at the record start (D-UI-42).
             const auto countIn = std::clamp<std::int64_t> (c.b, model::minCountIn, model::maxCountIn);
             const auto& meter = snap->signatures.signatureAtBar (snap->signatures.barAt (recordTick).bar);
             const auto lead = countIn > 0 ? countIn * meter.barLength() : -countIn * 4 * ticksPerQuarter / meter.denominator;
             position = countIn != 0 ? snap->tickToSample (recordTick - lead) : recordStart;
-            playStart = recordStart;
+            if (transport != TransportState::playing || c.a != fromPlayhead)
+                playStart = recordStart; // a punch on the fly keeps where playback started
             pass = c.pass;
             transport = position < recordStart ? TransportState::countIn : TransportState::recording;
             flushAllNotes (snap);
@@ -1003,12 +1080,19 @@ void Engine::process (const float* const* inputs, float* const* outputs, int num
                     renderClicks (*snap, position, offset, n, audible);
                     if (transport == TransportState::recording && pass != nullptr)
                         captureSpan (inputs, position, offset, n);
+                    else
+                        captureLive (position, offset, n);
                     position = end;
                     offset += n;
                     if (cycling && position >= snap->cycleEnd)
                     {
                         if (transport == TransportState::recording && pass != nullptr)
                             captureWrap (position);
+                        else if (const auto k = liveLane->count.load (std::memory_order_relaxed); k < liveLane->events.size())
+                        {
+                            liveLane->events[k] = { position, 0, 0, 0 }; // a cycle wrap
+                            liveLane->count.store (k + 1, std::memory_order_release);
+                        }
                         position = snap->cycleStart;
                         flushAllNotes (snap);
                     }
@@ -1791,6 +1875,75 @@ void Engine::captureSpan (const float* const* inputs, std::int64_t from, int off
             lane->dropped.fetch_add (count - written, std::memory_order_relaxed);
     }
     p.frames.store (p.frames.load (std::memory_order_relaxed) + count, std::memory_order_release);
+}
+
+void Engine::captureLive (std::int64_t from, int offset, int frames) noexcept
+{
+    // What's played while not recording, for Capture as Recording (D-W1-13): notes, controllers
+    // and the rest, at the timeline sample they arrived at.
+    for (int i = 0; i < numLive; ++i)
+    {
+        const auto& ev = liveEvents[static_cast<std::size_t> (i)];
+        if (ev.offset < offset || ev.offset >= offset + frames)
+            continue;
+        const auto n = liveLane->count.load (std::memory_order_relaxed);
+        if (n >= liveLane->events.size())
+            break;
+        liveLane->events[n] = { from + (ev.offset - offset), ev.status, ev.data1, ev.data2 };
+        liveLane->count.store (n + 1, std::memory_order_release);
+    }
+    liveEnd.store (from + frames, std::memory_order_release);
+}
+
+bool Engine::canCapture() const noexcept
+{
+    const auto generation = liveGeneration.load (std::memory_order_acquire);
+    const auto count = liveLane->count.load (std::memory_order_acquire);
+    return count > (generation == capturedGeneration ? capturedCount : 0);
+}
+
+RecordingOutcome Engine::captureRecording (commands::Session& session, const Id& trackId)
+{
+    RecordingOutcome out;
+    const auto* track = session.model().track (trackId);
+    if (track == nullptr || track->kind != model::TrackKind::instrument)
+    {
+        out.message = "Select an instrument track to capture onto.";
+        return out;
+    }
+    const auto generation = liveGeneration.load (std::memory_order_acquire);
+    const auto count = std::min (liveLane->count.load (std::memory_order_acquire), liveLane->events.size());
+    const auto from = generation == capturedGeneration ? capturedCount : std::size_t { 0 };
+    if (count <= from || live == nullptr)
+    {
+        out.message = "Nothing to capture: play some MIDI first.";
+        return out;
+    }
+    // A pass made of what was played, laid out as a recording of it.
+    RecordPass p;
+    p.recordStart = liveStart.load (std::memory_order_acquire);
+    p.stopSample.store (std::max (liveEnd.load (std::memory_order_acquire), liveLane->events[count - 1].sample + 1));
+    p.cycle = live->cycleEnabled;
+    p.cycleStart = live->cycleStart;
+    p.cycleEnd = live->cycleEnd;
+    RecordPass::MidiLane lane;
+    lane.trackId = trackId;
+    lane.trackName = track->name;
+    lane.events.assign (liveLane->events.begin() + static_cast<std::ptrdiff_t> (from), liveLane->events.begin() + static_cast<std::ptrdiff_t> (count));
+    lane.count.store (lane.events.size());
+    auto m = layoutMidi (p, lane, live->tempo, live->signatures, currentSettings.midiMergeLinear, currentSettings.midiMergeCycle, currentSettings.replace);
+    capturedGeneration = generation;
+    capturedCount = count;
+    if (m.notes.empty() && m.controllers.empty())
+    {
+        out.message = "Nothing to capture: play some MIDI first.";
+        return out;
+    }
+    const auto result = session.commitRecording ({}, { m });
+    out.committed = result.ok;
+    out.message = result.ok ? "Captured as a recording." : result.error;
+    setProject (session.model());
+    return out;
 }
 
 void Engine::captureWrap (std::int64_t at) noexcept

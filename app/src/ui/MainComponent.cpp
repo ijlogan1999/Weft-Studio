@@ -1071,9 +1071,15 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         case 4:
         {
-            for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
+            for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::recordToggle, Cmd::captureRecording, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::renameMarker, Cmd::deleteMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
+            {
+                juce::PopupMenu::Item replace (commandInfo (Cmd::toggleReplace).name); // D-W1-12: MIDI and audio
+                replace.itemID = static_cast<int> (Cmd::toggleReplace) + 1;
+                replace.isTicked = studio.engine().settings().replace;
+                menu.addItem (replace);
+            }
             // D-UI-35: the go-to, play-from and stop commands, and cycle moves.
             const auto subMenu = [] (std::initializer_list<Cmd> cmds) {
                 juce::PopupMenu sub;
@@ -1139,7 +1145,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             midi.addItem (mergeLinear, "Merge into Existing Region", true, settings.midiMergeLinear);
             midi.addItem (mergeCycle, "Merge Cycle Passes", true, settings.midiMergeCycle);
             midi.addSeparator();
-            midi.addItem (replaceMidi, "Replace", true, settings.midiReplace);
+            midi.addItem (replaceMidi, "Replace", true, settings.replace);
             menu.addSubMenu ("MIDI Recording", midi);
             break;
         }
@@ -1268,7 +1274,7 @@ void MainComponent::menuItemSelected (int itemId, int)
                 break;
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
-            case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;
+            case replaceMidi: settings.replace = ! settings.replace; break;
             case clickBar: settings.clickBars = ! settings.clickBars; break;
             case clickBeat: settings.clickBeats = ! settings.clickBeats; break;
             case clickDivision: settings.clickDivisions = ! settings.clickDivisions; break;

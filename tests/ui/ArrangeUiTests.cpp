@@ -2,6 +2,7 @@
 
 #include "UiFixture.h"
 #include "ui/PluginSearch.h"
+#include "ui/ProjectDialogs.h"
 
 #include "weft/time/Position.h"
 
@@ -2600,4 +2601,58 @@ TEST_CASE ("AT-ARR-45 global tracks: choose which show, single track, protect; K
     // The choice of tracks survives a restart.
     const auto again = PanelLayout::fromString (ui.studio.layout.toString());
     CHECK (again.globalLanes == allGlobalLanes);
+}
+
+TEST_CASE ("AT-REC-27 Record Toggle, Replace and Capture as Recording in Navigate and the control bar; MIDI auto record enable", "[UI][AT-REC-27]")
+{
+    Ui ui;
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    bool replaceTicked = true;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+        {
+            items.add (it.getItem().text);
+            if (it.getItem().text == "Replace")
+                replaceTicked = it.getItem().isTicked;
+        }
+    CHECK (items.contains ("Record Toggle"));
+    CHECK (items.contains ("Capture as Recording"));
+    CHECK (items.contains ("Replace"));
+    CHECK_FALSE (replaceTicked);
+    CHECK (commandInfo (Cmd::recordToggle).shortcut == "Alt+R");
+    CHECK (commandInfo (Cmd::captureRecording).shortcut == "Ctrl+Shift+R");
+
+    // Replace: the command, the control bar button and the MIDI Recording item are one setting.
+    auto& bar = ui.main->controlBar();
+    CHECK (ui.studio.perform (Cmd::toggleReplace));
+    CHECK (ui.studio.engine().settings().replace);
+    bar.refresh();
+    CommandButton* replaceButton = nullptr;
+    for (auto* b : bar.commandButtons())
+        if (b->command == Cmd::toggleReplace)
+            replaceButton = b;
+    REQUIRE (replaceButton != nullptr);
+    CHECK (replaceButton->getToggleState());
+    ui.main->menuItemSelected (MainComponent::replaceMidi, 4);
+    CHECK_FALSE (ui.studio.engine().settings().replace);
+
+    // Capture with nothing played says so.
+    const auto keys = ui.instrumentTracks (2);
+    ui.studio.selectTrack (keys[0]);
+    CHECK_FALSE (ui.studio.perform (Cmd::captureRecording));
+    CHECK (ui.studio.status.startsWith ("Nothing to capture"));
+
+    // MIDI auto record enable: selecting an instrument track arms it and disarms the last one armed that way.
+    auto p = ui.studio.preferences();
+    p.autoArmMidi = true;
+    ui.studio.setPreferences (p);
+    SettingsDialog dialog (ui.studio);
+    CHECK (dialog.autoArmMidi.getToggleState());
+    ui.studio.selectTrack (keys[1]);
+    CHECK (ui.studio.localView().armed.contains (keys[1]));
+    ui.studio.selectTrack (keys[0]);
+    CHECK (ui.studio.localView().armed.contains (keys[0]));
+    CHECK_FALSE (ui.studio.localView().armed.contains (keys[1]));
+    CHECK (Preferences::fromString (ui.studio.preferences().toString()).autoArmMidi);
 }
