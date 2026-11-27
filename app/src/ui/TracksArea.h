@@ -30,6 +30,9 @@ public:
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
     /** Marker under x in the marker lane. */
     const model::Marker* markerAt (double x) const;
+    /** With the global tracks hidden, markers show as small name flags along the ruler's lower edge (D-UI-20):
+        each marker and its flag, in position order. Empty while the marker lane is showing. */
+    std::vector<std::pair<const model::Marker*, juce::Rectangle<float>>> markerFlags() const;
     /** Comment pins in the marker lane (04 §9.3): every thread, at its position. */
     juce::Rectangle<float> pinBounds (const model::Comment& thread) const;
     const model::Comment* commentAt (juce::Point<float> p) const;
@@ -49,9 +52,24 @@ public:
     /** Pointer actions, also used by tests: click in the ruler moves the playhead; in the cycle strip drags the cycle;
         on a marker jumps to it (AT-ARR-21). With Autopunch on, dragging an end of the punch range in the strip moves it and
         Shift+drag sets a new one (W-1d). In the tempo lane Ctrl+click (or the pencil) adds a change, dragging a point
-        changes its BPM (vertical) and position (horizontal), right-click deletes; right-click deletes a signature change. */
+        changes its BPM (vertical) and position (horizontal). Right-click in a global lane opens contextMenu(). */
     void pointerDown (juce::Point<float> p, juce::ModifierKeys mods);
-    void pointerDrag (juce::Point<float> p);
+    /** Right-click in the global tracks (D-UI-23): a marker gets Rename, Color and Delete; a tempo change or a time
+        signature gets Edit and Delete (the first of each can't be deleted); empty space offers to add one there.
+        Empty outside the lanes. pickContext acts on whatever is under p. */
+    juce::PopupMenu contextMenu (juce::Point<float> p) const;
+    void pickContext (int item, juce::Point<float> p);
+    /** Asks for a marker's new name (its menu, a double-click, or Rename Marker). */
+    void renameMarker (const Id& markerId);
+    enum ContextItem
+    {
+        contextRename = 1,
+        contextDelete,
+        contextEdit,
+        contextAdd,
+        contextColour = 1000 // the marker back to no colour; + 1 .. paletteSize: a swatch
+    };
+    void pointerDrag (juce::Point<float> p, juce::ModifierKeys mods = {});
     void pointerUp();
 
 private:
@@ -60,6 +78,7 @@ private:
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
+    std::optional<char> tempoLock; // Shift: 'x' keeps the tempo, 'y' keeps the position
     bool copyTempo = false; // Alt-drag: the drag moves a copy, made once it moves sideways (L-TMP-3)
     juce::Point<float> dragStart;
     std::pair<double, double> dragRange;
@@ -80,7 +99,7 @@ public:
 
     const Id trackId;
     juce::Label name;
-    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    SwipeButton mute { "M" }, solo { "S" }, arm { "R" };
     /** Volume and pan on the header's second line (L-TRH-3), shown when the track is tall enough. */
     juce::Slider volume, pan;
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
@@ -159,6 +178,7 @@ public:
         contextSplitHere,
         contextSetEnd,
         contextClearEnd,
+        contextCreateMidi,
         contextTrackColour = 1000, // regions back to their track's colour; + 1 .. paletteSize: a swatch
         contextCommand = 2000      // + Cmd + 1
     };
@@ -242,6 +262,8 @@ private:
     void paintGrid (juce::Graphics&, juce::Rectangle<float> area);
     void paintRegion (juce::Graphics&, const model::Region& r, juce::Rectangle<float> box, bool ghost);
     void startRegionDrag (const model::Region& r, Zone zone, juce::Point<float> p, juce::ModifierKeys mods);
+    void createMidiRegionAt (const Id& trackId, float x);
+    enum class Lock { none, time, rows } dragLock = Lock::none; // Shift holds a region drag to one direction (D-W3-10)
     Ticks tickAt (float x) const { return static_cast<Ticks> (std::llround (studio.view.xToTick (x))); }
 
     Studio& studio;
@@ -263,6 +285,14 @@ public:
 
     Ruler& ruler() noexcept { return rulerComponent; }
     Timeline& timeline() noexcept { return lanes; }
+    /** "+" above the headers: opens the New Track dialog (04 §6.1). */
+    juce::Button& addTrackButton() noexcept { return addTrack; }
+    /** The column the headers sit in; a double-click on its empty part below the last track opens the New Track dialog. */
+    juce::Component& headerArea() noexcept { return headerColumn; }
+    /** Right-click below the last header (D-UI-32): the new-track commands and Delete Unused Tracks. Item ids are
+        command ids + 1; pickHeaderAreaMenu runs the command. */
+    static juce::PopupMenu headerAreaMenu();
+    void pickHeaderAreaMenu (int item);
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
@@ -280,7 +310,21 @@ private:
     Ruler rulerComponent;
     Timeline lanes;
     bool hadCollaborators = false;
-    juce::Component headerColumn;
+    struct HeaderColumn final : juce::Component
+    {
+        std::function<void()> onDoubleClick, onPopupMenu;
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            if (onDoubleClick)
+                onDoubleClick();
+        }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu() && onPopupMenu)
+                onPopupMenu();
+        }
+    } headerColumn;
+    CommandButton addTrack { "+", Cmd::newTrack };
     std::vector<std::unique_ptr<TrackHeader>> trackHeaders;
     std::vector<Id> shownTracks;
     juce::ScrollBar vertical { true }, horizontal { false };

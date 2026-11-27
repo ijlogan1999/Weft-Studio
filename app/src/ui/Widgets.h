@@ -76,4 +76,86 @@ private:
     juce::Path icon;
 };
 
+/** A track's Mute, Solo or Record button (D-UI-25). Pressing one and dragging over the same button of other tracks
+    gives each the state the first one took; the click itself still goes through onClick. */
+class SwipeButton final : public juce::TextButton
+{
+public:
+    using juce::TextButton::TextButton;
+
+    /** Sets this button's track on or off (not a toggle). */
+    std::function<void (bool on)> setTrackState;
+    /** Around a swipe (one undo step for mutes). */
+    std::function<void()> onSwipeStart, onSwipeEnd;
+
+    /** The pointer is over `other` during a drag from this button. Tests call it directly. */
+    void swipeOver (SwipeButton* other)
+    {
+        if (other == nullptr || other == this || ! setTrackState || roleOf (*other) != roleOf (*this) || ! other->isEnabled() || ! other->isVisible())
+            return;
+        for (const auto& done : swiped)
+            if (done == other)
+                return;
+        if (! swiping)
+        {
+            swiping = true;
+            target = ! getToggleState();
+            if (onSwipeStart)
+                onSwipeStart();
+            if (setTrackState)
+                setTrackState (target);
+        }
+        swiped.emplace_back (other);
+        if (other->setTrackState)
+            other->setTrackState (target);
+    }
+    /** Ends a swipe started by swipeOver(); false when there was none. */
+    bool endSwipe()
+    {
+        swiped.clear();
+        if (! std::exchange (swiping, false))
+            return false;
+        if (onSwipeEnd)
+            onSwipeEnd();
+        return true;
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        swiped.clear();
+        swiping = false;
+        juce::TextButton::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        juce::TextButton::mouseDrag (e);
+        if (e.mods.isAnyModifierKeyDown())
+            return;
+        auto* top = getTopLevelComponent();
+        auto* under = top->getComponentAt (e.getEventRelativeTo (top).position.toInt());
+        swipeOver (dynamic_cast<SwipeButton*> (under));
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! endSwipe())
+            juce::TextButton::mouseUp (e);
+        else
+            setState (buttonNormal); // a swipe isn't also a click
+    }
+
+private:
+    bool swiping = false, target = false;
+    std::vector<juce::Component::SafePointer<SwipeButton>> swiped;
+};
+
+/** A Mute button whose track a solo elsewhere silences: drawn with a faint mute tint (D-UI-31). */
+inline void setSilencedBySolo (juce::Button& b, bool silenced)
+{
+    if (static_cast<bool> (b.getProperties()["weftImplied"]) != silenced)
+    {
+        b.getProperties().set ("weftImplied", silenced);
+        b.repaint();
+    }
+}
+inline bool silencedBySolo (const juce::Button& b) { return static_cast<bool> (b.getProperties()["weftImplied"]); }
 } // namespace weft::ui

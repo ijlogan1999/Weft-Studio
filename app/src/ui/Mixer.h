@@ -71,12 +71,21 @@ public:
     const std::size_t index;
     const Id pluginId; // empty: the free slot
     const juce::String label;
-    const bool bypassed, placeholder;
+    const bool placeholder;
     static constexpr int bypassWidth = 14;
+
+    ChannelStrip& strip() noexcept { return owner; }
+    bool isBypassed() const noexcept { return bypassed; }
+    /** The strip shows a bypass change without rebuilding its slots, so a swipe keeps its slot. */
+    void showBypass (bool on);
+    /** During a drag that started on a bypass dot (D-W6-10): the pointer is over `other`, which takes
+        the state the first slot took. Tests call it directly. */
+    void swipeBypassOver (InsertSlot* other);
 
 private:
     ChannelStrip& owner;
-    bool dragging = false;
+    bool bypassed;
+    bool dragging = false, removed = false, swipingBypass = false, bypassTarget = false;
 };
 
 /** A send slot: target bus, level knob, Pre/Post, mute (W-7). Empty slot: the bus menu. */
@@ -138,12 +147,13 @@ public:
     juce::Slider pan, volume;
     juce::Label readout;
     MeterView meter;
-    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, monitor { "I" };
+    SwipeButton mute { "M" }, solo { "S" }, arm { "R" }, monitor { "I" };
     std::vector<std::unique_ptr<InsertSlot>> inserts;
     std::vector<std::unique_ptr<SendSlot>> sends;
 
     // Menus: built as the mouse would show them; pick* does what choosing an item does. -------
-    /** Empty slot: the plug-in choices (built-ins first, then VST3 by vendor). Filled: Remove, Replace, Bypass. */
+    /** Empty slot: the plug-in choices (built-ins first, then VST3 by vendor). Filled: Open, Bypass, Remove, Replace,
+        Insert Before. */
     juce::PopupMenu insertMenu (std::size_t slot) const;
     void pickInsert (std::size_t slot, int itemId);
     juce::PopupMenu instrumentMenu() const;
@@ -165,13 +175,19 @@ public:
         itemPre,
         itemMuteSend,
         itemOpen,
-        itemBus = 100,    // + index into buses()
-        itemPlugin = 1000 // + index into pluginChoices
+        itemBus = 100,             // + index into buses()
+        itemPlugin = 1000,         // + index into pluginChoices
+        itemInsertBefore = 100000  // + index into pluginChoices: a new plug-in in this slot, pushing the rest down (D-W6-10)
     };
     /** The buses a send or the output can go to, in track order. */
     std::vector<const model::Track*> buses() const;
     /** Moves an insert to another slot (drag). */
     void moveInsert (std::size_t from, std::size_t to);
+    /** A slot dragged onto a slot of `target` (W-6 step 3, D-W6-9): reorders within a strip, moves to another
+        channel, or with `copy` (Ctrl) leaves the original and makes a copy there. */
+    void dropInsert (std::size_t from, ChannelStrip& target, std::size_t to, bool copy);
+    /** Sets an insert's bypass (no change when it's already so). */
+    void setBypass (std::size_t slot, bool on);
     void openEditor (const Id& pluginId);
     void showMenu (juce::PopupMenu menu, std::function<void (int)> picked);
     Studio& studio;

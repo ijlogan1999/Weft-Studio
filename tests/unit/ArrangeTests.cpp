@@ -375,6 +375,14 @@ TEST_CASE ("AT-ARR-21: markers are added, renamed, moved snapped, deleted and ju
     CHECK (a.s.model().markers.at (m2)->pos == 6 * bar);
     // Clicking a marker moves the playhead to its position.
     CHECK (arrange::markerNumber (a.s.model(), 2) == 6 * bar);
+    // A marker takes a palette colour, and gives it up again.
+    REQUIRE (a.s.setMarkerColor (m1, model::Color { 5, {} }));
+    REQUIRE (a.s.model().markers.at (m1)->color);
+    CHECK (a.s.model().markers.at (m1)->color->palette == 5);
+    CHECK (a.s.undoName() == "Marker Color");
+    CHECK_FALSE (a.s.setMarkerColor (m1, model::Color { 40, {} }));
+    REQUIRE (a.s.setMarkerColor (m1, std::nullopt));
+    CHECK_FALSE (a.s.model().markers.at (m1)->color);
     REQUIRE (a.s.deleteMarker (m1));
     CHECK (a.s.model().markers.size() == 1);
 }

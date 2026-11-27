@@ -321,6 +321,12 @@ public:
     std::size_t sendsTo (const Id& busId) const;
     /** Reorders an insert (drag, F-MIX-6). */
     EditResult moveInsert (const Id& trackId, const Id& pluginId, std::size_t newIndex);
+    /** Drag to another channel (W-6 step 3, D-W6-9): the insert leaves its track and lands in the other's slot
+        `index` (clamped) with its id, settings and bypass; "Move Plug-in". Same track: moveInsert. */
+    EditResult moveInsertToTrack (const Id& fromTrackId, const Id& pluginId, const Id& toTrackId, std::size_t index);
+    /** Ctrl+drag (W-6 step 3, D-W6-9): a copy with a new id, the same settings and bypass, in slot `index`
+        (clamped) of toTrackId, which may be the same track; "Copy Plug-in". Returns the copy's id. */
+    std::optional<Id> copyInsertToTrack (const Id& fromTrackId, const Id& pluginId, const Id& toTrackId, std::size_t index);
     /** The slot menu's Replace: a new plug-in in the same position. */
     std::optional<Id> replaceInsert (const Id& trackId, const Id& pluginId, model::PluginInstance plugin);
     /** Puts a plug-in in an instrument track's instrument slot (F-MIX-7). */
@@ -370,6 +376,8 @@ public:
     std::optional<Id> addMarker (Ticks pos, const std::string& name);
     EditResult moveMarker (const Id& markerId, Ticks pos);
     EditResult renameMarker (const Id& markerId, const std::string& name);
+    /** A palette colour for the marker's chip, or none (04 §5); step "Marker Color". */
+    EditResult setMarkerColor (const Id& markerId, std::optional<model::Color> color);
     EditResult deleteMarker (const Id& markerId);
 
     // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------

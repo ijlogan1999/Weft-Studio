@@ -307,6 +307,64 @@ TEST_CASE ("AT-MIX-4: meters show the peak, latch clips until reset and hold the
     CHECK_FALSE (meter.clip());
 }
 
+// AT-MIX-15 --------------------------------------------------------------------------------
+
+TEST_CASE ("AT-MIX-15: an insert moves or copies to another channel with its settings", "[E][mixer][inserts][AT-MIX-15]")
+{
+    Rig rig;
+    const auto input = sine (1000, 0.2f, barSamples);
+    addMedia (rig, "b3:sine", { input, input });
+    const auto a = trackPlaying (rig, "A", "b3:sine");
+    const auto b = rig.session.createTrack (model::TrackKind::audio, "B").value();
+    const auto gainId = rig.session.addInsert (a, builtin (WeftGain::pluginUid)).value();
+    REQUIRE (rig.session.setPluginParam (a, gainId, "gain", 0.25));
+    REQUIRE (rig.session.setInsertBypass (a, gainId, true));
+    const auto eqId = rig.session.addInsert (b, builtin (WeftEq::pluginUid)).value();
+    const auto inserts = [&] (const Id& track) -> const std::vector<model::PluginInstance>& { return rig.session.model().track (track)->strip.inserts; };
+
+    // Move: it leaves A and lands in B's first slot with its id, parameter and bypass.
+    REQUIRE (rig.session.moveInsertToTrack (a, gainId, b, 0));
+    CHECK (rig.session.undoName() == "Move Plug-in");
+    CHECK (inserts (a).empty());
+    REQUIRE (inserts (b).size() == 2);
+    CHECK (inserts (b)[0].id == gainId);
+    CHECK (inserts (b)[0].params.at ("gain") == Catch::Approx (0.25));
+    CHECK (inserts (b)[0].bypass);
+    CHECK (inserts (b)[1].id == eqId);
+    rig.sync();
+    CHECK (rig.engine.processor (gainId) != nullptr);
+    REQUIRE (rig.session.undo().done); // one step
+    REQUIRE (inserts (a).size() == 1);
+    CHECK (inserts (b).size() == 1);
+
+    // Copy: A keeps its own; B gets a new instance with the same settings, at the end when the slot is past it.
+    const auto copy = rig.session.copyInsertToTrack (a, gainId, b, 9);
+    REQUIRE (copy);
+    CHECK (*copy != gainId);
+    CHECK (rig.session.undoName() == "Copy Plug-in");
+    REQUIRE (inserts (a).size() == 1);
+    REQUIRE (inserts (b).size() == 2);
+    CHECK (inserts (b)[1].id == *copy);
+    CHECK (inserts (b)[1].pluginUid == WeftGain::pluginUid);
+    CHECK (inserts (b)[1].params.at ("gain") == Catch::Approx (0.25));
+    CHECK (inserts (b)[1].bypass);
+    rig.sync();
+    CHECK (rig.engine.processor (*copy) != nullptr);
+    CHECK (rig.engine.processor (*copy) != rig.engine.processor (gainId));
+    // A copy within the same strip works too.
+    REQUIRE (rig.session.copyInsertToTrack (a, gainId, a, 0));
+    CHECK (inserts (a).size() == 2);
+    CHECK (inserts (a)[1].id == gainId);
+
+    // A full strip refuses both; so does a plug-in that isn't on the track.
+    while (inserts (b).size() < 15)
+        REQUIRE (rig.session.addInsert (b, builtin (WeftGain::pluginUid)));
+    CHECK_FALSE (rig.session.moveInsertToTrack (a, gainId, b, 0));
+    CHECK_FALSE (rig.session.copyInsertToTrack (a, gainId, b, 0));
+    CHECK (inserts (a).size() == 2);
+    CHECK_FALSE (rig.session.moveInsertToTrack (a, eqId, b, 0));
+}
+
 // AT-MIX-5 ---------------------------------------------------------------------------------
 
 TEST_CASE ("AT-MIX-5: inserts process in slot order, bypass is bit-exact, and a strip holds 15", "[E][mixer][inserts][AT-MIX-5]")

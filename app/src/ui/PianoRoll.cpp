@@ -465,6 +465,8 @@ void PianoRoll::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
     deltaTicks = 0;
     deltaPitch = 0;
     velocityDelta = 0;
+    dragMods = mods;
+    lockAxis = Axis::none;
     if (keyboardArea().toFloat().contains (p))
         keyClicked (yToPitch (p.y), mods.isShiftDown());
     else if (rulerArea().toFloat().contains (p))
@@ -560,6 +562,9 @@ void PianoRoll::gridDown (juce::Point<float> p, juce::ModifierKeys mods)
     else if (! sel.contains (hit->ref))
         sel = { hit->ref };
     anchor = hit;
+    // The pencil draws notes like the last one made or touched (D-W4-10).
+    studio.piano.lastLength = hit->length;
+    studio.piano.lastVelocity = hit->velocity;
     const auto edge = std::min (6.0f, hit->bounds.getWidth() / 3.0f);
     if (mods.isCommandDown())
         drag = Drag::copy;
@@ -628,12 +633,22 @@ void PianoRoll::splitNoteAt (const Shown& n, juce::Point<float> p)
 void PianoRoll::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
 {
     dragAt = p;
+    dragMods = mods;
     const bool free = mods.isAltDown(); // Alt drags without snap
     switch (drag)
     {
         case Drag::move:
         case Drag::copy:
         {
+            // Shift keeps the drag to the direction it started in: time or pitch (D-W4-11).
+            if (! mods.isShiftDown())
+                lockAxis = Axis::none;
+            else if (lockAxis == Axis::none && p.getDistanceFrom (downAt) >= 4.0f)
+                lockAxis = std::abs (p.x - downAt.x) >= std::abs (p.y - downAt.y) ? Axis::time : Axis::pitch;
+            if (lockAxis == Axis::time)
+                p.y = downAt.y;
+            else if (lockAxis == Axis::pitch)
+                p.x = downAt.x;
             const auto raw = xToTick (p.x) - xToTick (downAt.x);
             const auto target = static_cast<double> (anchor->stored) + raw;
             const auto newDelta = (free ? static_cast<Ticks> (std::llround (target)) : snapTick (target)) - anchor->stored;
@@ -660,7 +675,7 @@ void PianoRoll::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
             studio.sendChangeMessage();
             break;
         }
-        case Drag::velocity: velocityDelta = juce::roundToInt (downAt.y - p.y); break;
+        case Drag::velocity: velocityDelta = limitVelocityDelta (juce::roundToInt (downAt.y - p.y)); break;
         case Drag::laneVelocity:
         case Drag::laneNew: laneValue = laneValueAt (p.y); break;
         case Drag::laneLine: break;
@@ -672,6 +687,47 @@ void PianoRoll::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
         case Drag::none: break;
     }
     repaint();
+}
+
+commands::NoteSpan PianoRoll::resizedSpan (const Shown& n) const
+{
+    if (! anchor || n.ref == anchor->ref)
+        return span;
+    const auto shortest = std::max<Ticks> (1, std::min<Ticks> (n.length, dragMods.isAltDown() || studio.piano.grid <= 0 ? 1 : studio.piano.grid));
+    if (drag == Drag::resizeRight)
+    {
+        Ticks length = n.length + (span.length - anchor->length); // keeps the notes' length differences
+        if (dragMods.isShiftDown() && dragMods.isAltDown())
+            length = span.length; // the same length
+        else if (dragMods.isShiftDown())
+            length = anchor->start + span.length - n.start; // the same end
+        return { n.stored, std::max (shortest, length) };
+    }
+    // Left edge: the start moves by the same amount and the end stays.
+    const auto moved = std::min (span.start - anchor->stored, n.length - shortest);
+    return { n.stored + moved, n.length - moved };
+}
+
+int PianoRoll::draggedVelocity (const Shown& n) const
+{
+    const bool alike = dragMods.isAltDown() && dragMods.isShiftDown() && anchor;
+    return std::clamp ((alike ? anchor->velocity : n.velocity) + velocityDelta, 1, 127);
+}
+
+int PianoRoll::limitVelocityDelta (int delta) const
+{
+    // The notes keep their differences: the drag stops when the first of them reaches 1 or 127
+    // (D-W4-13). Alt lets them run on to the limit; Alt+Shift sets them all alike.
+    if (dragMods.isAltDown())
+        return delta;
+    int lowest = 127, highest = 1;
+    for (const auto& n : shownNotes())
+        if (studio.piano.selection.contains (n.ref))
+        {
+            lowest = std::min (lowest, n.velocity);
+            highest = std::max (highest, n.velocity);
+        }
+    return lowest > highest ? delta : std::clamp (delta, 1 - lowest, 127 - highest);
 }
 
 void PianoRoll::pointerUp()
@@ -714,7 +770,20 @@ void PianoRoll::pointerUp()
         case Drag::resizeRight:
             if (span.start != anchor->stored || span.length != anchor->length)
             {
-                studio.check (s.setNoteSpan (anchor->ref, span.start, span.length));
+                // Every selected note follows the grabbed one (F-PRL-5, D-W4-12); the pencil's
+                // own gesture is already open and holds just the new note.
+                const bool own = ! s.inGesture();
+                drag = d; // resizedSpan reads the edge being dragged
+                std::vector<std::pair<NoteRef, commands::NoteSpan>> spans;
+                for (const auto& n : shownNotes())
+                    if (n.ref == anchor->ref || studio.piano.selection.contains (n.ref))
+                        spans.emplace_back (n.ref, resizedSpan (n));
+                drag = Drag::none;
+                if (own)
+                    s.beginGesture (spans.size() > 1 ? "Resize Notes" : "Resize Note");
+                for (const auto& [ref, to] : spans)
+                    if (! studio.check (s.setNoteSpan (ref, to.start, to.length)))
+                        break;
                 studio.piano.lastLength = span.length;
             }
             if (s.inGesture())
@@ -724,7 +793,10 @@ void PianoRoll::pointerUp()
         case Drag::velocity:
             if (velocityDelta != 0)
             {
-                studio.check (s.offsetNotesVelocity (sel, velocityDelta));
+                if (dragMods.isAltDown() && dragMods.isShiftDown()) // every selected note takes the grabbed note's velocity
+                    studio.check (s.setNotesVelocity (sel, std::clamp (anchor->velocity + velocityDelta, 1, 127)));
+                else
+                    studio.check (s.offsetNotesVelocity (sel, velocityDelta));
                 studio.piano.lastVelocity = std::clamp (anchor->velocity + velocityDelta, 1, 127);
             }
             break;
@@ -1064,8 +1136,12 @@ void PianoRoll::paintNotes (juce::Graphics& g)
     {
         auto b = n.bounds;
         const bool selected = sel.contains (n.ref);
-        if (resizing && anchor && n.ref == anchor->ref)
-            b = noteBounds ({ n.ref, span.start, span.start, span.length, n.pitch, n.velocity, n.channel, n.muted, {} });
+        if (resizing && anchor && (n.ref == anchor->ref || selected))
+        {
+            const auto to = resizedSpan (n);
+            const auto at = n.start + (to.start - n.stored);
+            b = noteBounds ({ n.ref, at, at, to.length, n.pitch, n.velocity, n.channel, n.muted, {} });
+        }
         else if (moving && selected)
         {
             if (drag == Drag::copy) // the original stays; the copy is drawn at the target
@@ -1080,7 +1156,7 @@ void PianoRoll::paintNotes (juce::Graphics& g)
             g.setColour (base.withAlpha (0.4f));
             g.fillRect (juce::Rectangle<float> (static_cast<float> (tickToX (static_cast<double> (n.stored))), b.getY(), 2.0f, b.getHeight()));
         }
-        const auto velocity = drag == Drag::velocity && selected ? std::clamp (n.velocity + velocityDelta, 1, 127) : n.velocity;
+        const auto velocity = drag == Drag::velocity && selected ? draggedVelocity (n) : n.velocity;
         const auto fill = base.withBrightness (commands::velocityBrightness (velocity));
         if (n.muted)
         {
@@ -1134,7 +1210,7 @@ void PianoRoll::paintLane (juce::Graphics& g)
             const bool selected = studio.piano.selection.contains (n.ref);
             auto v = n.velocity;
             if (drag == Drag::velocity && selected)
-                v = std::clamp (v + velocityDelta, 1, 127);
+                v = draggedVelocity (n);
             if (drag == Drag::laneVelocity && anchor && n.ref == anchor->ref)
                 v = laneValue;
             const auto x = static_cast<float> (tickToX (static_cast<double> (n.start)));

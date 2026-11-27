@@ -66,8 +66,9 @@ std::vector<CommandInfo> build()
         { Cmd::transposeDown, "Transpose Down", "Down", { key (K::downKey) } },
         { Cmd::octaveUp, "Transpose Octave Up", "Shift+Up", { key (K::upKey, shift) } },
         { Cmd::octaveDown, "Transpose Octave Down", "Shift+Down", { key (K::downKey, shift) } },
-        { Cmd::notesLeft, "Move Notes Left", "Left", { key (K::leftKey) } },
-        { Cmd::notesRight, "Move Notes Right", "Right", { key (K::rightKey) } },
+        // Alt+Left/Right reach these through Nudge, which moves notes while the piano roll has the keys (D-UI-28).
+        { Cmd::notesLeft, "Move Notes Left", "Alt+Left", {} },
+        { Cmd::notesRight, "Move Notes Right", "Alt+Right", {} },
         { Cmd::applyQuantize, "Apply Quantize", "", {} },
         { Cmd::deleteTrack, "Delete Track", "", {} },
         { Cmd::newBus, "New Bus", "", {} },
@@ -100,10 +101,31 @@ std::vector<CommandInfo> build()
         { Cmd::snapZeroCrossings, "Snap Edits to Zero Crossings", "", {} },
         { Cmd::tapTempo, "Tap Tempo", "Shift+T", { key ('T', shift) } },
         { Cmd::showHiddenTracks, "Show Hidden Tracks", "Ctrl+Shift+H", { key ('H', ctrl | shift) } },
+        { Cmd::stop, "Stop", "Numpad 0", { key (K::numberPad0) } },
+        { Cmd::countIn, "Count-in", "Shift+K", { key ('K', shift) } },
+        { Cmd::deselectAll, "Deselect All", "Ctrl+Shift+A", { key ('A', ctrl | shift) } },
+        { Cmd::invertSelection, "Invert Selection", "Ctrl+Shift+I", { key ('I', ctrl | shift) } },
+        { Cmd::muteTrack, "Mute Track", "Shift+M", { key ('M', shift) } },
+        { Cmd::soloTrack, "Solo Track", "S", { key ('S') } },
+        { Cmd::armTrack, "Record-Enable Track", "Shift+R", { key ('R', shift) } },
+        { Cmd::newAudioTrack, "New Audio Track", "Ctrl+Alt+A", { key ('A', ctrl | alt) } },
+        { Cmd::newInstrumentTrack, "New Instrument Track", "Ctrl+Alt+I", { key ('I', ctrl | alt) } },
+        { Cmd::renameMarker, "Rename Marker...", "Shift+'", { key ('\'', shift), key ('"', shift) } },
+        { Cmd::deleteMarker, "Delete Marker", "Alt+Delete", { key (K::deleteKey, alt), key (K::backspaceKey, alt) } },
+        { Cmd::selectPrevious, "Select Previous Region or Note", "Left", { key (K::leftKey) } },
+        { Cmd::selectNext, "Select Next Region or Note", "Right", { key (K::rightKey) } },
+        { Cmd::searchPlugins, "Search and Add Plug-in...", "Ctrl+Shift+P", { key ('P', ctrl | shift) } },
+        { Cmd::deleteUnusedTracks, "Delete Unused Tracks", "", {} },
     };
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),
                        { key ('0' + n) } });
+    // Markers 10 to 19: Ctrl with the numeric keypad's 0 to 9 (D-UI-26). Keypad codes aren't consecutive everywhere.
+    const int pad[] = { K::numberPad0, K::numberPad1, K::numberPad2, K::numberPad3, K::numberPad4,
+                        K::numberPad5, K::numberPad6, K::numberPad7, K::numberPad8, K::numberPad9 };
+    for (int n = 10; n <= 19; ++n)
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker10) + n - 10), "Go to Marker " + juce::String (n),
+                       "Ctrl+Numpad " + juce::String (n - 10), { key (pad[n - 10], ctrl) } });
     return t;
 }
 } // namespace

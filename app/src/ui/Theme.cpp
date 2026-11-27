@@ -159,6 +159,8 @@ public:
         const auto rad = r.getHeight() <= 20.0f ? radius::r1 : radius::r2;
         const bool on = b.getToggleState();
         const auto enabled = b.isEnabled();
+        // A Mute that a solo elsewhere silences (D-UI-31): a faint mute tint, under the hover.
+        const bool implied = ! on && ! down && role == ButtonRole::mute && static_cast<bool> (b.getProperties()["weftImplied"]);
         if (role == ButtonRole::tab)
         {
             if (over && ! on)
@@ -174,6 +176,12 @@ public:
             return;
         }
         const bool segment = b.isConnectedOnLeft() || b.isConnectedOnRight() || b.isConnectedOnTop() || b.isConnectedOnBottom();
+        if (segment && implied)
+        {
+            g.setColour (colour (Token::mute).withAlpha (over ? 0.45f : 0.35f));
+            g.fillRect (b.getLocalBounds().toFloat().reduced (0.0f, 1.0f));
+            return;
+        }
         if (segment && ! on && ! down)
         {
             if (over && b.isEnabled())
@@ -218,6 +226,13 @@ public:
                 case ButtonRole::tab:
                 case ButtonRole::flat: depth::pressed (g, r, rad); return;
             }
+        }
+        if (implied)
+        {
+            depth::raised (g, r, rad, over && enabled);
+            g.setColour (colour (Token::mute).withAlpha (0.35f));
+            g.fillRoundedRectangle (r, rad);
+            return;
         }
         if (role == ButtonRole::primary || role == ButtonRole::warning)
         {

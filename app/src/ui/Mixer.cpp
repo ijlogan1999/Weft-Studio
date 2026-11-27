@@ -167,11 +167,14 @@ void MeterView::mouseDown (const juce::MouseEvent& e)
 
 InsertSlot::InsertSlot (ChannelStrip& strip, std::size_t i, const model::PluginInstance* plugin, bool isPlaceholder)
     : index (i), pluginId (plugin != nullptr ? plugin->id : Id()), label (plugin != nullptr ? juce::String (plugin->name) : juce::String()),
-      bypassed (plugin != nullptr && plugin->bypass), placeholder (isPlaceholder), owner (strip)
+      placeholder (isPlaceholder), owner (strip), bypassed (plugin != nullptr && plugin->bypass)
 {
     const auto title = plugin == nullptr ? juce::String ("Empty insert slot") : "Insert " + juce::String (i + 1) + ": " + label;
     setTitle (title);
-    setTooltip (placeholder ? label + ": Not installed on this computer" : plugin == nullptr ? juce::String ("Add an effect") : label + " (click to open; right-click for more)");
+    setTooltip (placeholder ? label + ": Not installed on this computer"
+                            : plugin == nullptr ? juce::String ("Add an effect")
+                                                : label + " (click to open; drag to another slot or channel, Ctrl+drag to copy; Alt+click removes; Shift+click "
+                                                          "or the dot bypasses, drag across dots to bypass several; right-click for more)");
 }
 
 void InsertSlot::paint (juce::Graphics& g)
@@ -219,13 +222,55 @@ void InsertSlot::mouseDown (const juce::MouseEvent& e)
     }
     if (e.mods.isPopupMenu())
         owner.showMenu (owner.insertMenu (index), [s = &owner, i = index] (int item) { s->pickInsert (i, item); });
-    else if (e.x < bypassWidth)
+    else if (e.mods.isAltDown())
+    {
+        removed = true; // the quick way to take a plug-in out (D-W6-9); the mouse-up that follows does nothing
+        owner.pickInsert (index, ChannelStrip::itemRemove);
+    }
+    else if (e.mods.isShiftDown())
+    {
+        removed = true; // Shift+click bypasses (D-W6-10); the mouse-up neither opens nor drags
         owner.pickInsert (index, ChannelStrip::itemBypass);
+    }
+    else if (e.x < bypassWidth)
+    {
+        // The dot: toggles now, and a drag from it carries this state across other dots (D-W6-10).
+        swipingBypass = true;
+        bypassTarget = ! bypassed;
+        if (! owner.studio.session().inGesture())
+            owner.studio.session().beginGesture ("Bypass Plug-ins");
+        owner.setBypass (index, bypassTarget);
+    }
+}
+
+void InsertSlot::showBypass (bool on)
+{
+    if (bypassed != on)
+    {
+        bypassed = on;
+        repaint();
+    }
+}
+
+void InsertSlot::swipeBypassOver (InsertSlot* other)
+{
+    if (! swipingBypass || other == nullptr || other == this || other->pluginId.empty() || other->isBypassed() == bypassTarget)
+        return;
+    other->strip().setBypass (other->index, bypassTarget);
 }
 
 void InsertSlot::mouseDrag (const juce::MouseEvent& e)
 {
-    if (! pluginId.empty() && ! e.mods.isPopupMenu() && e.getDistanceFromDragStart() > 4)
+    if (swipingBypass)
+    {
+        auto* top = getTopLevelComponent();
+        InsertSlot* over = nullptr;
+        for (auto* c = top->getComponentAt (top->getLocalPoint (this, e.getPosition())); c != nullptr && over == nullptr; c = c->getParentComponent())
+            over = dynamic_cast<InsertSlot*> (c);
+        swipeBypassOver (over);
+        return;
+    }
+    if (! pluginId.empty() && ! removed && ! e.mods.isPopupMenu() && e.getDistanceFromDragStart() > 4)
     {
         dragging = true;
         setMouseCursor (juce::MouseCursor::DraggingHandCursor);
@@ -235,18 +280,25 @@ void InsertSlot::mouseDrag (const juce::MouseEvent& e)
 void InsertSlot::mouseUp (const juce::MouseEvent& e)
 {
     setMouseCursor (juce::MouseCursor::NormalCursor);
-    if (pluginId.empty() || e.mods.isPopupMenu())
+    if (std::exchange (swipingBypass, false))
+    {
+        if (owner.studio.session().inGesture())
+            owner.studio.session().endGesture();
+        owner.studio.edited();
+        return;
+    }
+    if (pluginId.empty() || e.mods.isPopupMenu() || std::exchange (removed, false))
         return;
     if (dragging)
     {
         dragging = false;
-        const auto p = e.getEventRelativeTo (&owner).getPosition();
-        for (const auto& slot : owner.inserts)
-            if (slot->getBounds().contains (p))
-            {
-                owner.moveInsert (index, std::min (slot->index, owner.inserts.size() - 1));
-                return;
-            }
+        // The slot under the pointer, in this strip or any other one on screen.
+        auto* top = getTopLevelComponent();
+        InsertSlot* target = nullptr;
+        for (auto* c = top->getComponentAt (top->getLocalPoint (this, e.getPosition())); c != nullptr && target == nullptr; c = c->getParentComponent())
+            target = dynamic_cast<InsertSlot*> (c);
+        if (target != nullptr)
+            owner.dropInsert (index, target->strip(), target->index, e.mods.isCommandDown());
         return;
     }
     if (e.mouseDownPosition.x >= bypassWidth)
@@ -444,16 +496,20 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
         small (*b);
         addChildComponent (b);
     }
-    describe (mute, "Mute");
-    describe (solo, "Solo", "Solo (Ctrl+click: solo this channel only)");
-    describe (arm, "Record enable");
+    describe (mute, "Mute", "Mute (Ctrl+click: only this; Alt+click: all; drag across channels to set them too)");
+    describe (solo, "Solo", "Solo (Ctrl+click: only this; Alt+click: all; drag across channels to set them too)");
+    describe (arm, "Record enable", "Record enable (Ctrl+click: only this; Alt+click: all)");
     describe (monitor, "Input monitoring", "Input monitoring: auto, on, off");
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
-    mute.onClick = [this] { studio.toggleMute (id); };
-    solo.onClick = [this] { studio.toggleSolo (id, juce::ModifierKeys::currentModifiers.isCommandDown()); };
-    arm.onClick = [this] { studio.toggleArm (id); };
+    for (auto [b, which] : { std::pair { &mute, TrackSwitch::mute }, std::pair { &solo, TrackSwitch::solo }, std::pair { &arm, TrackSwitch::arm } })
+    {
+        b->onClick = [this, which] { studio.clickTrackSwitch (which, id, juce::ModifierKeys::currentModifiers); };
+        b->setTrackState = [this, which] (bool on) { studio.setTrackSwitch (which, id, on); };
+        b->onSwipeStart = [this, which] { studio.beginSwitchSwipe (which); };
+        b->onSwipeEnd = [this] { studio.endSwitchSwipe(); };
+    }
     monitor.onClick = [this] {
         if (const auto* t = track())
             studio.check (studio.session().setTrackMonitor (id, t->monitor == "auto" ? "on" : t->monitor == "on" ? "off" : "auto"));
@@ -527,7 +583,7 @@ void ChannelStrip::rebuildSlots()
     for (const auto& p : t->strip.inserts)
     {
         const auto proc = studio.processor (p.id);
-        key += p.id + p.name + (p.bypass ? "b" : "") + (proc != nullptr && proc->isPlaceholder() ? "p" : "") + ";";
+        key += p.id + p.name + (proc != nullptr && proc->isPlaceholder() ? "p" : "") + ";"; // bypass shows in place
     }
     key += "|";
     for (const auto& snd : t->strip.sends)
@@ -537,6 +593,8 @@ void ChannelStrip::rebuildSlots()
     {
         for (std::size_t i = 0; i < sends.size() && i < t->strip.sends.size(); ++i)
             setDbSlider (sends[i]->level, t->strip.sends[i].levelDb);
+        for (std::size_t i = 0; i < inserts.size() && i < t->strip.inserts.size(); ++i)
+            inserts[i]->showBypass (t->strip.inserts[i].bypass);
         return;
     }
     shownSlots = key;
@@ -630,6 +688,7 @@ void ChannelStrip::refresh()
     arm.setVisible (kind == model::TrackKind::audio || kind == model::TrackKind::instrument);
     monitor.setVisible (kind == model::TrackKind::audio);
     mute.setToggleState (t->mute, juce::dontSendNotification);
+    setSilencedBySolo (mute, ! master && studio.silencedBySolo (id));
     solo.setToggleState (studio.localView().soloed.contains (id), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (id), juce::dontSendNotification);
     monitor.setToggleState (t->monitor == "on", juce::dontSendNotification);
@@ -880,6 +939,9 @@ juce::PopupMenu ChannelStrip::insertMenu (std::size_t slot) const
     juce::PopupMenu replace;
     addPluginChoices (replace, choices, itemPlugin);
     menu.addSubMenu ("Replace", replace);
+    juce::PopupMenu before;
+    addPluginChoices (before, choices, itemInsertBefore);
+    menu.addSubMenu ("Insert Before", before, t->strip.inserts.size() < static_cast<std::size_t> (model::maxInserts));
     return menu;
 }
 
@@ -890,6 +952,14 @@ void ChannelStrip::pickInsert (std::size_t slot, int itemId)
         return;
     const auto filled = slot < t->strip.inserts.size();
     const auto pluginId = filled ? t->strip.inserts[slot].id : Id();
+    if (itemId >= itemInsertBefore)
+    {
+        const auto choices = studio.pluginChoices (false);
+        const auto i = static_cast<std::size_t> (itemId - itemInsertBefore);
+        if (i < choices.size())
+            studio.addPlugin (id, choices[i], slot);
+        return;
+    }
     if (itemId >= itemPlugin)
     {
         const auto choices = studio.pluginChoices (false);
@@ -926,6 +996,27 @@ void ChannelStrip::moveInsert (std::size_t from, std::size_t to)
         return;
     studio.check (studio.session().moveInsert (id, t->strip.inserts[from].id, std::min (to, t->strip.inserts.size() - 1)));
     studio.edited();
+}
+
+void ChannelStrip::setBypass (std::size_t slot, bool on)
+{
+    const auto* t = track();
+    if (t == nullptr || slot >= t->strip.inserts.size() || t->strip.inserts[slot].bypass == on)
+        return;
+    studio.check (studio.session().setInsertBypass (id, t->strip.inserts[slot].id, on));
+    if (slot < inserts.size())
+        inserts[slot]->showBypass (on);
+}
+
+void ChannelStrip::dropInsert (std::size_t from, ChannelStrip& target, std::size_t to, bool copy)
+{
+    const auto* t = track();
+    if (t == nullptr || from >= t->strip.inserts.size())
+        return;
+    if (target.trackId() == id && ! copy)
+        moveInsert (from, std::min (to, t->strip.inserts.size() - 1));
+    else
+        studio.movePlugin (id, t->strip.inserts[from].id, target.trackId(), to, copy);
 }
 
 juce::PopupMenu ChannelStrip::instrumentMenu() const
@@ -1139,11 +1230,13 @@ void MixerView::refresh()
 {
     const auto& m = studio.model();
     std::vector<Id> order;
+    // A hidden track's strip goes with its row (D-W3-7) and comes back with Show Hidden Tracks.
+    const auto shown = [&] (const model::Track& t) { return ! t.hidden || m.info.showHiddenTracks; };
     for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind != model::TrackKind::bus && t->kind != model::TrackKind::master)
+        if (const auto* t = m.track (tid); t != nullptr && t->kind != model::TrackKind::bus && t->kind != model::TrackKind::master && shown (*t))
             order.push_back (tid);
     for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind == model::TrackKind::bus)
+        if (const auto* t = m.track (tid); t != nullptr && t->kind == model::TrackKind::bus && shown (*t))
             order.push_back (tid);
     if (order != shownOrder)
     {

@@ -534,31 +534,7 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
     }
 
     // Solo (D-W6-1): soloed channels plus everything upstream and downstream of them.
-    std::set<Id> audibleBySolo;
-    if (! local.soloed.empty())
-    {
-        std::map<Id, std::vector<Id>> fedBy;
-        for (const auto& [from, tos] : feeds)
-            for (const auto& to : tos)
-                fedBy[to].push_back (from);
-        const auto walk = [&] (const std::map<Id, std::vector<Id>>& graph) {
-            std::vector<Id> stack (local.soloed.begin(), local.soloed.end());
-            while (! stack.empty())
-            {
-                const auto id = stack.back();
-                stack.pop_back();
-                const auto it = graph.find (id);
-                if (it == graph.end())
-                    continue;
-                for (const auto& next : it->second)
-                    if (audibleBySolo.insert (next).second)
-                        stack.push_back (next);
-            }
-        };
-        audibleBySolo.insert (local.soloed.begin(), local.soloed.end());
-        walk (feeds);
-        walk (fedBy);
-    }
+    const auto audibleBySolo = commands::audibleWithSolo (model, local.soloed);
 
     // Processing order: a channel's depth is the longest chain of buses before it.
     std::map<Id, int> depth;

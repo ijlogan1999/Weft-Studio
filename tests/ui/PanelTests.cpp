@@ -189,6 +189,108 @@ TEST_CASE ("AT-UI-7 every control has a name and a tooltip with its shortcut", "
     });
 }
 
+TEST_CASE ("AT-UI-10 the inspector edits every selected region and shows a dash where they differ", "[UI][AT-UI-10]")
+{
+    Ui ui;
+    const auto tracks = ui.instrumentTracks (1);
+    auto& s = ui.studio.session();
+    const auto a = *s.createMidiRegion (tracks[0], 0, bar);
+    const auto b = *s.createMidiRegion (tracks[0], 2 * bar, bar);
+    REQUIRE (s.setRegionTranspose (b, 5));
+    ui.studio.selection.set ({ a, b });
+    ui.studio.edited();
+    ui.settle();
+    auto& inspector = ui.main->inspector();
+    const juce::String dash (juce::CharPointer_UTF8 ("\xe2\x80\x94"));
+    const auto text = [] (juce::Slider& sl) { return sl.getTextFromValue (sl.getValue()); };
+
+    CHECK (inspector.regionName.getText() == "2 regions");
+    REQUIRE (inspector.regionTranspose.isVisible());
+    CHECK (text (inspector.regionTranspose) == dash);   // 0 and +5
+    CHECK (text (inspector.regionVelocity) != dash);    // both 0
+    CHECK_FALSE (inspector.regionMute.getToggleState());
+
+    // One edit sets both regions, as one undo step.
+    inspector.regionTranspose.setValue (-12.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (a).midi.transpose == -12);
+    CHECK (ui.region (b).midi.transpose == -12);
+    CHECK (text (inspector.regionTranspose) != dash);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.region (a).midi.transpose == 0);
+    CHECK (ui.region (b).midi.transpose == 5);
+
+    inspector.regionMute.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (a).muted);
+    CHECK (ui.region (b).muted);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK_FALSE (ui.region (a).muted);
+    CHECK_FALSE (ui.region (b).muted);
+
+    // An audio region and a MIDI region together: only what both have is offered, and it sets both.
+    const auto file = writeSine (ui.folder.path / "sine.wav");
+    engine::DropTarget target;
+    target.at = 4 * bar;
+    target.trackId = ui.m().trackOrder.front();
+    const auto outcome = ui.studio.importFiles ({ file }, target);
+    REQUIRE (outcome.regions.size() == 1);
+    const auto audio = outcome.regions.front();
+    ui.studio.selection.set ({ a, audio });
+    ui.studio.edited();
+    ui.settle();
+    CHECK_FALSE (inspector.regionTranspose.isVisible());
+    CHECK_FALSE (inspector.regionGain.isVisible());
+    REQUIRE (inspector.regionDelay.isVisible());
+    inspector.regionDelay.setValue (20.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (a).delayMs == Catch::Approx (20.0));
+    CHECK (ui.region (audio).delayMs == Catch::Approx (20.0));
+}
+
+TEST_CASE ("AT-UI-11 a narrow control bar keeps the count-in and CPU reading in a More menu", "[UI][AT-UI-11]")
+{
+    Ui ui; // 1400 px wide: too narrow for everything
+    auto& barUi = ui.main->controlBar();
+    const auto labels = [] (const juce::PopupMenu& menu) {
+        juce::StringArray out;
+        for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+            out.add (it.getItem().text);
+        return out;
+    };
+    REQUIRE (barUi.moreButton().isVisible());
+    const auto items = labels (barUi.overflowMenu());
+    CHECK (items.contains ("2-bar count-in"));
+    bool cpuLine = false;
+    for (const auto& item : items)
+        cpuLine = cpuLine || item.startsWith ("CPU");
+    CHECK (cpuLine);
+    barUi.pickOverflow (ControlBar::overflowCountIn + 2);
+    CHECK (ui.studio.engine().settings().countInBars == 2);
+    barUi.pickOverflow (ControlBar::overflowCountIn);
+    CHECK (ui.studio.engine().settings().countInBars == 0);
+
+    // Wide enough for everything: no More button.
+    ui.main->setSize (2200, 860);
+    ui.settle();
+    CHECK_FALSE (barUi.moreButton().isVisible());
+
+    // The Navigate menu has the count-in at any width, and Shift+K turns it off and back on.
+    const auto navigate = labels (ui.main->getMenuForIndex (4, "Navigate"));
+    CHECK (navigate.contains ("Count-in"));
+    CHECK (navigate.contains ("2 Bars"));
+    ui.main->menuItemSelected (MainComponent::countInTwo, 4);
+    CHECK (ui.studio.engine().settings().countInBars == 2);
+    REQUIRE (ui.key ('K', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.engine().settings().countInBars == 0);
+    REQUIRE (ui.key ('K', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.engine().settings().countInBars == 2);
+}
+
 // Not an acceptance test: renders the window with some content to a PNG for reports.
 // Run with: weft_ui_tests "[.screenshot]" (writes WEFT_SCREENSHOT or ./arrange.png).
 TEST_CASE ("Screenshot of the arrange window", "[.screenshot]")

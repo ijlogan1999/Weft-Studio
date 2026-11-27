@@ -175,7 +175,7 @@ TEST_CASE ("AT-PRL-4 arrow keys transpose and move the selected notes", "[UI]")
     CHECK (ui.get (a).pitch == 72);
 
     ui.studio.piano.grid = 480;
-    ui.key (juce::KeyPress::rightKey);
+    ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier); // Alt+Right moves; Right selects (D-UI-28)
     CHECK (ui.tickOf (a) == 1440);
 
     ui.studio.piano.selection = { high };
@@ -266,13 +266,43 @@ TEST_CASE ("AT-PRL-8 velocity lane, velocity tool and the inspector set velociti
     ui.studio.edited();
     ui.settle();
 
-    // The velocity tool drags all selected notes by the same amount, each clamped.
+    // The velocity tool drags all selected notes by the same amount and stops when the first reaches the limit,
+    // so they keep their differences (D-W4-13).
     ui.studio.piano.selection = { a, b, c };
     roll.setTool (NoteTool::velocity);
-    ui.dragFrom (ui.at (1000, 62), ui.at (1000, 62) - juce::Point<float> (0.0f, 20.0f));
-    CHECK (ui.get (a).velocity == 70);
-    CHECK (ui.get (b).velocity == 120);
+    const auto up20 = ui.at (1000, 62) - juce::Point<float> (0.0f, 20.0f);
+    ui.dragFrom (ui.at (1000, 62), up20);
+    CHECK (ui.get (a).velocity == 57);
+    CHECK (ui.get (b).velocity == 107);
     CHECK (ui.get (c).velocity == 127);
+    // With Alt the drag runs on and each note stops at the limit on its own.
+    const auto alt = juce::ModifierKeys (juce::ModifierKeys::altModifier);
+    roll.pointerDown (ui.at (1000, 62), {});
+    roll.pointerDrag (up20, alt);
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.get (a).velocity == 77);
+    CHECK (ui.get (b).velocity == 127);
+    CHECK (ui.get (c).velocity == 127);
+    // Alt+Shift gives every selected note the dragged note's velocity.
+    REQUIRE (ui.studio.session().setNotesVelocity ({ b }, 100));
+    ui.studio.edited();
+    ui.settle();
+    roll.pointerDown (ui.at (1000, 62), {});
+    roll.pointerDrag (ui.at (1000, 62) + juce::Point<float> (0.0f, 10.0f), juce::ModifierKeys (juce::ModifierKeys::altModifier | juce::ModifierKeys::shiftModifier));
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.get (a).velocity == 90);
+    CHECK (ui.get (b).velocity == 90);
+    CHECK (ui.get (c).velocity == 90);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.get (a).velocity == 77); // one undo step
+    REQUIRE (ui.studio.session().setNotesVelocity ({ a }, 70));
+    REQUIRE (ui.studio.session().setNotesVelocity ({ b }, 120));
+    ui.studio.edited();
+    ui.settle();
 
     // Typing in the inspector's note section sets all three.
     auto& inspector = ui.main->inspector();
@@ -414,6 +444,107 @@ TEST_CASE ("AT-PRL-16 the inspector sets MIDI region transpose and velocity", "[
     CHECK (inspector.regionVelocity.getValue() == 0.0);
 }
 
+TEST_CASE ("AT-PRL-17 resizing one of several selected notes resizes them all", "[UI][AT-PRL-17]")
+{
+    RollUi ui;
+    const auto a = ui.note (960, 60, 100, 240);
+    const auto b = ui.note (1200, 64, 100, 480);
+    const auto other = ui.note (0, 67, 100, 240);
+    ui.open (ui.midi);
+    ui.studio.piano.grid = 240;
+    ui.studio.piano.selection = { a, b };
+    ui.settle();
+    auto& roll = ui.roll();
+    const auto edge = ui.at (960 + 240, 60) - juce::Point<float> (1.0f, 0.0f);
+
+    // Both selected notes grow by what the grabbed one grew; an unselected note is left alone.
+    ui.dragFrom (edge, ui.at (960 + 500, 60));
+    CHECK (ui.get (a).length == 480);
+    CHECK (ui.get (b).length == 720);
+    CHECK (ui.get (other).length == 240);
+    CHECK (ui.studio.piano.selection.size() == 2);
+    ui.studio.session().undo(); // one step for the pair
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.get (a).length == 240);
+    CHECK (ui.get (b).length == 480);
+
+    // Shift: they all end where the grabbed note ends.
+    roll.pointerDown (edge, {});
+    roll.pointerDrag (ui.at (2400, 60), juce::ModifierKeys::shiftModifier);
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.tickOf (a) + ui.get (a).length == 2400);
+    CHECK (ui.tickOf (b) + ui.get (b).length == 2400);
+    CHECK (ui.tickOf (b) == 1200);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+
+    // Alt+Shift: they all take the grabbed note's length.
+    roll.pointerDown (edge, {});
+    roll.pointerDrag (ui.at (960 + 960, 60), juce::ModifierKeys (juce::ModifierKeys::shiftModifier | juce::ModifierKeys::altModifier));
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.get (a).length > 480);
+    CHECK (ui.get (b).length == ui.get (a).length);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+
+    // The left edge: the starts move together and the ends stay put.
+    ui.dragFrom (ui.at (960, 60) + juce::Point<float> (1.0f, 0.0f), ui.at (720 + 10, 60));
+    CHECK (ui.tickOf (a) == 720);
+    CHECK (ui.get (a).length == 480);
+    CHECK (ui.tickOf (b) == 960);
+    CHECK (ui.get (b).length == 720);
+}
+
+TEST_CASE ("AT-PRL-18 Shift keeps a note drag to one direction; the pencil copies the last note touched", "[UI][AT-PRL-18]")
+{
+    RollUi ui;
+    const auto a = ui.note (960, 60, 64, 480);
+    ui.open (ui.midi);
+    ui.studio.piano.grid = 240;
+    auto& roll = ui.roll();
+    const auto shift = juce::ModifierKeys (juce::ModifierKeys::shiftModifier);
+    const auto middle = ui.at (960 + 240, 60);
+
+    // Mostly sideways with Shift: the pitch holds.
+    roll.pointerDown (middle, {});
+    roll.pointerDrag (ui.at (960 + 240 + 480, 62), shift);
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.tickOf (a) == 1440);
+    CHECK (ui.get (a).pitch == 60);
+    // Mostly upwards with Shift: the position holds.
+    const auto x = static_cast<float> (roll.tickToX (1440 + 240));
+    roll.pointerDown ({ x, ui.at (0, 60).y }, {});
+    roll.pointerDrag ({ x + 6.0f, ui.at (0, 64).y }, shift);
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.tickOf (a) == 1440);
+    CHECK (ui.get (a).pitch == 64);
+    // Without Shift both change.
+    roll.pointerDown ({ x, ui.at (0, 64).y }, {});
+    roll.pointerDrag ({ static_cast<float> (roll.tickToX (1440 + 240 + 240)), ui.at (0, 65).y }, {});
+    roll.pointerUp();
+    ui.settle();
+    CHECK (ui.tickOf (a) == 1680);
+    CHECK (ui.get (a).pitch == 65);
+
+    // Clicking a note makes it the pencil's pattern: the next drawn note has its length and velocity.
+    ui.press (ui.at (1680 + 100, 65));
+    roll.setTool (NoteTool::pencil);
+    ui.press (ui.at (10, 62));
+    const auto notes = ui.allNotes();
+    REQUIRE (notes.size() == 2);
+    const auto& drawn = ui.get (notes[0] == a ? notes[1] : notes[0]);
+    CHECK (drawn.pitch == 62);
+    CHECK (drawn.length == 480);
+    CHECK (drawn.velocity == 64);
+}
+
 // Run with: weft_ui_tests "[.screenshot-pianoroll]" (writes WEFT_SCREENSHOT or ./pianoroll.png).
 TEST_CASE ("Screenshot of the piano roll", "[.screenshot-pianoroll]")
 {
@@ -449,4 +580,38 @@ TEST_CASE ("Screenshot of the piano roll", "[.screenshot-pianoroll]")
     out.deleteFile();
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+}
+
+TEST_CASE ("AT-PRL-19 Left/Right select the previous or next note; Alt+Left/Right move it", "[UI][AT-PRL-19]")
+{
+    RollUi ui;
+    const auto first = ui.note (0, 60);
+    const auto high = ui.note (480, 64);
+    const auto low = ui.note (480, 60);
+    ui.open (ui.midi);
+    ui.press (ui.at (0 + 100, 60));
+    REQUIRE (ui.studio.piano.selection == std::set<NoteRef> { first });
+
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { low });
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { high });
+    ui.key (juce::KeyPress::rightKey); // the last: stays
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { high });
+    ui.key (juce::KeyPress::leftKey);
+    ui.key (juce::KeyPress::leftKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { first });
+    CHECK (ui.tickOf (first) == 0); // selecting moves nothing
+
+    ui.studio.piano.selection.clear();
+    ui.studio.locate (240);
+    ui.settle();
+    ui.key (juce::KeyPress::rightKey);
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { low });
+
+    ui.studio.piano.grid = 240;
+    ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier);
+    CHECK (ui.tickOf (low) == 720);
+    ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::altModifier);
+    CHECK (ui.tickOf (low) == 480);
 }

@@ -27,6 +27,12 @@ public:
     juce::Label& keyDisplay() noexcept { return key; }
     juce::ComboBox& snapChoice() noexcept { return snapBox; }
     Avatars& collaboratorAvatars() noexcept { return avatars; }
+    /** The "More" button, shown while the window is too narrow for the count-in menu or the CPU
+        meter, and the menu it opens: whatever was dropped (AT-UI-11). */
+    juce::Button& moreButton() noexcept { return more; }
+    juce::PopupMenu overflowMenu() const;
+    void pickOverflow (int item);
+    static constexpr int overflowCountIn = 1, overflowCpu = 100;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
@@ -43,6 +49,7 @@ private:
         follow { "Follow", Cmd::followPlayhead, true }, keyboard { "Keys", Cmd::keyboardMidi, true };
     juce::Label position, time, tempo, signature, key, cpu;
     juce::ComboBox countIn, snapBox;
+    juce::TextButton more { juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")) };
     Avatars avatars { studio };
     int avatarsWidth = 0;
 };

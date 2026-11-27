@@ -94,6 +94,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRN-19** [U] · F-TRN-20 · With regions selected from bar 3 beat 2 to bar 6 beat 1, U sets the cycle range to bar 3 – bar 7 (rounded outward to bars) and turns cycle on; with nothing selected, U does nothing.
 
+**AT-TRN-20** [UI] · D-UI-17 · Stopped at bar 4 with Cycle off, Stop moves the playhead to tick 0. With the cycle at bars 3–5 and the playhead at bar 7, Stop goes to bar 3 and Stop again to tick 0; Space starts playback at bar 3; numpad 0 stops it and the playhead is back at bar 3. With Cycle off, Play starts at the playhead. The Navigate menu lists Stop.
+
 **AT-TRN-18** [UI] · F-TRN-17 · With follow on and zoom showing 4 bars, playing past the right edge scrolls the view so the playhead stays visible; with follow off, the view does not scroll.
 
 ## 3. Recording (REC)
@@ -174,7 +176,15 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-14** [UI] · L-TRH-3 · A track at the default height shows a volume slider and a pan knob on the header's second line; moving them sets the channel's volume and pan (one undo step per drag), the slider's bottom is −inf, and changes made in the mixer move them.
 
-**AT-TRK-16** [U][UI] · L-TRH-10, D-W3-7 · Hide Track removes the track's header and lane while it stays in the track order; a region dragged down one row from the track above lands on the track below the hidden one, and a marquee skips it; the master can't be hidden; View › Show Hidden Tracks brings the row back with Unhide Track in its menu; hiding is one undo step and saved with the track.
+**AT-TRK-16** [U][UI] · L-TRH-10, D-W3-7 · Hide Track removes the track's header, lane and mixer strip while it stays in the track order; a region dragged down one row from the track above lands on the track below the hidden one, and a marquee skips it; the master can't be hidden; View › Show Hidden Tracks brings the row and the strip back with Unhide Track in its menu; hiding is one undo step and saved with the track.
+
+**AT-TRK-17** [UI] · D-UI-19 · With a track selected, Shift+M mutes it (undo step "Mute Track") and unmutes it, S solos and unsolos it, Shift+R record-enables it and back. Ctrl+Alt+I adds one instrument track below the selected track and selects it; Ctrl+Alt+A adds an audio track the same way; each is one undo step; the Track menu lists all five commands.
+
+**AT-TRK-18** [UI] · W-5, D-UI-19 · The + button above the track headers (inside the ruler's height, tooltip naming New Track and its shortcut) opens the New Track dialog; so does a double-click in the header column below the last track; a double-click on a header does not.
+
+**AT-TRK-19** [UI] · F-TRK-10, D-UI-25 · With three audio tracks, Ctrl+click on track 2's Mute mutes it and unmutes tracks 1 and 3 in one undo step ("Mute Only"); Alt+click on track 1's Mute mutes all three ("Mute All") and Alt+click again unmutes them; Alt+click on Solo solos every track and again clears them; Ctrl+click on Record arms only that track. Pressing track 1's Mute and dragging over tracks 2 and 3 mutes all three in one undo step ("Mute Tracks"), and releasing doesn't toggle track 1 back; a swipe from a lit Solo turns the swiped ones off.
+
+**AT-TRK-20** [UI] · F-TRK-6, W-1a, D-UI-32 · With a bus "Drums" and 2 device inputs, the New Track dialog set to 2 mono audio tracks, Input 1, Ascending, output Drums, Input monitoring and Record enable creates tracks on inputs 1 and 2, both out to Drums, monitoring On and record-enabled, as one undo step ("New Tracks"). Stereo lists Input 1-2; for an instrument track the input is disabled and the instrument menu starts with Weft Keys. The header-area menu is New Track, New Audio Track, New Instrument Track, Delete Unused Tracks, and its New Instrument Track adds one. Delete Unused Tracks with one instrument track holding a region leaves just that track and the bus (step "Delete Unused Tracks"); run again it changes nothing and says "No unused tracks."; undo brings the tracks back.
 
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
@@ -240,6 +250,22 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-30** [E] · L-RGN-6, D-W3-5 · Region Delay +100 ms plays a MIDI region's notes 4,800 samples later at 48 kHz (−10 ms: 480 earlier) and an audio region's first sample 10 ms late; the region doesn't move; values outside −500…+500 ms are refused.
 
+**AT-ARR-31** [UI] · D-UI-18 · With region A of A, B, C selected, Ctrl+Shift+I selects B and C only; with C's track hidden and nothing selected it selects A and B; Ctrl+Shift+A leaves nothing selected; the Edit menu lists both commands.
+
+**AT-ARR-32** [UI] · D-W3-8 · With A and B selected, a Mute-tool click on A mutes both as one undo step and leaves C alone; a click on unselected C mutes only C; an Eraser-tool click on B deletes A and B.
+
+**AT-ARR-33** [UI] · D-W3-10 · Dragging a region mostly sideways and one row down with Shift held moves it in time and keeps its track; dragging mostly down with Shift moves it one track down and keeps its position.
+
+**AT-ARR-34** [UI] · D-W3-9 · The right-click menu of an empty audio lane has Import Audio... and no Create MIDI Region; an instrument lane has Create MIDI Region and no Import Audio...; choosing Create MIDI Region at bar 3 makes a one-bar MIDI region there, selected.
+
+**AT-ARR-35** [UI] · D-UI-20 · With markers at bars 3 and 7 and the global tracks shown, the ruler has no flags; hidden, it has one flag per marker at the marker's position inside the ruler, and clicking the second moves the playhead to bar 7.
+
+**AT-ARR-36** [U][UI] · F-ARR-28, D-UI-23 · A marker's right-click menu is Rename Marker..., Color, Delete Marker; choosing the third swatch stores palette colour 2 (undo step "Marker Color"), No Color clears it, a palette index outside 0–23 is refused, Delete removes the marker. Empty marker-lane space offers Add Marker Here and adds at the snapped position. In the tempo lane empty space offers Add Tempo Change Here; a change offers Set Tempo... and Delete Tempo Change, with Delete disabled on the first tempo. In the signature lane a change offers Edit and Delete (Delete disabled on the first), empty space Add Time Signature Here.... There is no menu on the ruler itself.
+
+**AT-ARR-37** [UI] · F-ARR-28, D-UI-26 · With twelve markers, Ctrl+Numpad 1 goes to the eleventh and Ctrl+Numpad 0 to the tenth; Ctrl+Numpad 9 with only twelve does nothing. Ctrl+click on Next Bar from bar 1 goes to the first marker and Ctrl+click on Previous Bar goes back to the one before; a plain click moves one bar. Alt+Delete with the playhead just after a marker deletes that marker (undo step "Delete Marker"); with no marker at or before the playhead nothing changes and the status says why. The Navigate menu lists Rename Marker... and Delete Marker.
+
+**AT-ARR-38** [UI] · F-ARR-21, D-UI-27, D-UI-28 · With regions at bars 1, 3 and 5 on one track and the bar-3 region selected, Right selects the bar-5 region and Left twice the bar-1 region; Left at the first does nothing; with nothing selected and the playhead at bar 2, Right selects the bar-3 region. Z fits the selected region; Z again fits the whole project; Z after changing the selection fits the new selection.
+
 ## 6. Audio editor (EDA)
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
@@ -254,7 +280,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRL-3** [UI] · F-PRL-3 · Clicking piano key E3 selects all E3 notes; Shift+clicking key G3 adds G3 notes; rubber-band selects notes it touches.
 
-**AT-PRL-4** [U] · F-PRL-4 · Up arrow transposes selected notes +1; Shift+Up +12; with one selected note at 120, Shift+Up moves none (clamped as a group, since 132 > 127); Right arrow with grid 1/8 moves +480 ticks.
+**AT-PRL-4** [U] · F-PRL-4 · Up arrow transposes selected notes +1; Shift+Up +12; with one selected note at 120, Shift+Up moves none (clamped as a group, since 132 > 127); Alt+Right with grid 1/8 moves +480 ticks (D-UI-28).
 
 **AT-PRL-5** [U] · F-PRL-5 · Dragging a note's right edge from length 240 to 500 with snap 1/16 yields 480; dragging the left edge keeps the end fixed; minimum length 1 tick with snap off.
 
@@ -262,7 +288,7 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRL-7** [U] · F-PRL-7 · Ctrl+C three notes, move playhead, Ctrl+V pastes them at the playhead keeping relative offsets, with new IDs, into the region under the playhead on the shown track.
 
-**AT-PRL-8** [U][UI] · F-PRL-8 · Dragging a velocity-lane bar sets that note's velocity; velocity tool drag of +20 on selected notes [50, 100, 120] yields [70, 120, 127]; typing 64 in the inspector with 3 notes selected sets all three; note color brightness is monotonic in velocity.
+**AT-PRL-8** [U][UI] · F-PRL-8 · Dragging a velocity-lane bar sets that note's velocity; velocity tool drag of +20 on selected notes [50, 100, 120] yields [57, 107, 127] (it stops when the first note reaches the limit, D-W4-13), the same drag with Alt then yields [77, 127, 127], and with Alt+Shift a drag of −10 on the note at 100 sets all three to 90; typing 64 in the inspector with 3 notes selected sets all three; note color brightness is monotonic in velocity.
 
 **AT-PRL-9** [E] · F-PRL-8 · With `TestSynth`, a note at velocity 64 outputs amplitude 64/127 ± 0.5%.
 
@@ -279,6 +305,12 @@ Notation: *Given* / *When* / *Then*.
 **AT-PRL-15** [U][E] · F-PRL-15 · Ctrl+M mutes selected notes; muted notes are not sent at playback or bounce; Ctrl+M again unmutes.
 
 **AT-PRL-16** [E] · D-W4-9 · A MIDI region with Transpose +12 and Velocity +20 plays C3 at 100 as C4 at 120 without changing the stored note; −96 and +99 clamp the played note to pitch 0 and velocity 127; 97 and −100 are refused; each change is one undo step; audio regions refuse both.
+
+**AT-PRL-17** [UI] · F-PRL-5, D-W4-12 · With notes of length 240 (at 960) and 480 (at 1200) selected and snap 1/16, dragging the first note's right edge to 500 yields lengths 480 and 720, leaves an unselected note alone, and undoes in one step; the same drag with Shift to tick 2400 ends both notes at 2400; with Alt+Shift both get the grabbed note's new length; dragging the first note's left edge back by 240 moves both starts by 240 and keeps both ends.
+
+**AT-PRL-18** [UI] · D-W4-10, D-W4-11 · Dragging a note two grid steps right and two semitones up with Shift moves it in time only; dragging it mostly upward with Shift changes its pitch only; without Shift both change. After clicking a note of length 480 and velocity 64, a pencil click draws a note of length 480 and velocity 64.
+
+**AT-PRL-19** [UI] · F-PRL-4, D-UI-28 · With notes at ticks 0 (pitch 60), 480 (64) and 480 (60) selected one at a time, Right steps 0/60 → 480/60 → 480/64 and Left steps back; with no note selected and the playhead at tick 240, Right selects 480/60. Alt+Right moves the selected note one grid step; Alt+Left moves it back.
 
 ## 8. Quantize (QNT)
 
@@ -318,6 +350,12 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-14** [U] · F-MIX-1 · Volume above +6 dB, pan beyond ±1 and region gain above +24 dB are refused with a message, not clamped; values below −inf dB store as −inf.
 
+**AT-MIX-15** [E][UI] · F-MIX-6, D-W6-9 · An insert with a parameter set and bypass on, moved to another channel's first slot, leaves its channel and arrives with the same id, parameter and bypass ahead of the insert already there (undo step "Move Plug-in", one undo puts it back). Copied instead, the original stays and the target gets a new instance with the same settings at the end when the slot index is past it (step "Copy Plug-in"); a copy within one strip works. A channel with 15 inserts refuses both. In the mixer, dragging a slot onto another strip's slot moves the plug-in and its window stays open; Ctrl+drag copies; Alt+click removes without opening the editor.
+
+**AT-MIX-16** [U][UI] · F-TRK-10, D-W6-1, D-UI-31 · With track A output to a bus and track B on its own, soloing A leaves A and the bus audible and B silenced (`audibleWithSolo`), and soloing the bus instead leaves A audible too; B's Mute button in the header and the mixer carries the silenced-by-solo tint, A's and the bus's don't; clearing the solo clears the tint. In the mixer Alt+click on a Mute mutes every strip but the master.
+
+**AT-MIX-17** [UI] · F-MIX-6, D-W6-10 · Shift+click on a filled insert slot bypasses it without opening its window. Pressing the first slot's bypass dot bypasses it; dragging across the next slot's dot and another channel's first dot bypasses them too, a free slot is skipped, and it is one undo step ("Bypass Plug-ins") that undo reverses for all three. Insert Before › Weft Delay on slot 2 puts the delay in slot 2 and the plug-in that was there in slot 3.
+
 ## 10. Plugins (PLG)
 
 **AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error. **Decision D-AT-4** fixes the list.
@@ -343,6 +381,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-PLG-10** [E] · F-PLG-14 · An automation lane for `TestGain`'s gain parameter changes the plugin's output over time per the lane values (see AT-AUT-6).
 
 **AT-PLG-11** [E] · F-PLG-15 · Opening a project referencing a VST3 class ID not installed creates a placeholder that passes audio unchanged, shows the plugin's name, and on save writes the original state bytes unchanged (byte-identical).
+
+**AT-PLG-12** [UI] · F-PLG-4, D-UI-24 · An insert effect's window has a Bypass button in a strip above the editor: pressing it bypasses the insert and lights the button; bypassing from the mixer slot's menu puts the button out again.
+
+**AT-PLG-13** [UI] · F-PLG-4, D-W6-11 · With no track selected Ctrl+Shift+P only reports that a track is needed. On an audio track an empty search lists every effect and no instrument; " dEL " finds only Weft Delay; "weft del" finds it too; "zzz" finds nothing. Searching "eq" and pressing Enter adds Weft EQ to the track's first insert slot. On an instrument track the list also has the instruments, and choosing one sets the track's instrument; an instrument can't be added to an audio track. The Mix menu lists Search and Add Plug-in....
 
 ## 11. Automation (AUT)
 
@@ -391,6 +433,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-TMP-8** [UI] · F-TMP-1, L-TMP-3 · Alt-dragging a tempo change at bar 5 to bar 7 leaves bar 5 as it was and adds a change at bar 7 with the same BPM; a plain click without moving sideways adds nothing; undo removes the copy in one step.
 
 **AT-TMP-9** [UI] · L-TMP-9, D-W11-1 · Five Tap Tempo presses 500 ms apart set 120 BPM, then four 400 ms apart set 150 BPM as one more run; each run is one undo step; a single tap changes nothing.
+
+**AT-TMP-10** [UI] · F-TMP-1, D-UI-30 · Dragging the tempo change at bar 5 two bars right and 20 px up with Shift held moves it to bar 7 and keeps its tempo; dragging it mostly upward with Shift changes its tempo and keeps it at bar 5; without Shift both change.
 
 ## 13. Bounce and export (EXP)
 
@@ -447,6 +491,12 @@ Notation: *Given* / *When* / *Then*.
 **AT-UI-8** [UI] · F-UI-14 · First launch (no settings file) shows Audio Setup; Test plays a tone (captured on the null device: 1 kHz at −18 dBFS for 1 s); Continue saves settings; second launch skips the dialog. With no openable device, the app opens in No-audio mode with a banner.
 
 **AT-UI-9** [UI] · F-UI-1 · Selecting a track shows, in the inspector, its channel strip beside the strip of its output (Master, or the bus it outputs to); with no track selected neither shows. Volume, pan, mute, inserts and sends changed in the inspector change the mixer's strip and the reverse, and undo reverts either. The EQ thumbnail is flat with no EQ; clicking it adds a Weft EQ and opens it; its curve peaks at +12 dB at 1 kHz for a +12 dB peak band there, and is flat when the EQ is bypassed. The inspector's and the mixer's meters both see a channel's peak (D-UI-16).
+
+**AT-UI-10** [UI] · F-UI-1, D-UI-22 · With two MIDI regions selected whose transpose differs (0 and +5) the inspector's name reads "2 regions", Transpose shows "—" and Velocity shows its value; setting Transpose to −12 sets both and undoes in one step; Mute mutes both. With an audio region and a MIDI region selected, the gain and transpose controls are hidden and setting Delay to 20 ms sets both.
+
+**AT-UI-11** [UI] · F-TRN-8, D-UI-21 · In a 1400 px window the control bar shows the More button; its menu lists the three count-in choices and a CPU line, and choosing "2-bar count-in" sets the count-in to 2 bars. At 2200 px the More button is hidden. Navigate › Count-in lists Off, 1 Bar and 2 Bars; Shift+K turns a 2-bar count-in off and back on at 2 bars.
+
+**AT-UI-12** [UI] · F-UI-10, D-UI-29 · The Tool menu shows each tool's key (T, P, I, J, E, M); with it open, P picks the Pencil and M the Mute tool; a key that isn't a tool's (Q) picks nothing; with Ctrl held nothing is picked.
 
 ## 16. Collaboration (COL)
 
@@ -534,7 +584,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 |---|---|---|---|---|
 | F-PRJ-1 | AT-PRJ-1, 2 | | F-MIX-1 | AT-MIX-1 |
 | F-TRN-20 | AT-TRN-19 | | F-REC-17 | AT-REC-20 |
-| F-ARR-28 | AT-ARR-27 | | F-ARR-29 | AT-ARR-28 |
+| F-ARR-28 | AT-ARR-27, 37 | | F-ARR-29 | AT-ARR-28 |
 | F-PRJ-3 | AT-PRJ-3, 4, 5 | | F-MIX-2 | AT-MIX-2 |
 | F-PRJ-4 | AT-PRJ-6, 7 | | F-MIX-3 | AT-MIX-3 |
 | F-PRJ-5 | AT-PRJ-3, 8, 9 | | F-MIX-4 | AT-TRK-8 |
@@ -563,7 +613,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-REC-9 | AT-REC-2 | | F-AUT-5 | AT-AUT-7, 8, 9, 10 |
 | F-REC-14 | AT-REC-17 | | F-AUT-6 | AT-AUT-8, 9, 10, 11 |
 | F-REC-15 | AT-REC-1, 18 | | F-AUT-11 | AT-AUT-2, 12 |
-| F-REC-16 | AT-REC-19 | | F-TMP-1 | AT-TMP-1, 2, 3, 7 |
+| F-REC-16 | AT-REC-19 | | F-TMP-1 | AT-TMP-1, 2, 3, 7, 10 |
 | F-TRK-1 | AT-TRK-1 | | F-TMP-3 | AT-TMP-4, 5 |
 | F-TRK-2 | AT-TRK-2 | | F-TMP-4 | AT-TMP-3, 6 |
 | | | | F-TMP-10 | AT-PRJ-15 |
@@ -572,7 +622,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-TRK-7 | AT-TRK-5 | | F-EXP-3 | AT-EXP-5, 6 |
 | F-TRK-8 | AT-TRK-6 | | F-EXP-4 | AT-EXP-7 |
 | F-TRK-9 | AT-TRK-7 | | F-EXP-5 | AT-EXP-8 |
-| F-TRK-10 | AT-TRK-8, 9 | | F-EXP-11 | AT-EXP-9 |
+| F-TRK-10 | AT-TRK-8, 9, 19, AT-MIX-16 | | F-EXP-11 | AT-EXP-9 |
 | F-TRK-11 | AT-TRK-10 | | F-LIB-1 | AT-LIB-1 |
 | F-TRK-12 | AT-TRK-11 | | F-LIB-2 | AT-LIB-2 |
 | F-TRK-16 | AT-COL-20 to 23 | | F-UI-1 | AT-UI-1, 9 |
@@ -580,7 +630,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-ARR-1 | AT-ARR-1 | | F-UI-4 | AT-UI-3 |
 | F-ARR-2 | AT-ARR-2, 3 | | F-UI-7 | AT-UI-4, 5 |
 | F-ARR-3 | AT-ARR-4 | | F-UI-8 | AT-UI-6 |
-| F-ARR-4 | AT-ARR-5, 6 | | F-UI-10 | AT-UI-7 |
+| F-ARR-4 | AT-ARR-5, 6 | | F-UI-10 | AT-UI-7, 12 |
 | F-ARR-5 | AT-ARR-7 | | F-UI-14 | AT-UI-8 |
 | F-ARR-6 | AT-ARR-8 | | F-COL-1 | AT-COL-1, 2 |
 | F-ARR-7 | AT-ARR-9, 10 | | F-COL-2 | AT-COL-3 |
@@ -603,7 +653,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-PRL-1 | AT-PRL-1 | | F-QNT-1 | AT-QNT-1, 2 |
 | F-PRL-2 | AT-PRL-2 | | F-QNT-2 | AT-PRL-10, AT-QNT-3 |
 | F-PRL-3 | AT-PRL-3 | | | |
-| F-PRL-4 | AT-PRL-4 | | | |
+| F-PRL-4 | AT-PRL-4, 19 | | | |
 | F-PRL-5 | AT-PRL-5 | | | |
 | F-PRL-6 | AT-PRL-6 | | | |
 | F-PRL-7 | AT-PRL-7 | | | |

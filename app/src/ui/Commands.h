@@ -48,7 +48,16 @@ enum class Cmd
     // Tap Tempo (L-TMP-9)
     tapTempo,
     // Hide tracks (L-TRH-10)
-    showHiddenTracks
+    showHiddenTracks,
+    // Second-pass small wins (D-UI-17 to D-UI-19): Stop on its own, count-in, selection, the selected track's buttons, one-step new tracks
+    stop, countIn, deselectAll, invertSelection, muteTrack, soloTrack, armTrack, newAudioTrack, newInstrumentTrack,
+    // Remaining small wins (D-UI-26 to D-UI-28): marker commands, stepping through regions and notes
+    renameMarker, deleteMarker, selectPrevious, selectNext,
+    marker10, marker11, marker12, marker13, marker14, marker15, marker16, marker17, marker18, marker19,
+    // Search and Add Plug-in (D-W6-11)
+    searchPlugins,
+    // Delete Unused Tracks (D-UI-32)
+    deleteUnusedTracks
 };
 
 struct CommandInfo
