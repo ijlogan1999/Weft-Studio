@@ -211,6 +211,10 @@ ImportOutcome importFiles (commands::Session& session, MediaPool& pool, const st
             const auto key = model::KeySignature::fromFifths (m.data.keys.front().fifths, m.data.keys.front().minor);
             if (key != session.model().info.key)
                 session.setKey (key);
+            // Later key events become key changes on the Key track (D-UI-44).
+            for (std::size_t i = 1; i < m.data.keys.size(); ++i)
+                if (const auto tick = toProjectTicks (m.data.keys[i].tick, ppq); tick > 0)
+                    session.addKeyChange (at + tick, model::KeySignature::fromFifths (m.data.keys[i].fifths, m.data.keys[i].minor));
         }
         if (emptyProject && (! m.data.tempos.empty() || ! m.data.signatures.empty()))
         {

@@ -2447,3 +2447,157 @@ TEST_CASE ("AT-ARR-43 marker for the selection, cycle to a marker's range, marke
     CHECK (ui.studio.playhead() == 4 * bar);
     CHECK_FALSE (ui.studio.goToMarkerNumber (9));
 }
+
+TEST_CASE ("AT-ARR-45 global tracks: choose which show, single track, protect; Key and Arrangement tracks; create commands", "[UI][AT-ARR-45]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    auto& area = ui.main->tracks();
+    const auto bar = 3840;
+    // Every prompt answers at once with the next text.
+    juce::String answer;
+    ruler.promptForText = [&answer] (const juce::String&, const juce::String&, std::function<void (juce::String)> done) { done (answer); };
+
+    // The Configure Global Tracks menu lists the five tracks; showing Key and Arrangement adds their lanes in order.
+    juce::StringArray names;
+    const auto menu = area.globalTracksMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+        names.add (it.getItem().text);
+    for (const auto* n : { "Arrangement", "Markers", "Tempo", "Signature", "Key", "Show Single Global Track", "Marker Track Only", "Add Arrangement Section" })
+        CHECK (names.contains (n));
+    area.pickGlobalTracksMenu (TracksArea::globalShowBase + laneKey);
+    REQUIRE (ui.studio.perform (Cmd::toggleArrangementTrack));
+    ui.settle();
+    REQUIRE (ruler.lanes().size() == 5);
+    CHECK (ruler.lanes()[0].first == laneArrangement);
+    CHECK (ruler.lanes()[4].first == laneKey);
+    CHECK (ruler.getHeight() == Ruler::rulerHeight + Ruler::arrangementLane + Ruler::markerLane + Ruler::tempoLane + Ruler::signatureLane + Ruler::keyLane);
+    CHECK (ruler.laneBounds (laneTempo)->getY() == Ruler::rulerHeight + Ruler::arrangementLane + Ruler::markerLane);
+
+    // Hiding the tempo track; Single shows only the last one clicked; Marker Track Only and back.
+    REQUIRE (ui.studio.perform (Cmd::toggleTempoTrack));
+    CHECK_FALSE (ruler.laneBounds (laneTempo));
+    const auto keyY = static_cast<float> (ruler.laneBounds (laneKey)->getCentreY());
+    ruler.pointerDown ({ 5.0f, keyY }, {});
+    ruler.pointerUp();
+    REQUIRE (ui.studio.perform (Cmd::showSingleGlobalTrack));
+    ui.settle();
+    REQUIRE (ruler.lanes().size() == 1);
+    CHECK (ruler.lanes()[0].first == laneKey);
+    REQUIRE (ui.studio.perform (Cmd::showSingleGlobalTrack));
+    REQUIRE (ui.studio.perform (Cmd::markerTrackOnly));
+    REQUIRE (ruler.lanes().size() == 1);
+    CHECK (ruler.lanes()[0].first == laneMarkers);
+    REQUIRE (ui.studio.perform (Cmd::markerTrackOnly));
+    REQUIRE (ui.studio.perform (Cmd::toggleTempoTrack));
+    ui.settle();
+    REQUIRE (ruler.lanes().size() == 5);
+
+    // Key track: add a change from the lane's menu, see it in the control bar after it, move it, delete it.
+    const auto x = [&] (Ticks t) { return static_cast<float> (ui.studio.view.tickToX (static_cast<double> (t))); };
+    const auto laneY = [&] (GlobalLane lane) { return static_cast<float> (ruler.laneBounds (lane)->getCentreY()); };
+    answer = "F# minor";
+    ruler.pickContext (Ruler::contextEdit, { x (4 * bar) + 1.0f, laneY (laneKey) });
+    ui.settle();
+    REQUIRE (ui.m().keyChanges.size() == 1);
+    const auto change = ui.m().keyChanges.begin()->second->id;
+    CHECK (ui.m().keyAt (4 * bar) == model::KeySignature { 6, true });
+    ui.studio.locate (5 * bar);
+    ui.main->controlBar().refresh();
+    CHECK (ui.main->controlBar().keyDisplay().getText().contains ("F"));
+    ruler.pointerDown ({ x (4 * bar) + 2.0f, laneY (laneKey) }, {});
+    ruler.pointerDrag ({ x (6 * bar) + 2.0f, laneY (laneKey) });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().keyChanges.at (change)->pos == 6 * bar);
+    CHECK (ui.studio.session().undoName() == "Move Key Change");
+
+    // Arrangement: add a section from the lane's menu (8 bars), rename it, resize it by its end, select its regions.
+    const auto region = ui.studio.session().createMidiRegion (ui.instrumentTracks (1)[0], 2 * bar, bar).value();
+    ui.studio.edited();
+    ruler.pickContext (Ruler::contextAdd, { x (bar) + 1.0f, laneY (laneArrangement) });
+    ui.settle();
+    REQUIRE (ui.m().sections.size() == 1);
+    const auto section = ui.m().sections.begin()->second->id;
+    CHECK (ui.m().sections.at (section)->start == bar);
+    CHECK (ui.m().sections.at (section)->length == 8 * bar);
+    answer = "Verse";
+    ruler.pickContext (Ruler::contextRename, { x (2 * bar), laneY (laneArrangement) });
+    CHECK (ui.m().sections.at (section)->name == "Verse");
+    ruler.pointerDown ({ x (9 * bar), laneY (laneArrangement) }, {});
+    ruler.pointerDrag ({ x (5 * bar), laneY (laneArrangement) });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().sections.at (section)->end() == 5 * bar);
+    ruler.pointerDown ({ x (3 * bar), laneY (laneArrangement) }, {});
+    ruler.pointerUp();
+    CHECK (ui.studio.selection.ids() == std::vector<Id> { region });
+    CHECK (ui.studio.playhead() == bar);
+    // Add Arrangement Section puts the next one after it.
+    REQUIRE (ui.studio.perform (Cmd::addSection));
+    REQUIRE (ui.m().sections.size() == 2);
+    CHECK (ui.m().sectionsInOrder()[1]->start == 5 * bar);
+    CHECK (ui.m().sectionsInOrder()[1]->name == "Verse");
+    // Dragging a section drops it at the nearest section edge with its regions (AT-ARR-46); Ctrl copies.
+    const auto first = ui.m().sectionsInOrder()[0]->id;
+    ruler.pointerDown ({ x (3 * bar), laneY (laneArrangement) }, {});
+    ruler.pointerDrag ({ x (12 * bar) + 30.0f, laneY (laneArrangement) });
+    CHECK (ruler.sectionDropTarget() == std::optional<Ticks> (13 * bar));
+    ruler.pointerUp();
+    ui.settle();
+    CHECK_FALSE (ruler.sectionDropTarget());
+    CHECK (ui.studio.session().undoName() == "Move Section");
+    CHECK (ui.m().sections.at (first)->start == 9 * bar);
+    CHECK (ui.m().regions.at (region)->start == 10 * bar);
+    REQUIRE (ui.studio.session().undo().done);
+    ui.studio.edited();
+    CHECK (ui.m().regions.at (region)->start == 2 * bar);
+    ruler.pointerDown ({ x (3 * bar), laneY (laneArrangement) }, juce::ModifierKeys::commandModifier);
+    ruler.pointerDrag ({ x (13 * bar), laneY (laneArrangement) });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Copy Section");
+    CHECK (ui.m().sections.size() == 3);
+    CHECK (ui.m().regions.size() == 2);
+    REQUIRE (ui.studio.session().undo().done);
+    ui.studio.edited();
+
+    // Protect: the lock stops edits there (commands, menus, drags) but not going to a marker.
+    const auto marker = ui.studio.session().addMarker (3 * bar, "Hook").value();
+    ui.studio.edited();
+    ui.studio.toggleLaneProtect (laneMarkers);
+    const auto markersBefore = ui.m().markers.size();
+    CHECK_FALSE (ui.studio.perform (Cmd::addMarker));
+    CHECK (ui.studio.status.contains ("protected"));
+    CHECK (ui.m().markers.size() == markersBefore);
+    const auto markerMenu = ruler.contextMenu ({ x (3 * bar) + 4.0f, laneY (laneMarkers) });
+    for (juce::PopupMenu::MenuItemIterator it (markerMenu); it.next();)
+        if (! it.getItem().isSeparator)
+            CHECK_FALSE (it.getItem().isEnabled);
+    ruler.pointerDown ({ x (3 * bar) + 4.0f, laneY (laneMarkers) }, {});
+    ruler.pointerDrag ({ x (7 * bar), laneY (laneMarkers) });
+    ruler.pointerUp();
+    CHECK (ui.m().markers.at (marker)->pos == 3 * bar);
+    CHECK (ui.studio.playhead() == 3 * bar);
+    // Clicking the lock beside the name unprotects it.
+    const auto lock = area.protectButtonBounds (laneMarkers);
+    REQUIRE_FALSE (lock.isEmpty());
+    area.mouseDown (juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), lock.getCentre().toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                      &area, &area, juce::Time::getCurrentTime(), lock.getCentre().toFloat(), juce::Time::getCurrentTime(), 1, false));
+    CHECK ((ui.studio.protectedLanes & laneMarkers) == 0);
+    CHECK (ui.studio.perform (Cmd::addMarker));
+
+    // Create Time Signature Change asks at the next bar; Create Key Change at the playhead.
+    ui.studio.locate (2 * bar + 960);
+    answer = "3/4";
+    REQUIRE (ui.studio.perform (Cmd::createSignatureChange));
+    CHECK (ui.m().signatures.signatureAtBar (3).numerator == 3);
+    CHECK (ui.m().signatures.signatureAtBar (2).numerator == 4);
+    answer = "Eb";
+    REQUIRE (ui.studio.perform (Cmd::createKeyChange));
+    CHECK (ui.m().keyAt (2 * bar + 960) == model::KeySignature { 3, false });
+
+    // The choice of tracks survives a restart.
+    const auto again = PanelLayout::fromString (ui.studio.layout.toString());
+    CHECK (again.globalLanes == allGlobalLanes);
+}

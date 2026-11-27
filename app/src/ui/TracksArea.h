@@ -22,9 +22,27 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24, tempoLane = 40, signatureLane = 20;
+    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24, tempoLane = 40, signatureLane = 20, arrangementLane = 24, keyLane = 20;
+    /** Where the tempo and signature lanes start with the default global tracks showing. */
     static constexpr int tempoTop = rulerHeight + markerLane, signatureTop = tempoTop + tempoLane;
-    int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane + tempoLane + signatureLane : 0); }
+    static int laneHeight (GlobalLane lane) noexcept;
+    /** The global tracks showing, top to bottom, and their bounds (D-UI-44). */
+    std::vector<std::pair<GlobalLane, juce::Rectangle<int>>> lanes() const;
+    std::optional<juce::Rectangle<int>> laneBounds (GlobalLane lane) const;
+    std::optional<GlobalLane> laneAt (float y) const;
+    int preferredHeight() const;
+
+    /** Arrangement lane (D-UI-45): the section drawn at x. */
+    const model::Section* sectionAt (double x) const;
+    /** Key lane (D-UI-44): the key change drawn at x (not the project key at the start). */
+    const model::KeyChange* keyChangeAt (double x) const;
+    /** While a section is dragged: where it would land. */
+    std::optional<Ticks> sectionDropTarget() const noexcept { return sectionDrop; }
+    /** Asks for a time signature, or a key, at the playhead (Create Time Signature Change, Create Key Change). */
+    void createSignatureChange();
+    void createKeyChange();
+    /** The question box (tests answer it at once). */
+    std::function<void (const juce::String& title, const juce::String& current, std::function<void (juce::String)>)> promptForText = askForText;
 
     /** Bar numbers (1-based) and their x, thinned so labels don't collide (AT-ARR-1). */
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
@@ -74,7 +92,10 @@ public:
 
 private:
     Studio& studio;
-    enum class Drag { none, cycle, playhead, marker, tempo, punchStart, punchEnd, punch } drag = Drag::none;
+    enum class Drag { none, cycle, playhead, marker, tempo, punchStart, punchEnd, punch, keyChange, sectionStart, sectionEnd, sectionMove } drag = Drag::none;
+    Id draggedKey, draggedSection;
+    std::optional<Ticks> sectionDrop; // where a dragged section lands: the section edge nearest the pointer
+    bool copySection = false;          // Ctrl-drag copies (D-UI-45)
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
@@ -320,6 +341,16 @@ public:
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
+
+    /** Configure Global Tracks (Alt+G, D-UI-44): which global tracks show, Show Single Global Track and protect.
+        Item ids: globalShowBase + lane bit, globalProtectBase + lane bit, or a command id + 1. */
+    juce::PopupMenu globalTracksMenu() const;
+    void pickGlobalTracksMenu (int item);
+    static constexpr int globalShowBase = 21000, globalProtectBase = 22000;
+    /** The lock beside a global track's name, in the corner above the headers (in TracksArea coordinates). */
+    juce::Rectangle<int> protectButtonBounds (GlobalLane lane) const;
+    /** A click on a lock protects or unprotects its track; a right-click on the names opens globalTracksMenu(). */
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;

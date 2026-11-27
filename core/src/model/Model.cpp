@@ -599,6 +599,34 @@ Value Marker::toValue() const
     return Value::map().set ("id", id).set ("pos", pos).set ("name", name).set ("color", color ? color->toValue() : Value()).set ("createdBy", createdBy);
 }
 
+KeyChange KeyChange::fromValue (const Id& id, const Value& v)
+{
+    KeyChange k;
+    k.id = id;
+    k.pos = std::max<std::int64_t> (0, v["pos"].asInt());
+    k.key = KeySignature::fromValue (v["key"]);
+    return k;
+}
+
+Value KeyChange::toValue() const { return Value::map().set ("id", id).set ("pos", pos).set ("key", key.toValue()); }
+
+Section Section::fromValue (const Id& id, const Value& v)
+{
+    Section s;
+    s.id = id;
+    s.start = std::max<std::int64_t> (0, v["start"].asInt());
+    s.length = std::max<std::int64_t> (1, v["length"].asInt (8 * 3840));
+    s.name = v["name"].asString();
+    if (! v["color"].isNull())
+        s.color = Color::fromValue (v["color"]);
+    return s;
+}
+
+Value Section::toValue() const
+{
+    return Value::map().set ("id", id).set ("start", start).set ("length", length).set ("name", name).set ("color", color ? color->toValue() : Value());
+}
+
 // Collaboration metadata (03 §9) ------------------------------------------------
 
 std::vector<UserId> Comment::mentions() const

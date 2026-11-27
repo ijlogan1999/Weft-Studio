@@ -120,3 +120,29 @@ TEST_CASE ("MIDI files written by Weft read back the same (L-EXP-3)", "[U][expor
     CHECK (bass.controllers[3].kind == "programChange");
     CHECK (bass.controllers[3].channel == 3);
 }
+
+TEST_CASE ("AT-TMP-12: an exported MIDI region carries the key at its start and each key change inside it", "[E][export][AT-TMP-12]")
+{
+    Rig rig;
+    TempFolder out;
+    const auto keys = rig.session.createTrack (TrackKind::instrument, "Keys").value();
+    REQUIRE (rig.session.setKey ({ 2, false }));                       // D major
+    REQUIRE (rig.session.addKeyChange (barTicks, { 7, false }));       // G major from bar 2
+    REQUIRE (rig.session.addKeyChange (3 * barTicks, { 9, true }));    // A minor from bar 4
+    REQUIRE (rig.session.addKeyChange (8 * barTicks, { 0, false }));   // after the region
+    const auto region = rig.session.createMidiRegion (keys, 2 * barTicks, 4 * barTicks).value();
+    model::Note n;
+    n.pos = 0;
+    n.length = 480;
+    REQUIRE (rig.session.addNote (region, n));
+    const auto result = engine::exportRegions (rig.session.model(), { region }, rig.media, out.path, 24);
+    REQUIRE (result.files.size() == 1);
+    const auto file = media::readMidiFile (result.files[0]);
+    REQUIRE (file);
+    REQUIRE (file->keys.size() == 2);
+    CHECK (file->keys[0].tick == 0);
+    CHECK (file->keys[0].fifths == 1); // G major, in effect at the region start
+    CHECK (file->keys[1].tick == barTicks);
+    CHECK (file->keys[1].fifths == 0);
+    CHECK (file->keys[1].minor);
+}

@@ -265,8 +265,12 @@ media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& 
 
     // The project key (F-TMP-10), then the tempo and meter in force at the region start and
     // every change inside it.
-    file.keys.push_back ({ 0, model.info.key.fifths(), model.info.key.minor });
     const auto regionEnd = r->start + r->length;
+    const auto startKey = model.keyAt (r->start); // and each key change inside the region (D-UI-44)
+    file.keys.push_back ({ 0, startKey.fifths(), startKey.minor });
+    for (const auto* k : model.keyChangesInOrder())
+        if (k->pos > r->start && k->pos < regionEnd)
+            file.keys.push_back ({ k->pos - r->start, k->key.fifths(), k->key.minor });
     file.tempos.push_back ({ 0, model.tempo.bpmAt (r->start) });
     for (const auto& p : model.storedTempoPoints)
         if (p.pos > r->start && p.pos < regionEnd)

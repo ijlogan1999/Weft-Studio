@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <random>
 
@@ -504,4 +505,154 @@ TEST_CASE ("AT-PRJ-16 project count-in, pan law and MIDI input filter", "[U][pro
     CHECK (reopened.model().info.metronomeDefaults.countInBars == 3);
     CHECK (reopened.model().info.panLawDb == -4.5);
     CHECK (reopened.model().info.midiInputFilter == (notes | pitchBend));
+}
+
+TEST_CASE ("AT-TMP-11 key changes along the timeline: add, move, edit, delete, the key at a tick", "[U][project][AT-TMP-11]")
+{
+    using model::KeySignature;
+    auto s = commands::Session::createNew ({}, "userA").value();
+    REQUIRE (s.setKey ({ 2, false })); // D major from the start
+    CHECK_FALSE (s.addKeyChange (0, { 7, false }));  // the start is the project key
+    const auto change = s.addKeyChange (8 * 3840, { 7, false }); // G major from bar 9
+    REQUIRE (change);
+    CHECK (s.undoName() == "Add Key Change");
+    CHECK_FALSE (s.addKeyChange (8 * 3840, { 9, true })); // one per position
+    CHECK (s.model().keyAt (0) == KeySignature { 2, false });
+    CHECK (s.model().keyAt (8 * 3840 - 1) == KeySignature { 2, false });
+    CHECK (s.model().keyAt (8 * 3840) == KeySignature { 7, false });
+    CHECK (s.model().keyAt (100000) == KeySignature { 7, false });
+
+    // The key display edits the key in effect where it is.
+    REQUIRE (s.setKeyAt (10 * 3840, { 4, true }));
+    CHECK (s.model().keyChanges.at (*change)->key == KeySignature { 4, true });
+    CHECK (s.model().info.key == KeySignature { 2, false });
+    REQUIRE (s.setKeyAt (3840, { 5, false }));
+    CHECK (s.model().info.key == KeySignature { 5, false });
+    CHECK (s.undoName() == "Set Key");
+
+    REQUIRE (s.setKeyChange (*change, 4 * 3840, { 4, true }));
+    CHECK (s.undoName() == "Key Change");
+    CHECK (s.model().keyAt (4 * 3840) == KeySignature { 4, true });
+    CHECK_FALSE (s.setKeyChange (*change, 0, { 4, true }));
+    const auto second = s.addKeyChange (12 * 3840, { 0, false });
+    REQUIRE (second);
+    CHECK_FALSE (s.setKeyChange (*second, 4 * 3840, { 0, false })); // onto the other one
+    REQUIRE (s.model().keyChangesInOrder().size() == 2);
+    CHECK (s.model().keyChangesInOrder()[0]->id == *change);
+
+    // Saved with the project.
+    const auto bytes = s.document().save();
+    commands::Session reopened (doc::Document::load (bytes).value(), "userB");
+    CHECK (reopened.model().keyAt (13 * 3840) == KeySignature { 0, false });
+    CHECK (reopened.model().keyChanges.size() == 2);
+
+    REQUIRE (s.deleteKeyChange (*second));
+    CHECK (s.undoName() == "Delete Key Change");
+    CHECK (s.model().keyAt (13 * 3840) == KeySignature { 4, true });
+    REQUIRE (s.undo().done);
+    CHECK (s.model().keyAt (13 * 3840) == KeySignature { 0, false });
+}
+
+TEST_CASE ("AT-ARR-44 arrangement sections: add, name, colour, resize, no overlaps, delete", "[U][arrange][AT-ARR-44]")
+{
+    auto s = commands::Session::createNew ({}, "userA").value();
+    const auto intro = s.addSection (0, 4 * 3840);
+    REQUIRE (intro);
+    CHECK (s.undoName() == "Add Section");
+    CHECK (s.model().sections.at (*intro)->name == "Intro");
+    const auto verse = s.addSection (4 * 3840, 8 * 3840);
+    REQUIRE (verse);
+    CHECK (s.model().sections.at (*verse)->name == "Verse");
+    CHECK_FALSE (s.addSection (10 * 3840, 4 * 3840)); // inside the verse
+    CHECK_FALSE (s.addSection (-1, 3840));
+    CHECK (s.model().sectionAt (5 * 3840)->id == *verse);
+    CHECK (s.model().sectionAt (12 * 3840) == nullptr);
+
+    REQUIRE (s.renameSection (*verse, "Verse 1"));
+    CHECK (s.undoName() == "Rename Section");
+    CHECK_FALSE (s.renameSection (*verse, ""));
+    REQUIRE (s.setSectionColor (*verse, model::Color { 3, {} }));
+    CHECK (s.model().sections.at (*verse)->color->palette == 3);
+    CHECK_FALSE (s.setSectionRange (*verse, 2 * 3840, 4 * 3840)); // over the intro
+    REQUIRE (s.setSectionRange (*verse, 4 * 3840, 4 * 3840));
+    CHECK (s.undoName() == "Resize Section");
+    CHECK (s.model().sections.at (*verse)->end() == 8 * 3840);
+
+    const auto bytes = s.document().save();
+    commands::Session reopened (doc::Document::load (bytes).value(), "userB");
+    REQUIRE (reopened.model().sectionsInOrder().size() == 2);
+    CHECK (reopened.model().sectionsInOrder()[1]->name == "Verse 1");
+
+    REQUIRE (s.deleteSection (*intro));
+    CHECK (s.undoName() == "Delete Section");
+    CHECK (s.model().sections.size() == 1);
+}
+
+TEST_CASE ("AT-ARR-46 moving and copying a section takes its regions, markers and key changes along", "[U][arrange][AT-ARR-46]")
+{
+    constexpr Ticks bar = 3840;
+    auto s = commands::Session::createNew ({}, "userA").value();
+    const auto inst = s.createTrack (model::TrackKind::instrument, "").value();
+    const auto intro = s.addSection (0, 4 * bar).value();
+    const auto verse = s.addSection (4 * bar, 4 * bar).value();
+    const auto inIntro = s.createMidiRegion (inst, bar, bar).value();
+    const auto inVerse = s.createMidiRegion (inst, 5 * bar, bar).value();
+    const auto across = s.createMidiRegion (inst, 3 * bar, 2 * bar).value(); // crosses the intro's end
+    const auto marker = s.addMarker (6 * bar, "Hook").value();
+    const auto key = s.addKeyChange (4 * bar, model::KeySignature { 2, false }).value();
+    const auto starts = [&] {
+        std::vector<Ticks> out;
+        for (const auto& [id, r] : s.model().regions)
+            out.push_back (r->start);
+        std::sort (out.begin(), out.end());
+        return out;
+    };
+
+    // Dropped inside another section, or at its own edge: refused, or nothing happens.
+    CHECK_FALSE (s.moveSection (intro, 6 * bar, false));
+    REQUIRE (s.moveSection (intro, 0, false));
+    CHECK (s.model().regions.size() == 3);
+
+    // Moving the intro after the verse: one undo step; the crossing region is split at the edge.
+    REQUIRE (s.moveSection (intro, 8 * bar, false));
+    CHECK (s.undoName() == "Move Section");
+    CHECK (s.model().sections.at (verse)->start == 0);
+    CHECK (s.model().sections.at (intro)->start == 4 * bar);
+    CHECK (s.model().regions.size() == 4);
+    CHECK (s.model().regions.at (inIntro)->start == 5 * bar);
+    CHECK (s.model().regions.at (inVerse)->start == bar);
+    CHECK (s.model().regions.at (across)->start == 7 * bar);
+    CHECK (starts() == std::vector<Ticks> { 0, bar, 5 * bar, 7 * bar });
+    CHECK (s.model().markers.at (marker)->pos == 2 * bar);
+    CHECK (s.model().keyChanges.at (key)->pos == 0);
+    REQUIRE (s.undo().done);
+    CHECK (s.model().sections.at (intro)->start == 0);
+    CHECK (s.model().regions.size() == 3);
+    CHECK (s.model().regions.at (inIntro)->start == bar);
+    CHECK (s.model().markers.at (marker)->pos == 6 * bar);
+
+    // Copying the verse to the start: everything from there moves right by a verse, and the twin
+    // section holds copies of its regions.
+    REQUIRE (s.moveSection (verse, 0, true));
+    CHECK (s.undoName() == "Copy Section");
+    REQUIRE (s.model().sections.size() == 3);
+    const auto order = s.model().sectionsInOrder();
+    CHECK (order[0]->name == "Verse");
+    CHECK (order[0]->start == 0);
+    CHECK (order[1]->id == intro);
+    CHECK (order[1]->start == 4 * bar);
+    CHECK (order[2]->id == verse);
+    CHECK (order[2]->start == 8 * bar);
+    CHECK (s.model().regions.at (inVerse)->start == 9 * bar);
+    CHECK (s.model().regions.at (inIntro)->start == 5 * bar);
+    CHECK (s.model().markers.at (marker)->pos == 10 * bar);
+    CHECK (s.model().regions.size() == 6); // three, plus the split, plus two copies
+    std::size_t inTwin = 0;
+    for (const auto& [id, r] : s.model().regions)
+        if (r->start < 4 * bar)
+            ++inTwin;
+    CHECK (inTwin == 2);
+    REQUIRE (s.undo().done);
+    CHECK (s.model().sections.size() == 2);
+    CHECK (s.model().regions.size() == 3);
 }

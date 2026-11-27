@@ -88,7 +88,10 @@ enum class Cmd
     markerForSelection, cycleToMarker, cycleToPreviousMarker, cycleToNextMarker, previousMarkerSetLocators, nextMarkerSetLocators, goToMarkerNumber,
     applyRegionParameters, applyRegionParametersExceptDelay, settings,
     // D-UI-43: control bar, toolbar and big displays
-    toggleControlBar, toggleToolbar, customizeControlBar, bigBeatsDisplay, bigTimeDisplay, performanceMeter
+    toggleControlBar, toggleToolbar, customizeControlBar, bigBeatsDisplay, bigTimeDisplay, performanceMeter,
+    // D-UI-44, D-UI-45: global tracks
+    configureGlobalTracks, showSingleGlobalTrack, toggleArrangementTrack, toggleMarkerTrack, toggleTempoTrack, toggleSignatureTrack, toggleKeyTrack,
+    markerTrackOnly, createSignatureChange, createKeyChange, addSection
 };
 
 struct CommandInfo

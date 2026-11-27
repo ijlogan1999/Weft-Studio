@@ -71,14 +71,16 @@ float Ruler::tempoY (double bpm) const
 {
     const auto [lo, hi] = tempoRange();
     const auto inner = static_cast<double> (tempoLane - 10);
-    return static_cast<float> (tempoTop + 5 + (hi - bpm) / std::max (1.0, hi - lo) * inner);
+    const auto top = laneBounds (laneTempo).value_or (juce::Rectangle<int> (0, tempoTop, 0, tempoLane)).getY();
+    return static_cast<float> (top + 5 + (hi - bpm) / std::max (1.0, hi - lo) * inner);
 }
 
 double Ruler::bpmAtY (float y) const
 {
     const auto [lo, hi] = tempoRange();
     const auto inner = static_cast<double> (tempoLane - 10);
-    const auto bpm = hi - (static_cast<double> (y) - tempoTop - 5) / inner * (hi - lo);
+    const auto top = laneBounds (laneTempo).value_or (juce::Rectangle<int> (0, tempoTop, 0, tempoLane)).getY();
+    const auto bpm = hi - (static_cast<double> (y) - top - 5) / inner * (hi - lo);
     return std::clamp (std::round (bpm * 100.0) / 100.0, TempoMap::minBpm, TempoMap::maxBpm);
 }
 
@@ -157,6 +159,78 @@ std::vector<std::pair<int, double>> Ruler::barLabels (const model::ProjectModel&
     return out;
 }
 
+int Ruler::laneHeight (GlobalLane lane) noexcept
+{
+    switch (lane)
+    {
+        case laneArrangement: return arrangementLane;
+        case laneMarkers: return markerLane;
+        case laneTempo: return tempoLane;
+        case laneSignature: return signatureLane;
+        case laneKey: return keyLane;
+        default: return 0;
+    }
+}
+
+std::vector<std::pair<GlobalLane, juce::Rectangle<int>>> Ruler::lanes() const
+{
+    std::vector<std::pair<GlobalLane, juce::Rectangle<int>>> out;
+    int y = rulerHeight;
+    for (const auto lane : globalLaneOrder)
+        if (studio.laneShown (lane))
+        {
+            out.emplace_back (lane, juce::Rectangle<int> (0, y, getWidth(), laneHeight (lane)));
+            y += laneHeight (lane);
+        }
+    return out;
+}
+
+std::optional<juce::Rectangle<int>> Ruler::laneBounds (GlobalLane lane) const
+{
+    for (const auto& [l, r] : lanes())
+        if (l == lane)
+            return r;
+    return std::nullopt;
+}
+
+std::optional<GlobalLane> Ruler::laneAt (float y) const
+{
+    for (const auto& [l, r] : lanes())
+        if (y >= static_cast<float> (r.getY()) && y < static_cast<float> (r.getBottom()))
+            return l;
+    return std::nullopt;
+}
+
+int Ruler::preferredHeight() const
+{
+    int h = rulerHeight;
+    for (const auto lane : globalLaneOrder)
+        if (studio.laneShown (lane))
+            h += laneHeight (lane);
+    return h;
+}
+
+const model::Section* Ruler::sectionAt (double x) const
+{
+    const auto t = studio.view.xToTick (x);
+    for (const auto* section : studio.model().sectionsInOrder())
+        if (t >= static_cast<double> (section->start) && t < static_cast<double> (section->end()))
+            return section;
+    return nullptr;
+}
+
+const model::KeyChange* Ruler::keyChangeAt (double x) const
+{
+    const model::KeyChange* best = nullptr;
+    for (const auto* k : studio.model().keyChangesInOrder())
+    {
+        const auto kx = studio.view.tickToX (static_cast<double> (k->pos));
+        if (x >= kx - 3 && x <= kx + 56)
+            best = k;
+    }
+    return best;
+}
+
 const model::Marker* Ruler::markerAt (double x) const
 {
     const model::Marker* best = nullptr;
@@ -172,7 +246,7 @@ const model::Marker* Ruler::markerAt (double x) const
 std::vector<std::pair<const model::Marker*, juce::Rectangle<float>>> Ruler::markerFlags() const
 {
     std::vector<std::pair<const model::Marker*, juce::Rectangle<float>>> out;
-    if (studio.layout.globalTracks)
+    if (studio.laneShown (laneMarkers))
         return out;
     const auto f = font (Type::caption);
     for (const auto* marker : arrange::markersInOrder (studio.model()))
@@ -261,70 +335,119 @@ void Ruler::paint (juce::Graphics& g)
     }
     g.setColour (colour (Token::border));
     g.fillRect (0, rulerHeight - 1, getWidth(), 1);
-    // Markers: raised chips with their colour on the left edge.
-    if (studio.layout.globalTracks)
+    // The global tracks showing (D-UI-44), each in its band.
+    for (const auto& [lane, laneArea] : lanes())
     {
-        const auto lane = juce::Rectangle<int> (0, rulerHeight, getWidth(), markerLane);
+        const auto top = laneArea.getY();
         g.setColour (colour (Token::surface));
-        g.fillRect (lane);
-        g.setFont (font (Type::body));
-        for (const auto* marker : arrange::markersInOrder (m))
+        g.fillRect (laneArea);
+        if ((studio.protectedLanes & lane) != 0)
         {
-            const auto x = static_cast<float> (v.tickToX (static_cast<double> (marker->pos)));
-            const auto c = marker->color ? colourFor (marker->color->palette, marker->color->rgb) : colour (Token::textDim);
-            const auto chip = juce::Rectangle<float> (x, lane.getY() + 3.0f, 72.0f, markerLane - 6.0f);
-            depth::raised (g, chip, radius::r1);
-            g.setColour (c);
-            g.fillRect (chip.withWidth (3.0f));
-            g.setColour (colour (Token::text));
-            g.drawText (juce::String (marker->name), chip.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
+            g.setColour (colour (Token::textDim).withAlpha (0.06f)); // protected: a faint veil
+            g.fillRect (laneArea);
         }
-        for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
-            drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
+        if (lane == laneArrangement)
+        {
+            // Sections: coloured blocks spanning their bars, named.
+            g.setFont (font (Type::body));
+            for (const auto* section : m.sectionsInOrder())
+            {
+                const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (section->start)));
+                const auto x2 = static_cast<float> (v.tickToX (static_cast<double> (section->end())));
+                const auto block = juce::Rectangle<float> (x1, top + 2.0f, std::max (2.0f, x2 - x1 - 1.0f), arrangementLane - 4.0f);
+                const auto c = section->color ? colourFor (section->color->palette, section->color->rgb) : colour (Token::accent);
+                depth::tinted (g, block, radius::r1, c.withMultipliedAlpha (0.55f));
+                g.setColour (colour (Token::text));
+                g.drawText (juce::String (section->name), block.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
+            }
+            if (sectionDrop)
+            {
+                g.setColour (colour (Token::accent));
+                g.fillRect (static_cast<float> (v.tickToX (static_cast<double> (*sectionDrop))) - 1.0f, static_cast<float> (top), 3.0f, static_cast<float> (arrangementLane));
+            }
+        }
+        else if (lane == laneMarkers)
+        {
+            // Markers: raised chips with their colour on the left edge.
+            g.setFont (font (Type::body));
+            for (const auto* marker : arrange::markersInOrder (m))
+            {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (marker->pos)));
+                const auto c = marker->color ? colourFor (marker->color->palette, marker->color->rgb) : colour (Token::textDim);
+                const auto chip = juce::Rectangle<float> (x, top + 3.0f, 72.0f, markerLane - 6.0f);
+                depth::raised (g, chip, radius::r1);
+                g.setColour (c);
+                g.fillRect (chip.withWidth (3.0f));
+                g.setColour (colour (Token::text));
+                g.drawText (juce::String (marker->name), chip.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
+            }
+            for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
+                drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
+        }
+        else if (lane == laneTempo)
+        {
+            // Tempo lane: the map as a step graph, a handle and value at each change (W-11).
+            const auto& points = m.tempo.points();
+            juce::Path steps;
+            for (std::size_t i = 0; i < points.size(); ++i)
+            {
+                const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (points[i].pos)));
+                const auto x2 = i + 1 < points.size() ? static_cast<float> (v.tickToX (static_cast<double> (points[i + 1].pos))) : static_cast<float> (getWidth());
+                const auto y = tempoY (points[i].bpm);
+                if (i == 0)
+                    steps.startNewSubPath (std::min (x1, 0.0f), y);
+                else
+                    steps.lineTo (x1, y);
+                steps.lineTo (x2, y);
+            }
+            g.setColour (colour (Token::accent));
+            g.strokePath (steps, juce::PathStrokeType (1.5f));
+            g.setFont (font (Type::monoSmall));
+            for (const auto& p : points)
+            {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (p.pos)));
+                const auto y = tempoY (p.bpm);
+                g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::accent));
+                g.fillRect (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ x, y }));
+                g.setColour (colour (Token::textDim));
+                const auto above = y - static_cast<float> (top) > 16.0f;
+                g.drawText (bpmText (p.bpm), juce::roundToInt (x) + 6, juce::roundToInt (above ? y - 15.0f : y + 2.0f), 56, 13, juce::Justification::left);
+            }
+        }
+        else if (lane == laneSignature)
+        {
+            // Signature lane: the meter at each change, at its bar start.
+            g.setFont (font (Type::monoValue));
+            for (const auto& p : m.signatures.points())
+            {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (m.signatures.barStart (p.bar))));
+                g.setColour (colour (Token::border));
+                g.fillRect (x, static_cast<float> (top), 1.0f, static_cast<float> (signatureLane));
+                g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::text));
+                g.drawText (juce::String (p.numerator) + "/" + juce::String (p.denominator), juce::roundToInt (x) + space::half, top, 40, signatureLane,
+                            juce::Justification::centredLeft);
+            }
+        }
+        else if (lane == laneKey)
+        {
+            // Key lane: the project key at the start, then each change.
+            g.setFont (font (Type::small));
+            const auto drawKey = [&] (Ticks at, const model::KeySignature& key) {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (at)));
+                g.setColour (colour (Token::border));
+                g.fillRect (x, static_cast<float> (top), 1.0f, static_cast<float> (keyLane));
+                g.setColour (colour (Token::text));
+                g.drawText (juce::String (key.name()), juce::roundToInt (x) + space::half, top, 96, keyLane, juce::Justification::centredLeft);
+            };
+            drawKey (0, m.info.key);
+            for (const auto* k : m.keyChangesInOrder())
+                drawKey (k->pos, k->key);
+        }
         g.setColour (colour (Token::lineSubtle));
-        g.fillRect (0, tempoTop - 1, getWidth(), 1);
-
-        // Tempo lane: the map as a step graph, a handle and value at each change (W-11).
-        const auto& points = m.tempo.points();
-        juce::Path steps;
-        for (std::size_t i = 0; i < points.size(); ++i)
-        {
-            const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (points[i].pos)));
-            const auto x2 = i + 1 < points.size() ? static_cast<float> (v.tickToX (static_cast<double> (points[i + 1].pos))) : static_cast<float> (getWidth());
-            const auto y = tempoY (points[i].bpm);
-            if (i == 0)
-                steps.startNewSubPath (std::min (x1, 0.0f), y);
-            else
-                steps.lineTo (x1, y);
-            steps.lineTo (x2, y);
-        }
-        g.setColour (colour (Token::accent));
-        g.strokePath (steps, juce::PathStrokeType (1.5f));
-        g.setFont (font (Type::monoSmall));
-        for (const auto& p : points)
-        {
-            const auto x = static_cast<float> (v.tickToX (static_cast<double> (p.pos)));
-            const auto y = tempoY (p.bpm);
-            g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::accent));
-            g.fillRect (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ x, y }));
-            g.setColour (colour (Token::textDim));
-            const auto above = y - static_cast<float> (tempoTop) > 16.0f;
-            g.drawText (bpmText (p.bpm), juce::roundToInt (x) + 6, juce::roundToInt (above ? y - 15.0f : y + 2.0f), 56, 13, juce::Justification::left);
-        }
-        g.setColour (colour (Token::lineSubtle));
-        g.fillRect (0, signatureTop - 1, getWidth(), 1);
-
-        // Signature lane: the meter at each change, at its bar start.
-        g.setFont (font (Type::monoValue));
-        for (const auto& p : m.signatures.points())
-        {
-            const auto x = static_cast<float> (v.tickToX (static_cast<double> (m.signatures.barStart (p.bar))));
-            g.setColour (colour (Token::border));
-            g.fillRect (x, static_cast<float> (signatureTop), 1.0f, static_cast<float> (signatureLane));
-            g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::text));
-            g.drawText (juce::String (p.numerator) + "/" + juce::String (p.denominator), juce::roundToInt (x) + space::half, signatureTop, 40, signatureLane,
-                        juce::Justification::centredLeft);
-        }
+        g.fillRect (0, laneArea.getBottom() - 1, getWidth(), 1);
+    }
+    if (! lanes().empty())
+    {
         g.setColour (colour (Token::border));
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
     }
@@ -354,12 +477,13 @@ void Ruler::paint (juce::Graphics& g)
 juce::Rectangle<float> Ruler::pinBounds (const model::Comment& thread) const
 {
     const auto x = static_cast<float> (studio.view.tickToX (static_cast<double> (thread.pos)));
-    return { x - 1.0f, rulerHeight + 3.0f, 14.0f, markerLane - 5.0f };
+    const auto top = laneBounds (laneMarkers).value_or (juce::Rectangle<int> (0, rulerHeight, 0, markerLane)).getY();
+    return { x - 1.0f, top + 3.0f, 14.0f, markerLane - 5.0f };
 }
 
 const model::Comment* Ruler::commentAt (juce::Point<float> p) const
 {
-    if (! studio.layout.globalTracks)
+    if (! studio.laneShown (laneMarkers))
         return nullptr;
     const auto threads = commands::commentThreads (studio.model(), commands::CommentFilter::all, studio.session().user());
     for (auto it = threads.rbegin(); it != threads.rend(); ++it)
@@ -384,7 +508,10 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         dragFrom = t;
         return;
     }
-    if (mods.isPopupMenu() && p.y >= rulerHeight && studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (lane)
+        studio.layout.singleLane = *lane; // what Show Single Global Track keeps
+    if (mods.isPopupMenu() && lane)
     {
         juce::Component::SafePointer<Ruler> self (this);
         contextMenu (p).showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self, p] (int item) {
@@ -393,12 +520,63 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         });
         return;
     }
-    if (p.y >= signatureTop && studio.layout.globalTracks)
+    if (lane == laneSignature)
         return;
-    if (p.y >= tempoTop && studio.layout.globalTracks)
+    if (lane == laneArrangement)
+    {
+        // An edge resizes the section; a click inside selects its regions and goes to its start (D-UI-45).
+        for (const auto* section : studio.model().sectionsInOrder())
+        {
+            const auto x1 = studio.view.tickToX (static_cast<double> (section->start)), x2 = studio.view.tickToX (static_cast<double> (section->end()));
+            const bool nearStart = std::abs (p.x - x1) <= 4.0, nearEnd = std::abs (p.x - x2) <= 4.0;
+            if ((nearStart || nearEnd) && ! studio.laneProtected (laneArrangement))
+            {
+                drag = nearEnd ? Drag::sectionEnd : Drag::sectionStart;
+                draggedSection = section->id;
+                studio.session().beginGesture ("Resize Section");
+                return;
+            }
+        }
+        if (const auto* section = sectionAt (p.x))
+        {
+            std::vector<Id> inside;
+            for (const auto& [id, r] : studio.model().regions)
+                if (r->start >= section->start && r->start < section->end())
+                    inside.push_back (id);
+            studio.selection.set (inside);
+            studio.locate (section->start);
+            // Dragging the section moves it and what's in it to another section edge; Ctrl copies (D-UI-45).
+            if ((studio.protectedLanes & laneArrangement) == 0)
+            {
+                drag = Drag::sectionMove;
+                draggedSection = section->id;
+                dragStart = p;
+                copySection = mods.isCommandDown();
+                sectionDrop.reset();
+            }
+        }
+        return;
+    }
+    if (lane == laneKey)
+    {
+        if (const auto* change = keyChangeAt (p.x))
+        {
+            studio.locate (change->pos);
+            if (! studio.laneProtected (laneKey))
+            {
+                drag = Drag::keyChange;
+                draggedKey = change->id;
+                studio.session().beginGesture ("Move Key Change");
+            }
+        }
+        return;
+    }
+    if (lane == laneTempo)
     {
         if (const auto* point = tempoPointAt (p.x))
         {
+            if (studio.laneProtected (laneTempo))
+                return;
             dragRange = tempoRange();
             drag = Drag::tempo;
             draggedTempo = point->id;
@@ -410,7 +588,7 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
             studio.session().beginGesture (copyTempo ? "Copy Tempo Change" : "Tempo Change");
             return;
         }
-        if (mods.isCommandDown() || studio.tool == Tool::pencil)
+        if ((mods.isCommandDown() || studio.tool == Tool::pencil) && ! studio.laneProtected (laneTempo))
         {
             if (studio.session().addTempoPoint (t, bpmAtY (p.y)))
                 studio.edited();
@@ -419,7 +597,7 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         }
         return;
     }
-    if (p.y >= rulerHeight && studio.layout.globalTracks)
+    if (lane == laneMarkers)
     {
         if (const auto* c = commentAt (p))
         {
@@ -429,6 +607,8 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         if (const auto* marker = markerAt (p.x))
         {
             studio.locate (marker->pos);
+            if ((studio.protectedLanes & laneMarkers) != 0)
+                return; // protected: it only goes there
             drag = Drag::marker;
             draggedMarker = marker->id;
             dragFrom = marker->pos;
@@ -436,6 +616,8 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         }
         return;
     }
+    if (p.y >= rulerHeight)
+        return; // below the last lane
     // A click on a marker's flag goes to the marker itself, whatever the snap.
     for (const auto& [marker, flag] : markerFlags())
         if (flag.contains (p))
@@ -469,6 +651,56 @@ void Ruler::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
             break;
         }
         case Drag::marker: studio.check (studio.session().moveMarker (draggedMarker, t)); break;
+        case Drag::keyChange:
+            if (const auto it = studio.model().keyChanges.find (draggedKey); it != studio.model().keyChanges.end())
+            {
+                const auto key = it->second->key;
+                studio.session().setKeyChange (draggedKey, std::max<Ticks> (1, t), key); // a clash with another change just stays put
+            }
+            break;
+        case Drag::sectionMove:
+        {
+            if (std::abs (p.x - dragStart.x) < 4.0f)
+            {
+                sectionDrop.reset();
+                break;
+            }
+            const auto* dragged = studio.model().sections.contains (draggedSection) ? studio.model().sections.at (draggedSection).get() : nullptr;
+            if (dragged == nullptr)
+                break;
+            std::optional<Ticks> best;
+            double bestDistance = 0;
+            std::vector<Ticks> edges { 0 };
+            for (const auto* other : studio.model().sectionsInOrder())
+            {
+                edges.push_back (other->start);
+                edges.push_back (other->end());
+            }
+            for (const auto e : edges)
+            {
+                if (e > dragged->start && e < dragged->end())
+                    continue;
+                if (const auto d = std::abs (studio.view.tickToX (static_cast<double> (e)) - p.x); ! best || d < bestDistance)
+                {
+                    best = e;
+                    bestDistance = d;
+                }
+            }
+            sectionDrop = best;
+            repaint();
+            break;
+        }
+        case Drag::sectionStart:
+        case Drag::sectionEnd:
+            if (const auto it = studio.model().sections.find (draggedSection); it != studio.model().sections.end())
+            {
+                const auto start = it->second->start, end = it->second->end();
+                if (drag == Drag::sectionStart && t < end)
+                    studio.session().setSectionRange (draggedSection, t, end - t);
+                else if (drag == Drag::sectionEnd && t > start)
+                    studio.session().setSectionRange (draggedSection, start, t - start);
+            }
+            break;
         case Drag::tempo:
         {
             // Vertical: BPM in 0.01 steps over the lane's range at the drag start; horizontal (past a few
@@ -516,7 +748,22 @@ void Ruler::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
 
 void Ruler::pointerUp()
 {
-    if (drag == Drag::marker || drag == Drag::tempo || drag == Drag::punchStart || drag == Drag::punchEnd || drag == Drag::punch)
+    if (drag == Drag::sectionMove)
+    {
+        drag = Drag::none;
+        const auto target = std::exchange (sectionDrop, std::nullopt);
+        if (target)
+        {
+            if (studio.session().moveSection (draggedSection, *target, copySection))
+                studio.edited();
+            else
+                studio.setStatus (juce::String (studio.session().lastError()));
+        }
+        repaint();
+        return;
+    }
+    if (drag == Drag::marker || drag == Drag::tempo || drag == Drag::punchStart || drag == Drag::punchEnd || drag == Drag::punch || drag == Drag::keyChange
+        || drag == Drag::sectionStart || drag == Drag::sectionEnd)
     {
         studio.session().endGesture();
         studio.edited();
@@ -537,17 +784,40 @@ void Ruler::mouseUp (const juce::MouseEvent& e)
 juce::PopupMenu Ruler::contextMenu (juce::Point<float> p) const
 {
     juce::PopupMenu menu;
-    if (p.y < rulerHeight || ! studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (! lane)
         return menu;
-    const bool editable = ! studio.previewing();
-    if (p.y >= signatureTop)
+    const bool editable = ! studio.previewing() && (studio.protectedLanes & *lane) == 0;
+    if (lane == laneArrangement)
+    {
+        if (const auto* section = sectionAt (p.x))
+        {
+            menu.addItem (contextRename, "Rename Section...", editable);
+            auto colours = colourMenu (contextColour, section->color && section->color->rgb.empty() ? section->color->palette : -1);
+            colours.addSeparator();
+            colours.addItem (contextColour, "No Color", true, ! section->color.has_value());
+            menu.addSubMenu ("Color", colours, editable);
+            menu.addSeparator();
+            menu.addItem (contextDelete, "Delete Section", editable);
+        }
+        else
+            menu.addItem (contextAdd, "Add Section Here", editable);
+    }
+    else if (lane == laneKey)
+    {
+        const auto* change = keyChangeAt (p.x);
+        menu.addItem (contextEdit, change != nullptr ? "Edit Key..." : "Add Key Change Here...", editable);
+        if (change != nullptr)
+            menu.addItem (contextDelete, "Delete Key Change", editable);
+    }
+    else if (lane == laneSignature)
     {
         const auto* sig = signatureAt (p.x);
         menu.addItem (contextEdit, sig != nullptr ? "Edit Time Signature..." : "Add Time Signature Here...", editable);
         if (sig != nullptr)
             menu.addItem (contextDelete, "Delete Time Signature", editable && sig->bar > 0);
     }
-    else if (p.y >= tempoTop)
+    else if (lane == laneTempo)
     {
         if (const auto* point = tempoPointAt (p.x))
         {
@@ -574,11 +844,78 @@ juce::PopupMenu Ruler::contextMenu (juce::Point<float> p) const
 
 void Ruler::pickContext (int item, juce::Point<float> p)
 {
-    if (item <= 0 || p.y < rulerHeight || ! studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (item <= 0 || ! lane || studio.laneProtected (*lane))
         return;
     auto& s = studio.session();
     const auto at = std::max<Ticks> (0, studio.snapped (static_cast<Ticks> (studio.view.xToTick (p.x))));
-    if (p.y >= signatureTop)
+    if (lane == laneArrangement)
+    {
+        const auto* section = sectionAt (p.x);
+        if (section == nullptr)
+        {
+            if (item == contextAdd)
+            {
+                // From the bar here to the next section, at most 8 bars.
+                const auto& sig = studio.model().signatures;
+                const auto start = sig.barStart (sig.barAt (at).bar);
+                auto end = start + 8 * sig.barLength (sig.barAt (start).bar);
+                for (const auto* other : studio.model().sectionsInOrder())
+                    if (other->start > start)
+                        end = std::min (end, other->start);
+                if (s.addSection (start, end - start))
+                    studio.edited();
+                else
+                    studio.setStatus (juce::String (s.lastError()));
+            }
+            return;
+        }
+        const auto id = section->id;
+        if (item == contextDelete)
+            studio.check (s.deleteSection (id));
+        else if (item == contextRename)
+            promptForText ("Rename section", juce::String (section->name), [this, id] (juce::String name) {
+                if (name.trim().isNotEmpty())
+                    studio.check (studio.session().renameSection (id, name.trim().toStdString()));
+            });
+        else if (item == contextColour)
+            studio.check (s.setSectionColor (id, std::nullopt));
+        else if (item > contextColour && item <= contextColour + paletteSize)
+            studio.check (s.setSectionColor (id, model::Color { item - contextColour - 1, {} }));
+        return;
+    }
+    if (lane == laneKey)
+    {
+        const auto* change = keyChangeAt (p.x);
+        if (item == contextDelete && change != nullptr)
+            studio.check (s.deleteKeyChange (change->id));
+        else if (item == contextEdit)
+        {
+            const auto id = change != nullptr ? change->id : Id();
+            const auto pos = change != nullptr ? change->pos : std::max<Ticks> (1, at);
+            const auto now = studio.model().keyAt (pos);
+            promptForText ("Key at bar " + juce::String (studio.model().signatures.barAt (pos).bar + 1), juce::String (now.name()),
+                           [this, id, pos] (juce::String text) {
+                               const auto key = model::KeySignature::parse (text.toStdString());
+                               if (! key)
+                               {
+                                   studio.setStatus ("Type a key like C, F# minor or Bbm.");
+                                   return;
+                               }
+                               if (id.empty())
+                               {
+                                   if (studio.session().addKeyChange (pos, *key))
+                                       studio.edited();
+                                   else
+                                       studio.setStatus (juce::String (studio.session().lastError()));
+                               }
+                               else
+                                   studio.check (studio.session().setKeyChange (id, pos, *key));
+                           });
+        }
+        return;
+    }
+    if (lane == laneSignature)
     {
         const auto* sig = signatureAt (p.x);
         if (item == contextDelete && sig != nullptr)
@@ -587,12 +924,12 @@ void Ruler::pickContext (int item, juce::Point<float> p)
         {
             const auto bar = sig != nullptr ? sig->bar : nearestBar (p.x);
             const auto& now = studio.model().signatures.signatureAtBar (bar);
-            askForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
-                        [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+            promptForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
+                           [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
         }
         return;
     }
-    if (p.y >= tempoTop)
+    if (lane == laneTempo)
     {
         const auto* point = tempoPointAt (p.x);
         if (item == contextAdd && point == nullptr)
@@ -608,7 +945,7 @@ void Ruler::pickContext (int item, juce::Point<float> p)
         {
             const auto id = point->id;
             const auto pos = point->pos;
-            askForText ("Tempo (BPM)", bpmText (point->bpm), [this, id, pos] (juce::String text) {
+            promptForText ("Tempo (BPM)", bpmText (point->bpm), [this, id, pos] (juce::String text) {
                 studio.check (studio.session().setTempoPoint (id, pos, std::round (text.getDoubleValue() * 100.0) / 100.0));
             });
         }
@@ -641,7 +978,7 @@ void Ruler::renameMarker (const Id& id)
     const auto it = markers.find (id);
     if (it == markers.end())
         return;
-    askForText ("Rename marker", juce::String (it->second->name), [this, id] (juce::String name) {
+    promptForText ("Rename marker", juce::String (it->second->name), [this, id] (juce::String name) {
         if (name.isNotEmpty())
             studio.check (studio.session().renameMarker (id, name.toStdString()));
     });
@@ -651,14 +988,43 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 {
     // Double-click is the quick way to the menu's first entry: edit what's there, or add a marker.
     const auto p = e.position;
-    if (p.y < rulerHeight || ! studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (! lane)
         return;
-    if (p.y >= signatureTop)
+    if (lane == laneSignature || lane == laneTempo || lane == laneKey)
         pickContext (contextEdit, p);
-    else if (p.y >= tempoTop)
-        pickContext (contextEdit, p);
+    else if (lane == laneArrangement)
+        pickContext (sectionAt (p.x) != nullptr ? contextRename : contextAdd, p);
     else
         pickContext (markerAt (p.x) != nullptr ? contextRename : contextAdd, p);
+}
+
+void Ruler::createSignatureChange()
+{
+    // At the bar after the playhead's (or bar 2 at the start), with the meter in effect there.
+    const auto& sig = studio.model().signatures;
+    const auto bar = sig.barAt (studio.playhead()).bar + (sig.barAt (studio.playhead()).offset > 0 || studio.playhead() == 0 ? 1 : 0);
+    const auto& now = sig.signatureAtBar (bar);
+    promptForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
+                   [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+}
+
+void Ruler::createKeyChange()
+{
+    const auto pos = std::max<Ticks> (1, studio.playhead());
+    const auto now = studio.model().keyAt (pos);
+    promptForText ("Key from here", juce::String (now.name()), [this, pos] (juce::String text) {
+        const auto key = model::KeySignature::parse (text.toStdString());
+        if (! key)
+        {
+            studio.setStatus ("Type a key like C, F# minor or Bbm.");
+            return;
+        }
+        if (studio.session().addKeyChange (pos, *key))
+            studio.edited();
+        else
+            studio.setStatus (juce::String (studio.session().lastError()));
+    });
 }
 
 // Track header ------------------------------------------------------------------------------
@@ -2820,19 +3186,85 @@ void TracksArea::paint (juce::Graphics& g)
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::caption));
     g.drawText (captionText ("Tracks"), corner.withHeight (Ruler::rulerHeight).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
-    if (studio.layout.globalTracks)
+    // The global tracks' names, level with their lanes, each with its protect lock (D-UI-44).
+    g.setFont (font (Type::small));
+    for (const auto& [lane, area] : rulerComponent.lanes())
     {
-        // The global tracks' names, level with their lanes.
-        g.setFont (font (Type::small));
-        const auto label = [&] (const char* text, int top, int height) {
-            g.drawText (text, corner.withY (top).withHeight (height).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
-        };
-        label ("Markers", Ruler::rulerHeight, Ruler::markerLane);
-        label ("Tempo", Ruler::tempoTop, Ruler::tempoLane);
-        label ("Signature", Ruler::signatureTop, Ruler::signatureLane);
+        g.setColour (colour (Token::textDim));
+        g.drawText (globalLaneName (lane), corner.withY (area.getY()).withHeight (area.getHeight()).reduced (space::s1 + space::half, 0),
+                    juce::Justification::centredLeft);
+        const auto lock = protectButtonBounds (lane).toFloat();
+        const bool on = (studio.protectedLanes & lane) != 0;
+        g.setColour (on ? colour (Token::text) : colour (Token::textDim).withAlpha (0.5f));
+        const auto body = juce::Rectangle<float> (lock.getX() + 2.0f, lock.getCentreY() - 1.0f, lock.getWidth() - 4.0f, 6.0f);
+        g.fillRoundedRectangle (body, 1.0f);
+        juce::Path shackle;
+        shackle.addCentredArc (body.getCentreX(), body.getY(), body.getWidth() / 2.0f - 1.0f, 3.5f, 0.0f, on ? -juce::MathConstants<float>::halfPi : -juce::MathConstants<float>::pi * 0.85f,
+                               juce::MathConstants<float>::halfPi, true);
+        g.strokePath (shackle, juce::PathStrokeType (1.4f));
     }
     g.setColour (colour (Token::border));
     g.fillRect (corner.withTop (corner.getBottom() - 1));
+}
+
+juce::Rectangle<int> TracksArea::protectButtonBounds (GlobalLane lane) const
+{
+    const auto area = rulerComponent.laneBounds (lane);
+    if (! area)
+        return {};
+    return { headerWidth() - space::s1 - 14, area->getCentreY() - 7, 14, 14 };
+}
+
+juce::PopupMenu TracksArea::globalTracksMenu() const
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Show");
+    for (const auto lane : globalLaneOrder)
+        menu.addItem (globalShowBase + lane, globalLaneName (lane), true, studio.layout.globalTracks && (studio.layout.globalLanes & lane) != 0);
+    menu.addSeparator();
+    menu.addItem (static_cast<int> (Cmd::showSingleGlobalTrack) + 1, commandInfo (Cmd::showSingleGlobalTrack).name, true, studio.layout.singleGlobalLane);
+    menu.addItem (static_cast<int> (Cmd::markerTrackOnly) + 1, "Marker Track Only", true,
+                  studio.layout.globalTracks && studio.layout.globalLanes == laneMarkers && ! studio.layout.singleGlobalLane);
+    menu.addSeparator();
+    juce::PopupMenu protect;
+    for (const auto lane : globalLaneOrder)
+        protect.addItem (globalProtectBase + lane, globalLaneName (lane), true, (studio.protectedLanes & lane) != 0);
+    menu.addSubMenu ("Protect", protect);
+    menu.addSeparator();
+    for (const auto c : { Cmd::addSection, Cmd::createSignatureChange, Cmd::createKeyChange })
+        menu.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+    return menu;
+}
+
+void TracksArea::pickGlobalTracksMenu (int item)
+{
+    if (item > globalProtectBase && item <= globalProtectBase + allGlobalLanes)
+        studio.toggleLaneProtect (static_cast<GlobalLane> (item - globalProtectBase));
+    else if (item > globalShowBase && item <= globalShowBase + allGlobalLanes)
+    {
+        const auto lane = static_cast<GlobalLane> (item - globalShowBase);
+        studio.setLaneShown (lane, ! (studio.layout.globalTracks && (studio.layout.globalLanes & lane) != 0));
+    }
+    else if (item > 0 && item < globalShowBase)
+        studio.perform (static_cast<Cmd> (item - 1));
+}
+
+void TracksArea::mouseDown (const juce::MouseEvent& e)
+{
+    const auto p = e.getPosition();
+    if (p.x >= headerWidth() || p.y < Ruler::rulerHeight || p.y >= rulerComponent.getHeight())
+        return;
+    if (e.mods.isPopupMenu())
+    {
+        globalTracksMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe = juce::Component::SafePointer<TracksArea> (this)] (int item) {
+            if (safe != nullptr)
+                safe->pickGlobalTracksMenu (item);
+        });
+        return;
+    }
+    for (const auto& [lane, area] : rulerComponent.lanes())
+        if (protectButtonBounds (lane).expanded (2).contains (p))
+            studio.toggleLaneProtect (lane);
 }
 
 void TracksArea::paintOverChildren (juce::Graphics& g)

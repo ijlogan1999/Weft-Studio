@@ -43,6 +43,10 @@ std::string describe (const Path& p)
         return "an automation lane";
     if (c == model::keys::markers)
         return "a marker";
+    if (c == model::keys::keyChanges)
+        return "a key change";
+    if (c == model::keys::sections)
+        return "a section";
     if (c == model::keys::tempoMap)
         return "a tempo change";
     if (c == model::keys::signatureMap)
@@ -117,6 +121,8 @@ std::optional<Session> Session::createNew (const NewProjectOptions& options, Use
                      .set (model::keys::signatureMap,
                            Value::map().set ("points", Value::map().set ("initial", Value::map().set ("bar", 0).set ("numerator", 4).set ("denominator", 4))))
                      .set (model::keys::markers, Value::map())
+                     .set (model::keys::keyChanges, Value::map())
+                     .set (model::keys::sections, Value::map())
                      .set ("cycle", model::TimeRange {}.toValue())
                      .set ("punch", model::TimeRange {}.toValue())
                      .set ("endMarker", Value())

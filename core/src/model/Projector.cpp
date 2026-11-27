@@ -106,6 +106,48 @@ Color ProjectModel::regionColor (const Region& r) const
     return t != nullptr ? t->color : Color {};
 }
 
+std::vector<const KeyChange*> ProjectModel::keyChangesInOrder() const
+{
+    std::vector<const KeyChange*> out;
+    for (const auto& [id, k] : keyChanges)
+        out.push_back (k.get());
+    std::sort (out.begin(), out.end(), [] (const auto* a, const auto* b) { return a->pos != b->pos ? a->pos < b->pos : a->id < b->id; });
+    return out;
+}
+
+const KeyChange* ProjectModel::keyChangeAt (Ticks t) const
+{
+    const KeyChange* found = nullptr;
+    for (const auto* k : keyChangesInOrder())
+        if (k->pos <= t)
+            found = k;
+    return found;
+}
+
+KeySignature ProjectModel::keyAt (Ticks t) const
+{
+    const auto* k = keyChangeAt (t);
+    return k != nullptr ? k->key : info.key;
+}
+
+std::vector<const Section*> ProjectModel::sectionsInOrder() const
+{
+    std::vector<const Section*> out;
+    for (const auto& [id, s] : sections)
+        out.push_back (s.get());
+    std::sort (out.begin(), out.end(), [] (const auto* a, const auto* b) { return a->start != b->start ? a->start < b->start : a->id < b->id; });
+    return out;
+}
+
+const Section* ProjectModel::sectionAt (Ticks t) const
+{
+    const Section* found = nullptr;
+    for (const auto* s : sectionsInOrder())
+        if (s->start <= t && t < s->end())
+            found = s;
+    return found;
+}
+
 // Reading -------------------------------------------------------------------
 
 namespace
@@ -222,6 +264,8 @@ ProjectModel Projector::project (const Document& document)
     readCollection (m.takeFolders, root[keys::takeFolders]);
     readCollection (m.midiSequences, root[keys::midiSequences]);
     readCollection (m.markers, root[keys::markers]);
+    readCollection (m.keyChanges, root[keys::keyChanges]);
+    readCollection (m.sections, root[keys::sections]);
     readCollection (m.storedLanes, root[keys::automationLanes]);
     readCollab (m, root[keys::collab]);
     m.media.clear();
@@ -254,7 +298,7 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         {
             // A whole collection was replaced, or a project field changed.
             if (c == keys::tracks || c == keys::regions || c == keys::takeFolders || c == keys::midiSequences || c == keys::markers
-                || c == keys::automationLanes || c == keys::media)
+                || c == keys::keyChanges || c == keys::sections || c == keys::automationLanes || c == keys::media)
             {
                 m = project (document);
                 return;
@@ -294,6 +338,10 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
                 refreshEntity (m.midiSequences, id, v);
             else if (c == keys::markers)
                 refreshEntity (m.markers, id, v);
+            else if (c == keys::keyChanges)
+                refreshEntity (m.keyChanges, id, v);
+            else if (c == keys::sections)
+                refreshEntity (m.sections, id, v);
             else if (c == keys::automationLanes)
                 refreshEntity (m.storedLanes, id, v);
             else if (c == keys::media)

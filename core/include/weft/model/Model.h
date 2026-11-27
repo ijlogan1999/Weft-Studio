@@ -462,6 +462,32 @@ struct KeySignature
     bool operator== (const KeySignature&) const = default;
 };
 
+/** A key change on the global Key track (D-UI-44): from `pos` on the key is `key`; before the
+    first change it is ProjectInfo::key. */
+struct KeyChange
+{
+    Id id;
+    Ticks pos = 0;
+    KeySignature key;
+
+    static KeyChange fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A section of the song on the global Arrangement track (D-UI-45): Intro, Verse, Chorus... */
+struct Section
+{
+    Id id;
+    Ticks start = 0;
+    Ticks length = 8 * 3840; // 8 bars of 4/4
+    std::string name;
+    std::optional<Color> color;
+
+    Ticks end() const noexcept { return start + length; }
+    static Section fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
 /** Scalar project fields (collections live in ProjectModel). */
 struct ProjectInfo
 {

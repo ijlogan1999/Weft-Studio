@@ -6,6 +6,7 @@
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <set>
 #include <map>
@@ -28,6 +29,8 @@ Path sendsPath (const Id& track) { return doc::path ({ keys::tracks, track, "str
 Path tempoPointPath (const Id& id) { return doc::path ({ keys::tempoMap, "points", id }); }
 Path signaturePointPath (const Id& id) { return doc::path ({ keys::signatureMap, "points", id }); }
 Path markerPath (const Id& id) { return doc::path ({ keys::markers, id }); }
+Path keyChangePath (const Id& id) { return doc::path ({ keys::keyChanges, id }); }
+Path sectionPath (const Id& id) { return doc::path ({ keys::sections, id }); }
 
 EditResult ok() { return {}; }
 EditResult wrote (bool success) { return success ? ok() : EditResult::fail ("The document rejected the edit."); }
@@ -1789,6 +1792,271 @@ EditResult Session::deleteMarker (const Id& markerId)
     if (! projection.markers.contains (markerId))
         return reject ("That marker no longer exists.");
     return run ("Delete Marker", [&] (TxnWriter& w) { return wrote (w.remove (markerPath (markerId))); });
+}
+
+// Key track (D-UI-44) -----------------------------------------------------------------
+
+std::optional<Id> Session::addKeyChange (Ticks pos, const model::KeySignature& key)
+{
+    if (pos <= 0)
+    {
+        error = "The key at the project start is the project key: set it in Project Settings or the key display.";
+        return std::nullopt;
+    }
+    if (key.tonic < 0 || key.tonic > 11)
+    {
+        error = "The key's tonic is a pitch class from 0 (C) to 11 (B).";
+        return std::nullopt;
+    }
+    for (const auto& [id, k] : projection.keyChanges)
+        if (k->pos == pos)
+        {
+            error = "There is already a key change there.";
+            return std::nullopt;
+        }
+    model::KeyChange k;
+    k.id = newId();
+    k.pos = pos;
+    k.key = key;
+    return runCreate ("Add Key Change", k.id, [&] (TxnWriter& w) {
+        // Projects from before the Key track have no collection yet.
+        if (! w.doc().get (doc::path ({ keys::keyChanges })) && ! w.put (doc::path ({ keys::keyChanges }), Value::map()))
+            return wrote (false);
+        return wrote (w.put (keyChangePath (k.id), k.toValue()));
+    });
+}
+
+EditResult Session::setKeyChange (const Id& changeId, Ticks pos, const model::KeySignature& key)
+{
+    const auto it = projection.keyChanges.find (changeId);
+    if (it == projection.keyChanges.end())
+        return reject ("That key change no longer exists.");
+    if (pos <= 0)
+        return reject ("A key change goes after the project start.");
+    if (key.tonic < 0 || key.tonic > 11)
+        return reject ("The key's tonic is a pitch class from 0 (C) to 11 (B).");
+    for (const auto& [id, k] : projection.keyChanges)
+        if (id != changeId && k->pos == pos)
+            return reject ("There is already a key change there.");
+    model::KeyChange k = *it->second;
+    k.pos = pos;
+    k.key = key;
+    return run ("Key Change", [&] (TxnWriter& w) { return wrote (w.put (keyChangePath (changeId), k.toValue())); });
+}
+
+EditResult Session::deleteKeyChange (const Id& changeId)
+{
+    if (! projection.keyChanges.contains (changeId))
+        return reject ("That key change no longer exists.");
+    return run ("Delete Key Change", [&] (TxnWriter& w) { return wrote (w.remove (keyChangePath (changeId))); });
+}
+
+EditResult Session::setKeyAt (Ticks t, const model::KeySignature& key)
+{
+    const auto* change = projection.keyChangeAt (t);
+    if (change == nullptr)
+        return setKey (key);
+    if (change->key == key)
+        return reject ("The key there is already " + key.name() + ".");
+    return setKeyChange (change->id, change->pos, key);
+}
+
+// Arrangement track (D-UI-45) ----------------------------------------------------------
+
+namespace
+{
+bool overlapsSection (const model::ProjectModel& m, const Id& except, Ticks start, Ticks end)
+{
+    for (const auto& [id, s] : m.sections)
+        if (id != except && start < s->end() && s->start < end)
+            return true;
+    return false;
+}
+} // namespace
+
+std::optional<Id> Session::addSection (Ticks start, Ticks length, const std::string& name)
+{
+    if (start < 0 || length <= 0)
+    {
+        error = "A section starts at or after the project start and has a length.";
+        return std::nullopt;
+    }
+    if (overlapsSection (projection, {}, start, start + length))
+    {
+        error = "Sections can't overlap.";
+        return std::nullopt;
+    }
+    model::Section s;
+    s.id = newId();
+    s.start = start;
+    s.length = length;
+    static const char* const names[] = { "Intro", "Verse", "Chorus", "Bridge", "Outro" };
+    s.name = name.empty() ? names[std::min<std::size_t> (projection.sections.size(), std::size (names) - 1)] : name;
+    return runCreate ("Add Section", s.id, [&] (TxnWriter& w) {
+        if (! w.doc().get (doc::path ({ keys::sections })) && ! w.put (doc::path ({ keys::sections }), Value::map()))
+            return wrote (false);
+        return wrote (w.put (sectionPath (s.id), s.toValue()));
+    });
+}
+
+EditResult Session::renameSection (const Id& sectionId, const std::string& name)
+{
+    if (! projection.sections.contains (sectionId))
+        return reject ("That section no longer exists.");
+    if (name.empty())
+        return reject ("A section needs a name.");
+    return run ("Rename Section", [&] (TxnWriter& w) { return wrote (w.put (sectionPath (sectionId) / "name", Value (name))); });
+}
+
+EditResult Session::setSectionColor (const Id& sectionId, std::optional<model::Color> color)
+{
+    if (! projection.sections.contains (sectionId))
+        return reject ("That section no longer exists.");
+    if (color && color->rgb.empty() && (color->palette < 0 || color->palette > 23))
+        return reject ("Pick one of the palette colors.");
+    return run ("Section Color", [&] (TxnWriter& w) { return wrote (w.put (sectionPath (sectionId) / "color", color ? color->toValue() : Value())); });
+}
+
+EditResult Session::setSectionRange (const Id& sectionId, Ticks start, Ticks length)
+{
+    const auto it = projection.sections.find (sectionId);
+    if (it == projection.sections.end())
+        return reject ("That section no longer exists.");
+    if (start < 0 || length <= 0)
+        return reject ("A section starts at or after the project start and has a length.");
+    if (overlapsSection (projection, sectionId, start, start + length))
+        return reject ("Sections can't overlap.");
+    return run ("Resize Section", [&] (TxnWriter& w) {
+        return wrote (w.put (sectionPath (sectionId) / "start", Value (start)) && w.put (sectionPath (sectionId) / "length", Value (length)));
+    });
+}
+
+EditResult Session::deleteSection (const Id& sectionId)
+{
+    if (! projection.sections.contains (sectionId))
+        return reject ("That section no longer exists.");
+    return run ("Delete Section", [&] (TxnWriter& w) { return wrote (w.remove (sectionPath (sectionId))); });
+}
+
+EditResult Session::moveSection (const Id& sectionId, Ticks to, bool copy)
+{
+    const auto it = projection.sections.find (sectionId);
+    if (it == projection.sections.end())
+        return reject ("That section no longer exists.");
+    const auto original = *it->second; // by value: the edits below re-read the model
+    const auto a = original.start, b = original.end(), len = b - a;
+    bool insideOne = to < 0;
+    for (const auto& [id, other] : projection.sections)
+        insideOne = insideOne || (to > other->start && to < other->end());
+    if (insideOne)
+        return reject ("Drop the section at the start or end of another section.");
+    if (! copy && (to == a || to == b))
+        return {};
+    const auto allRegions = [this] {
+        std::vector<Id> out;
+        for (const auto& [id, r] : projection.regions)
+            out.push_back (id);
+        return out;
+    };
+    const auto regionsStarting = [this] (Ticks from, Ticks until) {
+        std::vector<Id> out;
+        for (const auto& [id, r] : projection.regions)
+            if (r->start >= from && r->start < until)
+                out.push_back (id);
+        return out;
+    };
+    beginGesture (copy ? "Copy Section" : "Move Section");
+    // Nothing crosses an edge of the section or the drop point.
+    for (const auto at : { a, b, to })
+        if (! projection.regions.empty())
+            splitRegionsAt (allRegions(), at);
+    // Where each region, marker, key change and section starting at t goes.
+    const auto shifted = [&] (Ticks t) -> Ticks {
+        if (copy)
+            return t >= to ? t + len : t;
+        if (t >= a && t < b)
+            return t + (to > b ? to - b : to - a);
+        if (to > b && t >= b && t < to)
+            return t - len;
+        if (to < a && t >= to && t < a)
+            return t + len;
+        return t;
+    };
+    bool ok = true;
+    std::string failure;
+    const auto step = [&] (EditResult r) {
+        if (! r)
+        {
+            ok = false;
+            failure = r.error;
+        }
+    };
+    const auto moveRange = [&] (Ticks from, Ticks until, Ticks delta) {
+        if (const auto moving = regionsStarting (from, until); ok && ! moving.empty() && delta != 0)
+            step (moveRegions (moving, delta, 0));
+    };
+    // The section's own regions, as they were before any shift (copies are made from them).
+    const auto inside = regionsStarting (a, b);
+    if (copy)
+        moveRange (to, std::numeric_limits<Ticks>::max(), len);
+    else if (to > b)
+    {
+        const auto between = regionsStarting (b, to);
+        if (! inside.empty())
+            step (moveRegions (inside, to - b, 0));
+        if (ok && ! between.empty())
+            step (moveRegions (between, -len, 0));
+    }
+    else
+    {
+        const auto between = regionsStarting (to, a);
+        if (! inside.empty())
+            step (moveRegions (inside, to - a, 0));
+        if (ok && ! between.empty())
+            step (moveRegions (between, len, 0));
+    }
+    if (ok && copy && ! inside.empty())
+    {
+        // The originals may have shifted with everything after the drop point.
+        const auto from = a >= to ? a + len : a;
+        if (copyRegions (inside, to - from, 0).empty())
+        {
+            ok = false;
+            failure = error;
+        }
+    }
+    if (ok)
+    {
+        // Markers, key changes and the sections themselves, all at once (no overlaps on the way).
+        const auto result = run (copy ? "Copy Section" : "Move Section", [&] (TxnWriter& w) {
+            bool good = true;
+            for (const auto& [id, m] : projection.markers)
+                if (const auto t = shifted (m->pos); t != m->pos)
+                    good = good && w.put (markerPath (id) / "pos", Value (t));
+            for (const auto& [id, k] : projection.keyChanges)
+                if (const auto t = shifted (k->pos); t != k->pos)
+                    good = good && w.put (keyChangePath (id) / "pos", Value (t));
+            for (const auto& [id, s] : projection.sections)
+                if (const auto t = shifted (s->start); t != s->start)
+                    good = good && w.put (sectionPath (id) / "start", Value (t));
+            if (copy)
+            {
+                auto twin = original;
+                twin.id = newId();
+                twin.start = to;
+                good = good && w.put (sectionPath (twin.id), twin.toValue());
+            }
+            return wrote (good);
+        });
+        step (result);
+    }
+    if (! ok)
+    {
+        cancelGesture();
+        return reject (failure.empty() ? "The section couldn't move." : failure);
+    }
+    endGesture();
+    return {};
 }
 
 // Transport displays (F-TRN-9, 10, 20) ------------------------------------------------

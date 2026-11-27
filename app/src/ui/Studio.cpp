@@ -142,6 +142,19 @@ juce::String formatDisplayTime (double seconds, double sampleRate, ControlBarLay
     }
 }
 
+juce::String globalLaneName (GlobalLane lane)
+{
+    switch (lane)
+    {
+        case laneArrangement: return "Arrangement";
+        case laneMarkers: return "Markers";
+        case laneTempo: return "Tempo";
+        case laneSignature: return "Signature";
+        case laneKey: return "Key";
+        default: return {};
+    }
+}
+
 std::vector<Cmd> defaultToolbarCommands()
 {
     return { Cmd::split, Cmd::join, Cmd::repeat, Cmd::quantize, Cmd::setCycleToSelection, Cmd::addMarker, Cmd::zoomToFit, Cmd::bounce };
@@ -188,6 +201,9 @@ juce::String PanelLayout::toString() const
     o->setProperty ("sidePanelWidth", sidePanelWidth);
     o->setProperty ("bottomHeight", bottomHeight);
     o->setProperty ("darkTheme", darkTheme);
+    o->setProperty ("globalLanes", globalLanes);
+    o->setProperty ("singleGlobalLane", singleGlobalLane);
+    o->setProperty ("singleLane", static_cast<int> (singleLane));
     o->setProperty ("controlBar", controlBar);
     o->setProperty ("toolbar", toolbar);
     o->setProperty ("bar", bar.toVar());
@@ -215,6 +231,11 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
     l.sidePanelWidth = std::clamp (get ("sidePanelWidth", l.sidePanelWidth), 200, 700);
     l.bottomHeight = std::clamp (get ("bottomHeight", l.bottomHeight), 160, 2000);
     l.darkTheme = get ("darkTheme", l.darkTheme);
+    l.globalLanes = get ("globalLanes", l.globalLanes) & allGlobalLanes;
+    l.singleGlobalLane = get ("singleGlobalLane", l.singleGlobalLane);
+    for (const auto lane : globalLaneOrder)
+        if (get ("singleLane", 0) == static_cast<int> (lane))
+            l.singleLane = lane;
     l.controlBar = get ("controlBar", l.controlBar);
     l.toolbar = get ("toolbar", l.toolbar);
     l.bar = ControlBarLayout::fromVar (v["bar"]);
@@ -1592,6 +1613,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::applyRegionParameters: case Cmd::applyRegionParametersExceptDelay:
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
         case Cmd::toggleControlBar: case Cmd::toggleToolbar: case Cmd::customizeControlBar: case Cmd::bigBeatsDisplay: case Cmd::bigTimeDisplay: case Cmd::performanceMeter:
+        case Cmd::configureGlobalTracks: case Cmd::showSingleGlobalTrack: case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack: case Cmd::markerTrackOnly: case Cmd::createSignatureChange: case Cmd::createKeyChange: case Cmd::addSection:
             break;
     }
     return std::nullopt;
@@ -1608,6 +1630,22 @@ bool Studio::perform (Cmd command)
     if (notesFocused())
         if (const auto handled = performNotes (command))
             return *handled;
+    // Commands that edit a protected global track do nothing (D-UI-44).
+    {
+        std::optional<GlobalLane> lane;
+        if (command == Cmd::addMarker || command == Cmd::renameMarker || command == Cmd::deleteMarker || command == Cmd::markerForSelection)
+            lane = laneMarkers;
+        else if (command == Cmd::tapTempo)
+            lane = laneTempo;
+        else if (command == Cmd::createSignatureChange)
+            lane = laneSignature;
+        else if (command == Cmd::createKeyChange)
+            lane = laneKey;
+        else if (command == Cmd::addSection)
+            lane = laneArrangement;
+        if (lane && laneProtected (*lane))
+            return false;
+    }
     auto& s = *sess;
     const auto& m = model();
     const auto ids = selection.ids();
@@ -2057,6 +2095,51 @@ bool Studio::perform (Cmd command)
         }
         case Cmd::toggleInspector: layout.inspector = ! layout.inspector; break;
         case Cmd::toggleControlBar: layout.controlBar = ! layout.controlBar; break;
+        case Cmd::showSingleGlobalTrack:
+            layout.singleGlobalLane = ! layout.singleGlobalLane;
+            layout.globalTracks = true;
+            if (layout.singleGlobalLane && (layout.globalLanes & layout.singleLane) == 0)
+                layout.globalLanes |= layout.singleLane;
+            break;
+        case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack:
+        {
+            const auto lane = command == Cmd::toggleArrangementTrack ? laneArrangement : command == Cmd::toggleMarkerTrack ? laneMarkers
+                              : command == Cmd::toggleTempoTrack     ? laneTempo
+                              : command == Cmd::toggleSignatureTrack ? laneSignature
+                                                                     : laneKey;
+            setLaneShown (lane, ! laneShown (lane));
+            break;
+        }
+        case Cmd::markerTrackOnly:
+            // Only the marker track, or back to what showed before.
+            if (layout.globalTracks && layout.globalLanes == laneMarkers && ! layout.singleGlobalLane)
+                layout.globalLanes = lanesBeforeMarkerOnly;
+            else
+            {
+                lanesBeforeMarkerOnly = layout.globalLanes;
+                layout.globalLanes = laneMarkers;
+                layout.singleGlobalLane = false;
+                layout.globalTracks = true;
+            }
+            break;
+        case Cmd::addSection:
+        {
+            // At the playhead's bar when that's free, else right after the last section; 8 bars of the meter there.
+            const auto here = m.signatures.barStart (m.signatures.barAt (playhead()).bar);
+            const auto lengthAt = [&m] (Ticks t) { return 8 * m.signatures.barLength (m.signatures.barAt (t).bar); };
+            auto start = here;
+            for (const auto* x : m.sectionsInOrder())
+                if (x->start < here + lengthAt (here) && here < x->end())
+                    start = m.sectionsInOrder().back()->end();
+            const auto added = s.addSection (start, lengthAt (start));
+            if (! added)
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            setStatus ("Added section \"" + juce::String (model().sections.at (*added)->name) + "\".");
+            break;
+        }
         case Cmd::toggleToolbar: layout.toolbar = ! layout.toolbar; break;
         case Cmd::toggleSidePanel: layout.sidePanel = ! layout.sidePanel; break;
         case Cmd::toggleGlobalTracks: layout.globalTracks = ! layout.globalTracks; break;
@@ -2240,6 +2323,9 @@ bool Studio::perform (Cmd command)
         case Cmd::audioSettings:
         case Cmd::settings:
         case Cmd::customizeControlBar:
+        case Cmd::configureGlobalTracks:
+        case Cmd::createSignatureChange:
+        case Cmd::createKeyChange:
         case Cmd::bigBeatsDisplay:
         case Cmd::bigTimeDisplay:
         case Cmd::performanceMeter:
@@ -2850,6 +2936,41 @@ bool Studio::previewFile (const fs::path& file)
     }
     eng->preview (std::make_shared<const media::AudioData> (std::move (*audio)));
     return true;
+}
+
+bool Studio::laneShown (GlobalLane lane) const noexcept
+{
+    if (! layout.globalTracks || (layout.globalLanes & lane) == 0)
+        return false;
+    return ! layout.singleGlobalLane || layout.singleLane == lane;
+}
+
+bool Studio::laneProtected (GlobalLane lane)
+{
+    if ((protectedLanes & lane) == 0)
+        return false;
+    setStatus ("The " + globalLaneName (lane) + " track is protected. Click its lock to edit it.");
+    return true;
+}
+
+void Studio::toggleLaneProtect (GlobalLane lane)
+{
+    protectedLanes ^= lane;
+    setStatus (globalLaneName (lane) + " track " + ((protectedLanes & lane) != 0 ? "protected." : "unprotected."));
+    sendChangeMessage();
+}
+
+void Studio::setLaneShown (GlobalLane lane, bool shown)
+{
+    if (shown)
+    {
+        layout.globalTracks = true;
+        layout.globalLanes |= lane;
+        layout.singleLane = lane;
+    }
+    else
+        layout.globalLanes &= ~lane;
+    sendChangeMessage();
 }
 
 Ticks Studio::nudgeDelta (Ticks from, int direction) const
@@ -4305,7 +4426,7 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
-        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
+        Cmd::renameMarker, Cmd::deleteMarker, Cmd::addSection, Cmd::createSignatureChange, Cmd::createKeyChange, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
         Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
         Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
         Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip, Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext,

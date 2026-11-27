@@ -110,8 +110,8 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         const auto typed = model::KeySignature::parse (key.getText().toStdString());
         if (! typed)
             studio.setStatus ("Type a key like C, F# minor or Bbm.");
-        else if (*typed != studio.model().info.key)
-            studio.check (studio.session().setKey (*typed));
+        else if (*typed != studio.model().keyAt (studio.playhead()))
+            studio.check (studio.session().setKeyAt (studio.playhead(), *typed)); // the key in effect here (D-UI-44)
         refresh();
     };
 
@@ -242,7 +242,7 @@ void ControlBar::timerCallback()
         signature.setText (juce::String (sig.numerator) + "/" + juce::String (sig.denominator), juce::dontSendNotification);
     }
     if (! key.isBeingEdited())
-        key.setText (keyText (m.info.key), juce::dontSendNotification);
+        key.setText (keyText (m.keyAt (t)), juce::dontSendNotification);
     const auto load = studio.engine().cpuLoad();
     cpu.setText ("CPU " + juce::String (juce::roundToInt (load * 100.0)) + "%", juce::dontSendNotification);
     const auto level = load > 0.9 || studio.engine().dropouts() > 0 ? Token::record : load > 0.7 ? Token::warning : Token::textDim;

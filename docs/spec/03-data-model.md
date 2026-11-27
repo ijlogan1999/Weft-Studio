@@ -55,6 +55,8 @@ Project {
   tempoMap: TempoMap
   signatureMap: SignatureMap
   markers: Map<Id, Marker>
+  keyChanges: Map<Id, KeyChange>  // D-UI-44; missing in older projects = none
+  sections: Map<Id, Section>      // the arrangement (D-UI-45)
   cycle: { enabled: bool, start: Ticks, end: Ticks }
   punch: { enabled: bool, start: Ticks, end: Ticks }
   endMarker: Ticks?
@@ -346,6 +348,8 @@ Results are computed in float64 and rounded to the nearest sample only at the po
 ### 8.1 Marker
 ```ts
 Marker { id: Id, pos: Ticks, name: string, color: Color?, createdBy: UserId }
+KeyChange { id: Id, pos: Ticks /* > 0 */, key: { tonic: 0..11, mode: "major" | "minor" } }
+Section { id: Id, start: Ticks, length: Ticks, name: string, color: Color? }   // sections don't overlap
 ```
 
 ### 8.2 Automation lane

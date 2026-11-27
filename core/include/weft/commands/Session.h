@@ -404,6 +404,28 @@ public:
     EditResult setMarkerColor (const Id& markerId, std::optional<model::Color> color);
     EditResult deleteMarker (const Id& markerId);
 
+    // Key track (D-UI-44) ---------------------------------------------------------------
+    /** A key change at pos (after the project start; one per position). */
+    std::optional<Id> addKeyChange (Ticks pos, const model::KeySignature& key);
+    EditResult setKeyChange (const Id& changeId, Ticks pos, const model::KeySignature& key);
+    EditResult deleteKeyChange (const Id& changeId);
+    /** The key display's edit: sets the key in effect at t (a change, or the project key before the first). */
+    EditResult setKeyAt (Ticks t, const model::KeySignature& key);
+
+    // Arrangement track (D-UI-45) -------------------------------------------------------
+    /** A section; sections don't overlap. An empty name takes the next of Intro, Verse, Chorus, Bridge, Outro. */
+    std::optional<Id> addSection (Ticks start, Ticks length, const std::string& name = {});
+    EditResult renameSection (const Id& sectionId, const std::string& name);
+    EditResult setSectionColor (const Id& sectionId, std::optional<model::Color> color);
+    EditResult setSectionRange (const Id& sectionId, Ticks start, Ticks length);
+    /** Removes the section; its regions stay where they are. */
+    EditResult deleteSection (const Id& sectionId);
+    /** Moves a section and what's in it to `to`, the start or end of another section (or 0), shifting what lies
+        between by its length; with `copy`, inserts a copy there instead and shifts everything from `to` on later.
+        Regions crossing the edges are split first; regions, markers, key changes and sections move; tempo and
+        signature changes and automation stay. One undo step "Move Section" or "Copy Section" (D-UI-45). */
+    EditResult moveSection (const Id& sectionId, Ticks to, bool copy);
+
     // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------
     static constexpr std::int64_t lockExpiryMs = 24LL * 60 * 60 * 1000;
     /** Locks a track for this user. Refused while someone else holds an unexpired lock. */

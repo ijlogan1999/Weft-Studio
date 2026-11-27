@@ -567,6 +567,16 @@ void MainComponent::handleUiCommand (Cmd command)
         launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
     else if (command == Cmd::bigBeatsDisplay || command == Cmd::bigTimeDisplay || command == Cmd::performanceMeter)
         openFloating (command);
+    else if (command == Cmd::configureGlobalTracks)
+        tracksArea.globalTracksMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                                                     [safe = juce::Component::SafePointer<MainComponent> (this)] (int item) {
+                                                         if (safe != nullptr)
+                                                             safe->tracksArea.pickGlobalTracksMenu (item);
+                                                     });
+    else if (command == Cmd::createSignatureChange)
+        tracksArea.ruler().createSignatureChange();
+    else if (command == Cmd::createKeyChange)
+        tracksArea.ruler().createKeyChange();
     else if (command == Cmd::customizeControlBar)
         control.customizeMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
                                                [safe = juce::Component::SafePointer<MainComponent> (this)] (int item) {
@@ -1117,6 +1127,29 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
+            {
+                // D-UI-44: which global tracks show, and the global-track commands.
+                juce::PopupMenu global;
+                for (const auto lane : globalLaneOrder)
+                {
+                    const auto cmd = lane == laneArrangement ? Cmd::toggleArrangementTrack : lane == laneMarkers ? Cmd::toggleMarkerTrack
+                                     : lane == laneTempo     ? Cmd::toggleTempoTrack
+                                     : lane == laneSignature ? Cmd::toggleSignatureTrack
+                                                             : Cmd::toggleKeyTrack;
+                    global.addItem (static_cast<int> (cmd) + 1, globalLaneName (lane) + " Track", true, studio.laneShown (lane));
+                }
+                global.addSeparator();
+                global.addItem (static_cast<int> (Cmd::showSingleGlobalTrack) + 1, commandInfo (Cmd::showSingleGlobalTrack).name, true, studio.layout.singleGlobalLane);
+                for (auto c : { Cmd::markerTrackOnly, Cmd::configureGlobalTracks, Cmd::addSection, Cmd::createSignatureChange, Cmd::createKeyChange })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    global.addItem (item);
+                }
+                menu.addSubMenu ("Global Tracks", global);
+            }
             {
                 // D-UI-43: the control bar, the toolbar and the big displays.
                 juce::PopupMenu bars;

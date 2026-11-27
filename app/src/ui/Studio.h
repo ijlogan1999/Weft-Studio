@@ -116,6 +116,19 @@ std::vector<Cmd> defaultToolbarCommands();
 /** Every command the toolbar can hold, in its menu's order. */
 std::vector<Cmd> toolbarChoices();
 
+/** The global tracks (D-UI-44), top to bottom: bits of PanelLayout::globalLanes and Studio::protectedLanes. */
+enum GlobalLane : int
+{
+    laneArrangement = 1,
+    laneMarkers = 2,
+    laneTempo = 4,
+    laneSignature = 8,
+    laneKey = 16
+};
+inline constexpr int defaultGlobalLanes = laneMarkers | laneTempo | laneSignature, allGlobalLanes = 31;
+inline constexpr GlobalLane globalLaneOrder[] = { laneArrangement, laneMarkers, laneTempo, laneSignature, laneKey };
+juce::String globalLaneName (GlobalLane lane);
+
 /** Panel visibility and sizes, kept per user across restarts (F-UI-1). */
 struct PanelLayout
 {
@@ -130,6 +143,10 @@ struct PanelLayout
     /** View › Control Bar and View › Toolbar, and their customized contents (D-UI-43). */
     bool controlBar = true;
     bool toolbar = false;
+    /** Which global tracks show (Configure Global Tracks, D-UI-44); with singleGlobalLane only `singleLane` does. */
+    int globalLanes = defaultGlobalLanes;
+    bool singleGlobalLane = false;
+    GlobalLane singleLane = laneMarkers;
     ControlBarLayout bar, barDefault;
     std::vector<Cmd> toolbarCommands = defaultToolbarCommands(), toolbarDefault = defaultToolbarCommands();
 
@@ -240,6 +257,16 @@ public:
     Ticks nudgeDelta (Ticks from, int direction) const;
     /** View › Grid Lines (D-W3-11): the arrange grid shows. */
     bool gridLines = true;
+    /** Whether a global track shows now (D-UI-44). */
+    bool laneShown (GlobalLane lane) const noexcept;
+    /** Protected global tracks (D-UI-44): their contents can't be edited. Local, not saved. */
+    int protectedLanes = 0;
+    int lanesBeforeMarkerOnly = defaultGlobalLanes;
+    /** True, after saying so in the status bar, when `lane` is protected. */
+    bool laneProtected (GlobalLane lane);
+    void toggleLaneProtect (GlobalLane lane);
+    /** Shows or hides one global track; showing one while Single is on makes it the one shown. */
+    void setLaneShown (GlobalLane lane, bool shown);
     /** Mixer views (D-W6-14): Single (the selected channel and where its signal goes), Tracks (as the track
         list shows them) or All (hidden tracks too), and which kinds of strip show. Local, not saved. */
     enum class MixerMode { single, tracks, all };

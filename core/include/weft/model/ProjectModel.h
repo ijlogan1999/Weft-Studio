@@ -43,6 +43,8 @@ struct ProjectModel
     std::map<Id, Ref<MidiSequence>> midiSequences;
     std::map<std::string, Ref<MediaRef>> media;
     std::map<Id, Ref<Marker>> markers;
+    std::map<Id, Ref<KeyChange>> keyChanges; // D-UI-44
+    std::map<Id, Ref<Section>> sections;     // the arrangement (D-UI-45)
     std::map<Id, Ref<AutomationLane>> storedLanes;
     std::vector<Id> storedTrackOrder; // raw list, may contain duplicates
     std::vector<TempoPoint> storedTempoPoints;
@@ -80,6 +82,15 @@ struct ProjectModel
     double regionEndTick (const Region& r) const;
     /** The color a region shows: its own, or its track's (F-TRK-9). */
     Color regionColor (const Region& r) const;
+
+    /** The key at a tick: the last key change at or before it, else the project key (D-UI-44). */
+    KeySignature keyAt (Ticks t) const;
+    /** The key change in effect at t, or null before the first. */
+    const KeyChange* keyChangeAt (Ticks t) const;
+    std::vector<const KeyChange*> keyChangesInOrder() const;
+    /** Arrangement sections by start (ties by id). */
+    std::vector<const Section*> sectionsInOrder() const;
+    const Section* sectionAt (Ticks t) const;
 };
 
 /** Document root keys for entity collections (depth-2 paths are entities). */
@@ -94,6 +105,8 @@ inline constexpr const char* media = "media";
 inline constexpr const char* tempoMap = "tempoMap";
 inline constexpr const char* signatureMap = "signatureMap";
 inline constexpr const char* markers = "markers";
+inline constexpr const char* keyChanges = "keyChanges";
+inline constexpr const char* sections = "sections";
 inline constexpr const char* automationLanes = "automationLanes";
 inline constexpr const char* collab = "collab";
 } // namespace keys
