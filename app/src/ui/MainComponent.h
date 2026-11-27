@@ -179,6 +179,8 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void handleUiCommand (Cmd command);
+    /** Shows the side panel on its Library tab (D-UI-53). */
+    void showLibrary();
     void ask (const juce::String& title, const juce::String& text, const juce::String& first, const juce::String& second,
               std::function<void (int)> answer);
     void alert (const juce::String& title, const juce::String& text);

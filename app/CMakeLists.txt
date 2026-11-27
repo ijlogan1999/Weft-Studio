@@ -38,6 +38,7 @@ add_library(weft_app_lib STATIC
     src/ui/ShareDialogs.cpp
     src/ui/SidePanel.cpp
     src/ui/SmartControls.cpp
+    src/ui/Library.cpp
     src/ui/Studio.cpp
     src/ui/StudioCollab.cpp
     src/ui/Theme.cpp

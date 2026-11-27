@@ -182,7 +182,7 @@ ControlBar::~ControlBar()
 
 std::vector<CommandButton*> ControlBar::commandButtons()
 {
-    return { &inspector, &side, &mixer, &editor, &smart, &global, &toolbarToggle, &start, &rewind, &forward, &stop, &play, &record, &cycle,
+    return { &inspector, &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle, &start, &rewind, &forward, &stop, &play, &record, &cycle,
              &metronome, &punch, &replace, &snap, &follow, &keyboard };
 }
 
@@ -289,7 +289,7 @@ void ControlBar::pickOverflow (int item)
 
 std::vector<std::vector<juce::Button*>> ControlBar::groups()
 {
-    return { { &inspector, &side, &mixer, &editor, &smart, &global, &toolbarToggle },
+    return { { &inspector, &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle },
              { &start, &rewind, &forward, &stop, &play, &record, &cycle },
              { &metronome, &punch, &replace },
              { &snap },
@@ -351,7 +351,7 @@ void ControlBar::resized()
     std::vector<Item> items;
     auto gap = [&] (int w) { items.push_back ({ nullptr, w }); };
     items.push_back ({ &inspector, 72 });
-    for (auto* b : { &side, &mixer, &editor, &smart, &global, &toolbarToggle })
+    for (auto* b : { &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle })
         items.push_back ({ b, b == &toolbarToggle ? 64 : 56 });
     gap (space::s1);
     for (auto* b : { &start, &rewind, &forward, &stop, &play, &record, &cycle })
@@ -467,7 +467,7 @@ bool ControlBar::allowed (const juce::Component* c) const
 {
     using L = ControlBarLayout;
     const auto& bar = studio.layout.bar;
-    if (c == &inspector || c == &side || c == &mixer || c == &editor || c == &smart || c == &global)
+    if (c == &inspector || c == &side || c == &mixer || c == &editor || c == &smart || c == &library || c == &global)
         return bar.shows (L::panelButtons);
     if (c == &toolbarToggle)
         return bar.shows (L::toolbarButton);

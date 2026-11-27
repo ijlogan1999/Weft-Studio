@@ -519,6 +519,8 @@ public:
         juce::String label, group;
     };
     std::vector<PluginChoice> pluginChoices (bool instruments) const;
+    /** Shows the Library's presets for a plug-in (D-UI-53); the main window sets it. */
+    std::function<void (const juce::String& pluginName)> showPresets;
     /** Adds an insert and opens its editor (W-6 step 2). */
     std::optional<Id> addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index = {});
     bool replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice);

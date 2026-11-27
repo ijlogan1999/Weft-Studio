@@ -11,6 +11,7 @@
 #include "UndoHistory.h"
 #include "KeyCommands.h"
 #include "SmartControls.h"
+#include "Library.h"
 
 namespace weft::ui
 {
@@ -211,6 +212,12 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     status.setVisible (true);
     setWantsKeyboardFocus (true);
     studio.uiCommand = [this] (Cmd c) { handleUiCommand (c); };
+    studio.showPresets = [this] (const juce::String& pluginName) {
+        showLibrary();
+        auto& lib = sidePanel.library();
+        lib.setView (LibraryView::presets);
+        lib.setSearch (pluginName);
+    };
     studio.addChangeListener (this);
     shownLayout = studio.layout;
     changeListenerCallback (nullptr);
@@ -222,6 +229,7 @@ MainComponent::~MainComponent()
 {
     juce::Desktop::getInstance().removeDarkModeSettingListener (this);
     studio.uiCommand = nullptr;
+    studio.showPresets = nullptr;
     studio.onMissingPlugins = nullptr;
     studio.confirmBreakLock = nullptr;
     studio.onShowThread = nullptr;
@@ -412,6 +420,13 @@ juce::PopupMenu MainComponent::toolMenu() const
         menu.addItem (item);
     }
     return menu;
+}
+
+void MainComponent::showLibrary()
+{
+    studio.layout.sidePanel = true;
+    sidePanel.showTab (SidePanel::libraryTab);
+    studio.sendChangeMessage();
 }
 
 void MainComponent::handleUiCommand (Cmd command)
@@ -612,6 +627,28 @@ void MainComponent::handleUiCommand (Cmd command)
         if (! showing)
             sidePanel.showTab (SidePanel::notesTab);
         studio.sendChangeMessage();
+    }
+    else if (command == Cmd::toggleLibrary)
+    {
+        // The Library (D-UI-53): the side panel's Library tab; again while it shows, the side panel closes.
+        const bool showing = studio.layout.sidePanel && sidePanel.tabs().getCurrentTabIndex() == SidePanel::libraryTab;
+        if (showing)
+        {
+            studio.layout.sidePanel = false;
+            studio.sendChangeMessage();
+        }
+        else
+            showLibrary();
+    }
+    else if (command == Cmd::loopBrowser)
+    {
+        showLibrary();
+        sidePanel.library().setView (LibraryView::loops);
+    }
+    else if (command == Cmd::searchLibrary)
+    {
+        showLibrary();
+        sidePanel.library().focusSearch();
     }
     else if (command == Cmd::smartControlsWindow)
     {
@@ -1373,7 +1410,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         }
         case 5:
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::listEditors, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor, Cmd::toggleAudioFileEditor,
-                            Cmd::toggleSmartControls, Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
+                            Cmd::toggleSmartControls, Cmd::toggleLibrary, Cmd::loopBrowser, Cmd::searchLibrary, Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             {
                 // D-UI-44: which global tracks show, and the global-track commands.

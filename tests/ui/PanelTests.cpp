@@ -3,6 +3,8 @@
 #include "UiFixture.h"
 
 #include "ui/KeyCommands.h"
+#include "ui/Library.h"
+#include "ui/PluginSettings.h"
 #include "ui/ProjectDialogs.h"
 #include "ui/UndoHistory.h"
 
@@ -1246,4 +1248,211 @@ TEST_CASE ("AT-UI-20 Smart Controls: the pane, automatic knobs, turning them, th
     CHECK (ui.main->windowNamed ("Smart Controls") != nullptr);
     ui.key ('B');
     CHECK (ui.studio.layout.bottom == BottomTab::none);
+}
+
+TEST_CASE ("AT-LIB-5 Library: views, locations, tags, search, smart searches, new tracks, patches, presets and the keys", "[UI][AT-LIB-5]")
+{
+    Ui ui;
+    auto& lib = ui.main->side().library();
+    auto& library = lib.library();
+    const auto audio = ui.m().trackOrder.front();
+    const auto loops = ui.folder.path / "Loops";
+    std::filesystem::create_directories (loops / "Drums");
+    std::filesystem::create_directories (loops / "Keys");
+    writeSine (loops / "Drums" / "kick.wav", 0.25);
+    writeSine (loops / "Keys" / "pad.wav", 0.5);
+    const auto patchFile = Library::patchesFolder() / "Lead.weftpatch";
+
+    // Y shows the side panel on its Library tab, and again hides it; O shows the loops; Alt+F searches.
+    CHECK (commandInfo (Cmd::toggleLibrary).shortcut == "Y");
+    CHECK (commandInfo (Cmd::loopBrowser).shortcut == "O");
+    CHECK (commandInfo (Cmd::searchLibrary).shortcut == "Alt+F");
+    ui.key ('Y');
+    CHECK (ui.studio.layout.sidePanel);
+    CHECK (ui.main->side().tabs().getCurrentTabIndex() == SidePanel::libraryTab);
+    ui.key ('Y');
+    CHECK_FALSE (ui.studio.layout.sidePanel);
+    ui.key ('O');
+    CHECK (ui.studio.layout.sidePanel);
+    CHECK (lib.view() == LibraryView::loops);
+
+    // A location lists its audio files, tagged with their folders and format.
+    REQUIRE (library.addLocation (loops));
+    CHECK_FALSE (library.addLocation (loops)); // once
+    lib.refresh();
+    lib.setView (LibraryView::loops);
+    REQUIRE (lib.shown().size() == 2);
+    const auto tags = library.tags (LibraryView::loops, "");
+    CHECK (std::find (tags.begin(), tags.end(), "Drums") != tags.end());
+    CHECK (std::find (tags.begin(), tags.end(), "WAV") != tags.end());
+    CHECK (std::find (tags.begin(), tags.end(), "Loops") != tags.end());
+    // Tags narrow the list; every applied tag must be carried; Ctrl+Delete clears them.
+    lib.toggleTag ("Drums");
+    REQUIRE (lib.shown().size() == 1);
+    CHECK (library.items()[static_cast<std::size_t> (lib.shown().front())].name == "kick");
+    lib.toggleTag ("Keys");
+    CHECK (lib.shown().empty());
+    CHECK (lib.keyPressed (juce::KeyPress (juce::KeyPress::deleteKey, juce::ModifierKeys::commandModifier, 0)));
+    CHECK (lib.appliedTags().empty());
+    CHECK (lib.shown().size() == 2);
+    // Search: the name or a tag, any case.
+    lib.setSearch ("PAD");
+    REQUIRE (lib.shown().size() == 1);
+    CHECK (library.items()[static_cast<std::size_t> (lib.shown().front())].name == "pad");
+    lib.setSearch ("keys");
+    CHECK (lib.shown().size() == 1);
+    lib.setSearch ({});
+
+    // A smart search keeps the view, text and tags under a name.
+    lib.toggleTag ("Drums");
+    lib.saveCurrentSearch ("Drum loops");
+    REQUIRE (library.smartSearches().size() == 1);
+    lib.setView (LibraryView::all);
+    CHECK (lib.appliedTags().empty());
+    lib.applySmartSearch (library.smartSearches().front());
+    CHECK (lib.view() == LibraryView::loops);
+    CHECK (lib.appliedTags() == std::set<std::string> { "Drums" });
+    CHECK (lib.shown().size() == 1);
+
+    // Preview plays a loop; View Info (Ctrl+I) shows its details.
+    lib.selectResult (0);
+    REQUIRE (lib.selectedItem() != nullptr);
+    CHECK (lib.previewSelected());
+    CHECK (lib.keyPressed (juce::KeyPress ('I', juce::ModifierKeys::commandModifier, 0)));
+    CHECK (lib.infoShown());
+    CHECK (lib.infoLabel.getText().contains ("0.25 s"));
+    CHECK (lib.infoLabel.getText().contains ("48000 Hz"));
+
+    // New Track with Selected Item (Return): the loop on a new audio track at the playhead.
+    ui.studio.locate (bar);
+    const auto tracksBefore = ui.m().trackOrder.size();
+    CHECK (lib.keyPressed (juce::KeyPress (juce::KeyPress::returnKey)));
+    ui.settle();
+    REQUIRE (ui.m().trackOrder.size() == tracksBefore + 1);
+    const auto kickTrack = ui.studio.selectedTrack();
+    REQUIRE (ui.m().track (kickTrack)->kind == model::TrackKind::audio);
+    REQUIRE (ui.m().regionsOnTrack (kickTrack).size() == 1);
+    CHECK (ui.m().regionsOnTrack (kickTrack).front()->start == bar);
+
+    // Instruments and effects: every choice the insert menus offer.
+    lib.setView (LibraryView::instruments);
+    const auto instruments = ui.studio.pluginChoices (true);
+    CHECK (lib.shown().size() == instruments.size());
+    lib.setView (LibraryView::effects);
+    const auto effects = ui.studio.pluginChoices (false);
+    CHECK (lib.shown().size() == effects.size());
+
+    // An instrument: a new instrument track named after it, playing it; one undo step.
+    lib.setView (LibraryView::instruments);
+    lib.selectResult (0);
+    const auto synth = lib.newTrackWithSelected();
+    ui.settle();
+    REQUIRE (synth.has_value());
+    const auto* synthTrack = ui.m().track (*synth);
+    REQUIRE (synthTrack->kind == model::TrackKind::instrument);
+    REQUIRE (synthTrack->strip.instrument.has_value());
+    CHECK (synthTrack->strip.instrument->pluginUid == instruments.front().plugin.pluginUid);
+    CHECK (synthTrack->name == instruments.front().label.toStdString());
+    CHECK (ui.studio.session().undoName() == "New Track with " + instruments.front().label.toStdString());
+    CHECK (ui.studio.selectedTrack() == *synth);
+
+    // Replace Patch (Ctrl+Return) with an effect adds it to the selected track.
+    lib.setView (LibraryView::effects);
+    lib.selectResult (0);
+    const auto effect = lib.selectedItem()->plugin->plugin; // the first by name
+    CHECK (lib.keyPressed (juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys::commandModifier, 0)));
+    ui.settle();
+    REQUIRE (ui.m().track (*synth)->strip.inserts.size() == 1);
+    const auto effectId = ui.m().track (*synth)->strip.inserts.front().id;
+    // Replace mode: a click puts the item on the track at once.
+    lib.replaceMode = true;
+    lib.selectResult (0);
+    lib.list.getModel()->listBoxItemClicked (0, mouse (lib.list, {}));
+    ui.settle();
+    CHECK (ui.m().track (*synth)->strip.inserts.size() == 2);
+    lib.replaceMode = false;
+    ui.studio.session().undo();
+    ui.studio.edited();
+    REQUIRE (ui.m().track (*synth)->strip.inserts.size() == 1);
+
+    // A patch: the track's instrument, effects, volume and pan saved by name, made into a new track again.
+    ui.studio.session().setTrackVolume (*synth, -6.0);
+    ui.studio.session().setTrackPan (*synth, -0.5);
+    ui.studio.edited();
+    lib.promptForText = [] (const juce::String&, const juce::String&, std::function<void (juce::String)> done) { done ("Lead"); };
+    lib.savePatchButton.onClick();
+    CHECK (std::filesystem::exists (patchFile));
+    lib.setView (LibraryView::patches);
+    REQUIRE (lib.shown().size() == 1);
+    lib.selectResult (0);
+    CHECK (lib.selectedItem()->name == "Lead");
+    const auto copy = lib.newTrackWithSelected();
+    ui.settle();
+    REQUIRE (copy.has_value());
+    const auto* lead = ui.m().track (*copy);
+    CHECK (lead->name == "Lead");
+    CHECK (lead->kind == model::TrackKind::instrument);
+    REQUIRE (lead->strip.instrument.has_value());
+    CHECK (lead->strip.instrument->pluginUid == instruments.front().plugin.pluginUid);
+    REQUIRE (lead->strip.inserts.size() == 1);
+    CHECK (lead->strip.inserts.front().pluginUid == effect.pluginUid);
+    CHECK (lead->strip.inserts.front().id != effectId); // a copy, not the same plug-in
+    CHECK (lead->strip.volumeDb == Catch::Approx (-6.0));
+    CHECK (lead->strip.pan == Catch::Approx (-0.5));
+    CHECK (ui.studio.session().undoName() == "New Track with Lead");
+
+    // A plug-in preset (a saved setting) loads onto the track's copy of the plug-in.
+    const auto proc = ui.studio.processor (effectId);
+    REQUIRE (proc != nullptr);
+    REQUIRE_FALSE (proc->parameters().empty());
+    const auto paramId = proc->parameters().front().id;
+    PluginSetting setting;
+    setting.name = "Library Test";
+    setting.params[paramId] = 0.25;
+    REQUIRE (plugin_settings::save (Studio::pluginSettingsRoot(), effect, setting, false));
+    lib.refresh();
+    // The mixer's "Show Presets in Library" shows the plug-in's presets.
+    REQUIRE (ui.studio.showPresets);
+    ui.studio.showPresets (juce::String (effect.name));
+    CHECK (ui.main->side().tabs().getCurrentTabIndex() == SidePanel::libraryTab);
+    CHECK (lib.view() == LibraryView::presets);
+    int row = -1;
+    for (std::size_t i = 0; i < lib.shown().size(); ++i)
+        if (library.items()[static_cast<std::size_t> (lib.shown()[i])].name == "Library Test")
+            row = static_cast<int> (i);
+    REQUIRE (row >= 0);
+    ui.studio.selectTrack (*synth);
+    lib.selectResult (row);
+    REQUIRE (lib.replacePatch());
+    ui.settle();
+    CHECK (ui.m().track (*synth)->strip.inserts.size() == 1);
+    CHECK (ui.m().track (*synth)->strip.inserts.front().params.at (paramId) == Catch::Approx (0.25));
+    CHECK (ui.studio.session().undoName() == "Load Library Test");
+
+    // Link to Selection: the view follows the selected track.
+    lib.setLinked (true);
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    CHECK (lib.view() == LibraryView::effects);
+    ui.studio.selectTrack (*synth);
+    ui.settle();
+    CHECK (lib.view() == LibraryView::instruments);
+    lib.setLinked (false);
+
+    // Compact view: a menu of views instead of the list.
+    lib.setCompact (true);
+    CHECK (lib.viewBox.isVisible());
+    CHECK_FALSE (lib.navigation.isVisible());
+    lib.setCompact (false);
+
+    // Locations and smart searches are this computer's: a new panel reads them back.
+    {
+        Library again (ui.studio);
+        CHECK (again.locations() == std::vector<std::filesystem::path> { loops });
+        CHECK (again.smartSearches().size() == 1);
+    }
+    CHECK (library.removeSmartSearch ("Drum loops"));
+    CHECK (library.removeLocation (loops));
+    plugin_settings::remove (Studio::pluginSettingsRoot(), effect, "Library Test");
+    std::filesystem::remove (patchFile);
 }

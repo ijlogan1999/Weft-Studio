@@ -58,7 +58,7 @@ private:
     Studio& studio;
     CommandButton inspector { "Inspector", Cmd::toggleInspector, true }, side { "Side", Cmd::toggleSidePanel, true },
         mixer { "Mixer", Cmd::toggleMixer, true }, editor { "Editor", Cmd::toggleAudioEditor, true },
-        smart { "Smart", Cmd::toggleSmartControls, true }, global { "Global", Cmd::toggleGlobalTracks, true },
+        smart { "Smart", Cmd::toggleSmartControls, true }, library { "Library", Cmd::toggleLibrary }, global { "Global", Cmd::toggleGlobalTracks, true },
         toolbarToggle { "Toolbar", Cmd::toggleToolbar, true };
     CommandButton start { "Go to Start", Cmd::goToStart }, rewind { "Previous Bar", Cmd::previousBar }, forward { "Next Bar", Cmd::nextBar }, stop { "Stop", Cmd::playStop },
         play { "Play", Cmd::playStop, true }, record { "Record", Cmd::record, true }, cycle { "Cycle", Cmd::cycle, true };

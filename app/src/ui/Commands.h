@@ -110,7 +110,8 @@ enum class Cmd
     cycleWindowViewsBack,
     // D-UI-47: notes
     toggleNotes, mixerNotes, listEditors, openEventList, openMarkerList, openTempoList, openSignatureList, openMarkerText,
-    toggleAudioFileEditor, keyCommands, toggleSmartControls, smartControlsWindow
+    toggleAudioFileEditor, keyCommands, toggleSmartControls, smartControlsWindow,
+    toggleLibrary, loopBrowser, searchLibrary
 };
 
 struct CommandInfo

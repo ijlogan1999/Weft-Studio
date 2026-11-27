@@ -205,6 +205,7 @@ public:
         itemPre,
         itemMuteSend,
         itemOpen,
+        itemPresets,
         itemBus = 100,             // + index into buses()
         itemPlugin = 1000,         // + index into pluginChoices
         itemInsertBefore = 100000  // + index into pluginChoices: a new plug-in in this slot, pushing the rest down (D-W6-10)

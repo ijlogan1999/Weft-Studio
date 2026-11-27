@@ -1027,6 +1027,7 @@ juce::PopupMenu ChannelStrip::insertMenu (std::size_t slot) const
     }
     const auto& p = t->strip.inserts[slot];
     menu.addItem (itemOpen, "Open " + juce::String (p.name));
+    menu.addItem (itemPresets, "Show Presets in Library", static_cast<bool> (studio.showPresets));
     menu.addItem (itemBypass, "Bypass", true, p.bypass);
     menu.addItem (itemRemove, "Remove");
     juce::PopupMenu replace;
@@ -1070,6 +1071,12 @@ void ChannelStrip::pickInsert (std::size_t slot, int itemId)
     switch (itemId)
     {
         case itemOpen: openEditor (pluginId); break;
+        case itemPresets:
+            // D-UI-53: the Library's presets for this plug-in, ready to load onto this track.
+            studio.selectTrack (id);
+            if (studio.showPresets)
+                studio.showPresets (juce::String (t->strip.inserts[slot].name));
+            break;
         case itemBypass:
             studio.check (studio.session().setInsertBypass (id, pluginId, ! t->strip.inserts[slot].bypass));
             studio.edited();
@@ -1121,6 +1128,7 @@ juce::PopupMenu ChannelStrip::instrumentMenu() const
     if (t->strip.instrument)
     {
         menu.addItem (itemOpen, "Open " + juce::String (t->strip.instrument->name));
+        menu.addItem (itemPresets, "Show Presets in Library", static_cast<bool> (studio.showPresets));
         menu.addSeparator();
     }
     addPluginChoices (menu, studio.pluginChoices (true), itemPlugin);
@@ -1135,6 +1143,13 @@ void ChannelStrip::pickInstrument (int itemId)
     if (itemId == itemOpen && t->strip.instrument)
     {
         openEditor (t->strip.instrument->id);
+        return;
+    }
+    if (itemId == itemPresets && t->strip.instrument)
+    {
+        studio.selectTrack (id);
+        if (studio.showPresets)
+            studio.showPresets (juce::String (t->strip.instrument->name));
         return;
     }
     const auto choices = studio.pluginChoices (true);

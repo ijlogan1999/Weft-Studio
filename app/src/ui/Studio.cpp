@@ -2057,6 +2057,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::toggleNotes: case Cmd::mixerNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList:
         case Cmd::openTempoList: case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::toggleAudioFileEditor:
         case Cmd::keyCommands: case Cmd::toggleSmartControls: case Cmd::smartControlsWindow:
+        case Cmd::toggleLibrary: case Cmd::loopBrowser: case Cmd::searchLibrary:
             break;
     }
     return std::nullopt;
@@ -3232,6 +3233,7 @@ bool Studio::perform (Cmd command)
         case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject:
         case Cmd::toggleNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList: case Cmd::openTempoList:
         case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::keyCommands: case Cmd::smartControlsWindow:
+        case Cmd::toggleLibrary: case Cmd::loopBrowser: case Cmd::searchLibrary:
             if (uiCommand)
                 uiCommand (command);
             break;

@@ -163,6 +163,8 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
+class LibraryPanel;
+
 class SidePanel final : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -177,6 +179,7 @@ public:
     HistoryPanel& history() noexcept { return *historyPanel; }
     NotesPanel& notes() noexcept { return *notesPanel; }
     ListsPanel& lists() noexcept { return *listsPanel; }
+    LibraryPanel& library() noexcept { return *libraryPanel; }
     juce::TabbedComponent& tabs() noexcept { return tabbed; }
     enum Tab
     {
@@ -186,7 +189,8 @@ public:
         chatTab,
         historyTab,
         notesTab,
-        listsTab
+        listsTab,
+        libraryTab
     };
     void showTab (Tab tab);
     /** Tab names with the unread markers: "Comments •", "Chat (2)" (04 §9.3, §9.4). */
@@ -212,5 +216,6 @@ private:
     HistoryPanel* historyPanel = nullptr;
     NotesPanel* notesPanel = nullptr;
     ListsPanel* listsPanel = nullptr;
+    LibraryPanel* libraryPanel = nullptr;
 };
 } // namespace weft::ui

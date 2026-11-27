@@ -1,6 +1,7 @@
 #include "SidePanel.h"
 
 #include "BottomArea.h"
+#include "Library.h"
 
 #include "weft/media/WavFile.h"
 #include "weft/time/Position.h"
@@ -687,6 +688,7 @@ SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
     historyPanel = new HistoryPanel (studio);
     notesPanel = new NotesPanel (studio);
     listsPanel = new ListsPanel (studio);
+    libraryPanel = new LibraryPanel (studio);
     const auto tab = colour (Token::surface);
     tabbed.addTab ("Browser", tab, fileBrowser, true);
     tabbed.addTab ("Media", tab, mediaList, true);
@@ -695,6 +697,7 @@ SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
     tabbed.addTab ("History", tab, historyPanel, true);
     tabbed.addTab ("Notes", tab, notesPanel, true);
     tabbed.addTab ("Lists", tab, listsPanel, true);
+    tabbed.addTab ("Library", tab, libraryPanel, true);
     tabbed.setTabBarDepth (size::panelHeader);
     tabbed.setOutline (0);
     addAndMakeVisible (tabbed);
