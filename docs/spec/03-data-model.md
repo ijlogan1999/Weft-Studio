@@ -107,6 +107,9 @@ Track {
   playback: TrackPlayback?      // instrument tracks; absent = defaults (D-W3-13)
   groupId: Id?                  // its group (D-W6-15); a missing group = none. Not on the master
   vcaId: Id?                    // the VCA fader that scales it (D-W6-16); a missing VCA = none. Not on the master
+  stack: 'folder' | 'summing'?  // buses only: this track is a stack's main (D-W6-17)
+  stackOpen: bool = true        // a stack main: its members have rows (and strips, following stacks)
+  stackId: Id?                  // a member: its stack's main; a missing or non-main track = not in a stack
   visibleLaneIds: List<Id>      // LOCAL ONLY
 }
 

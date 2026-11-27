@@ -460,6 +460,16 @@ public:
     /** Assigns the track to a VCA (empty: none). Not the master. */
     EditResult setTrackVca (const Id& trackId, const Id& vcaId);
 
+    // Track stacks (D-W6-17) --------------------------------------------------------------------
+    /** A main track (a bus "Stack N") above `trackIds` (in track order, moved under it), one undo step. A summing
+        stack's members play into the main, which plays where the first did; a folder stack changes no routing.
+        Tracks in a stack, stack mains and the master are left out. */
+    std::optional<Id> createStack (const std::vector<Id>& trackIds, bool summing);
+    /** Removes the main track; its members stay where they are (a summing stack's play where the main did). */
+    EditResult flattenStack (const Id& mainId);
+    /** Open shows the members' rows (and strips, when the mixer follows stacks). */
+    EditResult setStackOpen (const Id& mainId, bool open);
+
     // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------
     static constexpr std::int64_t lockExpiryMs = 24LL * 60 * 60 * 1000;
     /** Locks a track for this user. Refused while someone else holds an unexpired lock. */

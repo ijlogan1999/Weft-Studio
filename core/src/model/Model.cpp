@@ -308,6 +308,12 @@ Track Track::fromValue (const Id& id, const Value& v)
     {
         t.groupId = v["groupId"].asString();
         t.vcaId = v["vcaId"].asString();
+        t.stackId = v["stackId"].asString();
+    }
+    if (t.kind == TrackKind::bus)
+    {
+        t.stack = oneOf (v["stack"], { "", "folder", "summing" }, "");
+        t.stackOpen = v["stackOpen"].isBool() ? v["stackOpen"].asBool() : true;
     }
     return t;
 }
@@ -334,7 +340,10 @@ Value Track::toValue() const
         .set ("automationMode", automationMode)
         .set ("playback", playback.isDefault() ? Value() : playback.toValue())
         .set ("groupId", groupId.empty() ? Value() : Value (groupId))
-        .set ("vcaId", vcaId.empty() ? Value() : Value (vcaId));
+        .set ("vcaId", vcaId.empty() ? Value() : Value (vcaId))
+        .set ("stackId", stackId.empty() ? Value() : Value (stackId))
+        .set ("stack", stack.empty() ? Value() : Value (stack))
+        .set ("stackOpen", stack.empty() ? Value() : Value (stackOpen));
 }
 
 // Region --------------------------------------------------------------------

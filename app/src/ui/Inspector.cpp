@@ -619,6 +619,9 @@ void Inspector::refreshStrips()
     Id outputId;
     if (t != nullptr && t->kind != model::TrackKind::master)
         outputId = t->output.busId.empty() ? m.info.masterTrackId : t->output.busId;
+    // A track in a stack shows the stack's main on the right (P-INS-5): for a summing stack that's its output anyway.
+    if (const auto* main = t != nullptr ? m.stackMain (t->id) : nullptr)
+        outputId = main->id;
     if (m.track (outputId) == nullptr)
         outputId.clear();
     const auto place = [this] (std::unique_ptr<ChannelStrip>& strip, const Id& id) {

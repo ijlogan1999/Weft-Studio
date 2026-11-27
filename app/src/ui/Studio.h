@@ -273,6 +273,10 @@ public:
     enum class MixerMode { single, tracks, all };
     MixerMode mixerMode = MixerMode::tracks;
     bool mixerAudio = true, mixerInstrument = true, mixerBus = true;
+    /** View › Follow Track Stacks (P-MX-10): the mixer hides a closed stack's members as the tracks area does. */
+    bool mixerFollowStacks = true;
+    /** Opens or closes a stack (the main track's, or a member's stack); with `all`, every stack takes that state (M-MIX-31). */
+    bool toggleStack (const Id& trackId, bool all = false);
     /** The channels the mixer shows, left to right (the master is pinned apart and not listed). */
     std::vector<Id> mixerOrder() const;
     /** Configure Track Header (D-UI-37): which parts the track headers show, and the column's width. Local, not saved. */
@@ -310,6 +314,8 @@ public:
     void linkSwitch (TrackSwitch which, const Id& trackId);
     /** Adds the regions a selection-linking group picks with the selected ones (P-GRP-6). */
     void linkSelection();
+    /** What Create Group and Create Stack act on: the selected track, then the tracks of the selected regions. */
+    std::vector<Id> selectedTracksAndRegionTracks() const;
     /** The group a track was last put in (Alt+click on a Group slot assigns it, M-MIX-21). */
     Id lastGroup;
     /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */

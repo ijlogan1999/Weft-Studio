@@ -407,7 +407,7 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
             items.add (it.getItem().text);
     CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "New Track with Next Input", "Duplicate Track",
                                         "Duplicate Track with Regions", "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down",
-                                        "Mute Track", "Solo Track", "Record-Enable Track", "Input Monitoring Track", "Mute Off for All", "Clear/Recall Solo", "Solo Tracks of Selected Regions", "Search and Select Track...", "Lock/Unlock Track", "Turn All Tracks On/Off", "Configure Track Header..." });
+                                        "Mute Track", "Solo Track", "Record-Enable Track", "Input Monitoring Track", "Mute Off for All", "Clear/Recall Solo", "Solo Tracks of Selected Regions", "Search and Select Track...", "Lock/Unlock Track", "Create Folder Stack", "Create Summing Stack", "Flatten Stack", "Open/Close Track Stack", "Turn All Tracks On/Off", "Configure Track Header..." });
 
     // Color › swatch 7 from the menu bar.
     ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);

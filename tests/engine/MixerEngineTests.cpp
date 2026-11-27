@@ -928,3 +928,24 @@ TEST_CASE ("AT-MIX-21: a VCA fader scales and mutes the tracks assigned to it", 
     rig.sync();
     CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
 }
+
+// AT-MIX-23 ---------------------------------------------------------------------------------
+
+TEST_CASE ("AT-MIX-23: a folder stack's fader and mute act on its members; a summing stack is their bus", "[E][mixer][stacks][AT-MIX-23]")
+{
+    Rig rig;
+    addMedia (rig, "b3:half", { constant (0.5f), constant (0.5f) });
+    const auto t = trackPlaying (rig, "A", "b3:half");
+    const auto folder = rig.session.createStack ({ t }, false).value();
+    REQUIRE (rig.session.setTrackVolume (folder, -6.0206));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
+    REQUIRE (rig.session.setTrackMute (folder, true));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == 0.0f);
+    REQUIRE (rig.session.flattenStack (folder));
+    const auto sum = rig.session.createStack ({ t }, true).value();
+    REQUIRE (rig.session.setTrackVolume (sum, -6.0206));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
+}

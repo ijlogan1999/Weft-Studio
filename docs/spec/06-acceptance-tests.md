@@ -218,6 +218,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-TRK-24** [UI] · D-W3-13 · The inspector shows track parameters for an instrument track and not an audio track; MIDI In lists All and the connected devices. A Transpose drag is one undo step ("Track Parameters") and the slider follows undo. Key limit high 40 then low 60 makes both 60. Delay 25.5 ms, then the ticks unit sets it to 0 with a ±960 range, and 240 reads "240". Out channel 10 and No Transpose are set; MIDI In "Pads" with channel 2 sets the track's input, and once Pads is unplugged the menu still shows it for that track.
 
+**AT-TRK-25** [U] · D-W6-17 · A summing stack of C and A: main "Stack 1" before A, then A, C (in track order); both play into it and it plays to Verb, where A did; A can't join another stack; closed, the rows are the main, B and Verb. Flatten sends A and C to Verb; undo brings the stack back, and undoing its open, close and creation restores the order and A's output. A folder stack of B and C leaves their outputs, refuses being an output or send target, and flattening restores the order.
+
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
 ## 5. Arrange (ARR)
@@ -423,6 +425,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-MIX-21** [U][E] · D-W6-16 · New VCA is "VCA 1" at 0 dB; a track assigned to it, VCA -6 dB, mute, rename "Drums"; the master can't be assigned; deleting it unassigns the track and undo brings both back. Playing a 0.5 constant through a track at -6.02 dB on a VCA at -6.02 dB gives 0.125; the VCA's mute gives silence; unassigned, 0.25.
 
 **AT-MIX-22** [UI] · D-W6-15, D-W6-16 · New Group from A's Group slot shows "1 Group 1"; Alt+click on B's slot puts B in it (ticked in its menu). A's fader to -6 dB moves B's to -6; with the override, A to -12 leaves B. Soloing A solos B. The Groups window lists the group, chosen, Volume on and Pan off; ticking Pan and Send 2 sets them; renaming to "Drums" and ticking H hide both rows; Ctrl+Shift+1 shows them; Ctrl+Shift+2 fails (no group 2); Shift+G turns groups off (the window's box clears and mute stops linking) and on; Alt+click selects the members; the command closes the window. Create Group for Selected Tracks puts the selected track in group 2. New VCA from A's VCA slot makes "VCA 1" with A on it in one undo step ("New VCA") and a strip reading "1 track"; its fader, Mute and name change the VCA; Shift+click on the inspector's VCA slot shows it in place of the output strip; Delete VCA frees A and removes the strip.
+
+**AT-MIX-23** [E] · D-W6-17 · A track playing a 0.5 constant in a folder stack whose main is at -6.02 dB plays 0.25; the main's mute gives silence. Flattened and put in a summing stack at -6.02 dB, it plays 0.25.
+
+**AT-MIX-24** [UI] · D-W6-17 · Create Folder Stack from B selects a folder main above it with a disclosure triangle (B has none). The triangle closes it: B's header and strip go, and the main's strip has the disclosure button and no output or VCA slot. Follow Track Stacks off shows B's strip, the main before B with the tracks. Create Summing Stack from C routes C to it; closing it, then Alt on the folder's disclosure, opens both. Open/Close Track Stack from B closes the folder and selects its main. B's inspector shows the folder main on the right; soloing the main solos B; Flatten Stack on the summing main sends C to the master; Flatten Stack on A fails.
 
 ## 10. Plugins (PLG)
 

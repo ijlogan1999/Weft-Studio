@@ -473,11 +473,56 @@ void Studio::linkSwitch (TrackSwitch which, const Id& trackId)
     if (which != TrackSwitch::solo && which != TrackSwitch::arm)
         return;
     const bool on = trackSwitch (which, trackId);
+    // A folder stack's main has no sound of its own: its solo is its members' (D-W6-17).
+    if (const auto* t = model().track (trackId); which == TrackSwitch::solo && t != nullptr && t->isFolderStack())
+        for (const auto& id : model().stackMembers (trackId))
+            local.setSolo (id, on);
     for (const auto& id : session().linkedTracks (trackId, which == TrackSwitch::solo ? &model::Group::linkSolo : &model::Group::linkRecord))
         if (which == TrackSwitch::solo)
             local.setSolo (id, on);
         else
             local.setArm (model(), id, on);
+}
+
+std::vector<Id> Studio::selectedTracksAndRegionTracks() const
+{
+    std::vector<Id> out;
+    const auto add = [&] (const Id& id) {
+        if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master && std::find (out.begin(), out.end(), id) == out.end())
+            out.push_back (id);
+    };
+    add (local.selectedTrack);
+    for (const auto& id : selection.ids())
+        if (const auto* r = model().region (id))
+            add (model().effectiveTrackId (*r));
+    return out;
+}
+
+bool Studio::toggleStack (const Id& trackId, bool all)
+{
+    const auto& m = model();
+    const auto* main = m.track (trackId);
+    if (main == nullptr || ! main->isStackMain())
+        main = m.stackMain (trackId);
+    if (main == nullptr)
+        return false;
+    const bool open = ! main->stackOpen;
+    const Id mainId = main->id;
+    std::vector<Id> mains { mainId };
+    if (all)
+        for (const auto& [id, t] : m.tracks)
+            if (t->isStackMain() && id != mainId)
+                mains.push_back (id);
+    sess->beginGesture (open ? "Open Stack" : "Close Stack");
+    for (const auto& id : mains)
+        if (const auto* t = model().track (id); t != nullptr && t->stackOpen != open)
+            sess->setStackOpen (id, open);
+    sess->endGesture();
+    // A member of a stack that closes isn't selectable any more: the main is.
+    if (! open && model().stackMain (local.selectedTrack) != nullptr && ! model().stackMain (local.selectedTrack)->stackOpen)
+        local.selectedTrack = model().stackMain (local.selectedTrack)->id;
+    edited();
+    return true;
 }
 
 void Studio::linkSelection()
@@ -696,10 +741,16 @@ std::vector<Id> Studio::mixerOrder() const
         for (const auto& tid : m.trackOrder)
         {
             const auto* t = m.track (tid);
-            if (t == nullptr || t->kind == model::TrackKind::master || (t->kind == model::TrackKind::bus) != buses)
+            // A stack's main sits with its members, not with the buses (D-W6-17).
+            if (t == nullptr || t->kind == model::TrackKind::master || (t->kind == model::TrackKind::bus && ! t->isStackMain()) != buses)
                 continue;
+            // Following stacks, a closed stack shows only its main (P-MX-10).
+            if (const auto* main = m.stackMain (tid); mixerFollowStacks && main != nullptr && ! main->stackOpen && mixerMode != MixerMode::single)
+                continue;
+            const auto* group = m.activeGroup (tid);
+            const bool hiddenRow = t->hidden || (group != nullptr && group->hidden); // H hides a group's strips too (D-W6-15)
             if (mixerMode == MixerMode::single ? wanted.contains (tid)
-                                               : kindShown (*t) && (mixerMode == MixerMode::all || ! t->hidden || m.info.showHiddenTracks))
+                                               : kindShown (*t) && (mixerMode == MixerMode::all || ! hiddenRow || m.info.showHiddenTracks))
                 order.push_back (tid);
         }
     return order;
@@ -1748,6 +1799,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::exportSelectionMidi: case Cmd::exportTrackAudio: case Cmd::exportAllTracksAudio:
         case Cmd::recordToggle: case Cmd::toggleReplace: case Cmd::captureRecording:
         case Cmd::toggleGroups: case Cmd::groupsWindow: case Cmd::createGroup: case Cmd::hideGroup1: case Cmd::hideGroup2: case Cmd::hideGroup3: case Cmd::hideGroup4: case Cmd::hideGroup5: case Cmd::hideGroup6: case Cmd::hideGroup7: case Cmd::hideGroup8: case Cmd::hideGroup9: case Cmd::newVca:
+        case Cmd::createFolderStack: case Cmd::createSummingStack: case Cmd::flattenStack: case Cmd::toggleStack: case Cmd::followStacks:
             break;
     }
     return std::nullopt;
@@ -2837,6 +2889,40 @@ bool Studio::perform (Cmd command)
         case Cmd::groupsWindow:
             if (uiCommand)
                 uiCommand (command);
+            break;
+        case Cmd::createFolderStack:
+        case Cmd::createSummingStack:
+        {
+            const auto made = s.createStack (selectedTracksAndRegionTracks(), command == Cmd::createSummingStack);
+            if (! made)
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            local.selectedTrack = *made;
+            break;
+        }
+        case Cmd::flattenStack:
+        {
+            const auto* main = model().track (local.selectedTrack);
+            if (main == nullptr || ! main->isStackMain())
+                main = model().stackMain (local.selectedTrack);
+            if (main == nullptr)
+            {
+                setStatus ("Select a track stack first.");
+                return false;
+            }
+            return check (s.flattenStack (Id (main->id)));
+        }
+        case Cmd::toggleStack:
+            if (! toggleStack (local.selectedTrack))
+            {
+                setStatus ("Select a track stack first.");
+                return false;
+            }
+            return true;
+        case Cmd::followStacks:
+            mixerFollowStacks = ! mixerFollowStacks;
             break;
         case Cmd::createGroup:
         {

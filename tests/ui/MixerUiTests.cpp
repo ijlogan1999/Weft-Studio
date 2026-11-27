@@ -1206,3 +1206,90 @@ TEST_CASE ("AT-MIX-22 Group and VCA slots, VCA strips, the Groups window and the
     CHECK (ui.m().track (a)->vcaId.empty());
     CHECK (mixer.vcaStrips().empty());
 }
+
+TEST_CASE ("AT-MIX-24 track stacks: disclosure in the header and the mixer, Follow Track Stacks, the stack commands", "[UI][AT-MIX-24]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto a = ui.m().trackOrder.front();
+    const auto b = s.createTrack (model::TrackKind::audio, "B").value();
+    const auto c = s.createTrack (model::TrackKind::audio, "C").value();
+    ui.studio.edited();
+    ui.settle();
+    const auto headerFor = [&] (const Id& id) -> TrackHeader* {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return h.get();
+        return nullptr;
+    };
+
+    // Create Folder Stack (Ctrl+Shift+F) from the selected track: the main above it, selected.
+    ui.studio.selectTrack (b);
+    REQUIRE (ui.studio.perform (Cmd::createFolderStack));
+    ui.settle();
+    const auto folder = ui.studio.selectedTrack();
+    REQUIRE (ui.m().track (folder)->isFolderStack());
+    CHECK (ui.m().stackMembers (folder) == std::vector<Id> { b });
+    REQUIRE (headerFor (folder) != nullptr);
+    CHECK_FALSE (headerFor (folder)->disclosureArea().isEmpty());
+    CHECK (headerFor (b)->disclosureArea().isEmpty());
+
+    // The header's triangle closes it: B's row goes; the mixer follows; its strip has no output and no VCA slot.
+    auto& header = *headerFor (folder);
+    header.mouseDown (mouse (header, header.disclosureArea().getCentre().toFloat(), juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    ui.settle();
+    CHECK_FALSE (ui.m().track (folder)->stackOpen);
+    CHECK (headerFor (b) == nullptr);
+    auto& mixer = showMixer (ui);
+    CHECK (mixer.stripFor (b) == nullptr);
+    REQUIRE (mixer.stripFor (folder) != nullptr);
+    CHECK (mixer.stripFor (folder)->stackToggle.isVisible());
+    CHECK_FALSE (mixer.stripFor (folder)->output.isVisible());
+    CHECK_FALSE (mixer.stripFor (folder)->vca.isVisible());
+    // Not following, the mixer shows B anyway; the main sits with the tracks, not with the buses.
+    REQUIRE (ui.studio.perform (Cmd::followStacks));
+    ui.settle();
+    REQUIRE (mixer.stripFor (b) != nullptr);
+    CHECK (ui.studio.mixerOrder() == std::vector<Id> { a, folder, b, c });
+    REQUIRE (ui.studio.perform (Cmd::followStacks));
+
+    // A summing stack for C; Alt+click on a strip's disclosure opens every stack.
+    ui.studio.selectTrack (c);
+    REQUIRE (ui.studio.perform (Cmd::createSummingStack));
+    ui.settle();
+    const auto sum = ui.studio.selectedTrack();
+    CHECK (ui.m().track (c)->output.busId == sum);
+    REQUIRE (ui.studio.toggleStack (sum)); // close it
+    ui.settle();
+    CHECK_FALSE (ui.m().track (sum)->stackOpen);
+    ui.studio.toggleStack (folder, true); // Alt: both open
+    ui.settle();
+    CHECK (ui.m().track (folder)->stackOpen);
+    CHECK (ui.m().track (sum)->stackOpen);
+    // Open/Close Track Stack works from a member too.
+    ui.studio.selectTrack (b);
+    REQUIRE (ui.studio.perform (Cmd::toggleStack));
+    CHECK_FALSE (ui.m().track (folder)->stackOpen);
+    CHECK (ui.studio.selectedTrack() == folder); // B has no row now
+    REQUIRE (ui.studio.perform (Cmd::toggleStack));
+
+    // The inspector shows a member's stack main on the right (P-INS-5).
+    ui.studio.selectTrack (b);
+    ui.settle();
+    REQUIRE (ui.main->inspector().outputStrip != nullptr);
+    CHECK (ui.main->inspector().outputStrip->trackId() == folder);
+
+    // Soloing the folder main solos its members.
+    ui.studio.toggleSolo (folder);
+    CHECK (ui.studio.localView().soloed.contains (b));
+    ui.studio.toggleSolo (folder);
+
+    // Flatten Stack takes the main away and leaves the members.
+    ui.studio.selectTrack (sum);
+    REQUIRE (ui.studio.perform (Cmd::flattenStack));
+    ui.settle();
+    CHECK (ui.m().track (sum) == nullptr);
+    CHECK (ui.m().track (c)->output.toMaster());
+    ui.studio.selectTrack (a);
+    CHECK_FALSE (ui.studio.perform (Cmd::flattenStack)); // A isn't in a stack
+}

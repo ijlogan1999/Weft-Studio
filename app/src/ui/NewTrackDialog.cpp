@@ -18,7 +18,7 @@ NewTrackDialog::NewTrackDialog (Studio& s) : studio (s)
     describe (output, "Output", "Where the new tracks play: Master or a bus");
     output.addItem ("Master", 1);
     for (const auto& id : studio.model().trackOrder)
-        if (const auto* t = studio.model().track (id); t != nullptr && t->kind == model::TrackKind::bus)
+        if (const auto* t = studio.model().track (id); t != nullptr && t->kind == model::TrackKind::bus && ! t->isFolderStack())
         {
             outputBuses.push_back (id);
             output.addItem (juce::String (t->name), static_cast<int> (outputBuses.size()) + 1);

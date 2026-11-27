@@ -417,6 +417,11 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
         addChildComponent (b);
     }
     group.onClick = [this] { clickGroup (juce::ModifierKeys::currentModifiers); };
+    small (stackToggle);
+    setRole (stackToggle, ButtonRole::flat);
+    describe (stackToggle, "Open or close the stack", "Opens or closes the stack (Alt+click: every stack)");
+    stackToggle.onClick = [this] { studio.toggleStack (id, juce::ModifierKeys::currentModifiers.isAltDown()); };
+    addChildComponent (stackToggle);
     vca.onClick = [this] { clickVca (juce::ModifierKeys::currentModifiers); };
 
     automation.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
@@ -566,7 +571,7 @@ std::vector<const model::Track*> ChannelStrip::buses() const
 {
     std::vector<const model::Track*> out;
     for (const auto& tid : studio.model().trackOrder)
-        if (const auto* t = studio.model().track (tid); t != nullptr && t->kind == model::TrackKind::bus && tid != id)
+        if (const auto* t = studio.model().track (tid); t != nullptr && t->kind == model::TrackKind::bus && ! t->isFolderStack() && tid != id)
             out.push_back (t);
     return out;
 }
@@ -617,9 +622,15 @@ void ChannelStrip::rebuildSlots()
             inserts[i]->showBypass (t->strip.inserts[i].bypass);
         return;
     }
+    if (t->isFolderStack())
+        key = "folder";
+    if (key == shownSlots)
+        return;
     shownSlots = key;
     inserts.clear();
     sends.clear();
+    if (t->isFolderStack())
+        return;
     for (std::size_t i = 0; i < t->strip.inserts.size(); ++i)
     {
         const auto& p = t->strip.inserts[i];
@@ -680,9 +691,13 @@ void ChannelStrip::refresh()
 
     rebuildSlots();
 
-    output.setVisible (! master);
+    // A folder stack's main carries no sound (D-W6-17): no output, VCA or slots; its fader and mute act on its members.
+    const bool folder = t->isFolderStack();
+    stackToggle.setVisible (t->isStackMain());
+    stackToggle.setButtonText (juce::String::fromUTF8 (t->stackOpen ? "\xe2\x96\xbe" : "\xe2\x96\xb8"));
+    output.setVisible (! master && ! folder);
     group.setVisible (! master);
-    vca.setVisible (! master);
+    vca.setVisible (! master && ! folder);
     if (! master)
     {
         const auto& m = studio.model();
@@ -872,7 +887,12 @@ void ChannelStrip::resized()
     auto r = getLocalBounds().reduced (space::half + 1, 0);
     r.removeFromTop (space::s1);
     r.removeFromBottom (space::s1);
-    name.setBounds (r.removeFromTop (rowHeight));
+    {
+        auto nameRow = r.removeFromTop (rowHeight);
+        if (stackToggle.isVisible())
+            stackToggle.setBounds (nameRow.removeFromLeft (size::icon + space::half));
+        name.setBounds (nameRow);
+    }
     r.removeFromTop (gap);
     input.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);

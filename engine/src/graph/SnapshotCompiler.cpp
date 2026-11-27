@@ -588,8 +588,8 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
 
     for (const auto* track : ordered)
     {
-        if (track->off)
-            continue; // L-TRH-7: an off track has no channel at all
+        if (track->off || track->isFolderStack())
+            continue; // L-TRH-7: an off track has no channel at all; a folder stack's main carries no sound (D-W6-17)
         ChannelPlan plan;
         plan.trackId = track->id;
         plan.kind = track->kind;
@@ -603,6 +603,12 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         {
             plan.vcaGain = dbToGain (vca->second->volumeDb);
             plan.soloAudible = plan.soloAudible && ! vca->second->mute;
+        }
+        if (const auto* folder = model.stackMain (track->id); folder != nullptr && folder->isFolderStack())
+        {
+            // A folder stack's main fader and mute act on its members like a VCA (D-W6-17).
+            plan.vcaGain *= dbToGain (folder->strip.volumeDb);
+            plan.soloAudible = plan.soloAudible && ! folder->mute;
         }
         plan.audible = ! track->mute && plan.soloAudible;
         plan.instrument = track->kind == model::TrackKind::instrument ? instruments.find (track->id) : nullptr;

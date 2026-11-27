@@ -428,6 +428,8 @@ EditResult Session::setTrackOutput (const Id& trackId, const Id& busId)
         const auto* bus = projection.track (busId);
         if (bus == nullptr || bus->kind != TrackKind::bus)
             return reject ("Outputs can only go to the master or a bus.");
+        if (bus->isFolderStack())
+            return reject ("A folder stack's main track carries no sound.");
         if (wouldCycle (trackId, busId, model::RoutingEdge { trackId, {}, {} }.key()))
             return reject ("That output would create a feedback loop.");
     }
@@ -1259,7 +1261,7 @@ std::optional<Id> Session::addSend (const Id& trackId, const Id& busId, double l
     const auto* bus = projection.track (busId);
     if (t == nullptr || ! projection.tracks.contains (trackId) || t->kind == TrackKind::master)
         error = "That track can't have sends.";
-    else if (bus == nullptr || bus->kind != TrackKind::bus)
+    else if (bus == nullptr || bus->kind != TrackKind::bus || bus->isFolderStack())
         error = "Sends go to a bus.";
     else if (t->strip.sends.size() >= static_cast<std::size_t> (model::maxSends))
         error = "A channel strip holds up to " + std::to_string (model::maxSends) + " sends.";
@@ -1311,7 +1313,7 @@ EditResult Session::setSendTarget (const Id& trackId, const Id& sendId, const Id
     if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
         return reject ("That send no longer exists.");
     const auto* bus = projection.track (busId);
-    if (bus == nullptr || bus->kind != TrackKind::bus)
+    if (bus == nullptr || bus->kind != TrackKind::bus || bus->isFolderStack())
         return reject ("Sends go to a bus.");
     if (std::any_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.targetBusId == busId && s.id != sendId; }))
         return reject ("This channel already sends to " + bus->name + ".");

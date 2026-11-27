@@ -104,6 +104,10 @@ struct ProjectModel
     const Group* activeGroup (const Id& trackId) const;
     /** A group's tracks, in track order. */
     std::vector<Id> groupMembers (const Id& groupId) const;
+    /** A stack's members in track order (D-W6-17); empty unless `mainId` is a stack's main track. */
+    std::vector<Id> stackMembers (const Id& mainId) const;
+    /** The main track of the stack `trackId` is in, or null. */
+    const Track* stackMain (const Id& trackId) const;
     /** VCAs by name, then id. */
     std::vector<const Vca*> vcasInOrder() const;
 };

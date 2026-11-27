@@ -1431,11 +1431,23 @@ void TrackHeader::paint (juce::Graphics& g)
         g.setColour (colourFor (t->color.palette, t->color.rgb));
         g.fillPath (glyph, glyph.getTransformToScaleToFit (box.reduced (1.0f), true));
     }
+    if (const auto box = disclosureArea(); ! box.isEmpty())
+    {
+        // Open: pointing down; closed: pointing right.
+        const auto c = box.toFloat().getCentre();
+        juce::Path tri;
+        if (t->stackOpen)
+            tri.addTriangle (c.x - 4.0f, c.y - 2.0f, c.x + 4.0f, c.y - 2.0f, c.x, c.y + 3.0f);
+        else
+            tri.addTriangle (c.x - 2.0f, c.y - 4.0f, c.x - 2.0f, c.y + 4.0f, c.x + 3.0f, c.y);
+        g.setColour (colour (Token::text));
+        g.fillPath (tri);
+    }
     if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible() && ! pan.isVisible())
     {
         g.setColour (colour (Token::textDim));
         g.setFont (font (Type::body));
-        const auto kind = t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
+        const auto kind = t->isFolderStack() ? "Folder Stack" : t->isStackMain() ? "Summing Stack" : t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
         g.drawText (kind, nameLeft(), space::s1 + size::control, 120, 16, juce::Justification::centredLeft);
     }
     // Collaborators working on this track (04 §6.1): a badge each, red while they record on it.
@@ -1491,7 +1503,20 @@ int TrackHeader::nameLeft() const
     int left = options.numbers ? space::s4 : space::s1 + space::half;
     if (options.icons)
         left += size::icon + space::half;
+    // Track stacks (D-W6-17): members sit indented under their main; the main has its disclosure triangle.
+    if (studio.model().stackMain (trackId) != nullptr)
+        left += space::s2;
+    if (const auto* t = studio.model().track (trackId); t != nullptr && t->isStackMain())
+        left += size::icon;
     return left;
+}
+
+juce::Rectangle<int> TrackHeader::disclosureArea() const
+{
+    const auto* t = studio.model().track (trackId);
+    if (t == nullptr || ! t->isStackMain())
+        return {};
+    return { nameLeft() - size::icon - (studio.header.icons ? size::icon + space::half : 0), name.getY(), size::icon, size::control };
 }
 
 void TrackHeader::resized()
@@ -1564,6 +1589,12 @@ void TrackHeader::mouseDown (const juce::MouseEvent& e)
             if (self != nullptr)
                 self->pickMenu (item);
         });
+        return;
+    }
+    if (disclosureArea().expanded (2).contains (e.getPosition()))
+    {
+        // Alt+click opens or closes every stack (M-MIX-31).
+        studio.toggleStack (trackId, e.mods.isAltDown());
         return;
     }
     const auto bottom = studio.trackHeight (trackId);

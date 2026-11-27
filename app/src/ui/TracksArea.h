@@ -158,6 +158,8 @@ public:
 
     /** Collaborators whose focus is this track (their badges, AT-COL-12). */
     std::vector<const collab::RemotePresence*> badges() const;
+    /** A stack main's disclosure triangle (D-W6-17), left of the icon; empty for other tracks. */
+    juce::Rectangle<int> disclosureArea() const;
 
 private:
     void rebuildAutomation();

@@ -10,6 +10,7 @@ add_executable(weft_unit_tests
     unit/TimeTests.cpp
     unit/TrackTests.cpp
     unit/GroupTests.cpp
+    unit/StackTests.cpp
     unit/TransportTests.cpp
     unit/UndoTests.cpp
     unit/AutomationTests.cpp

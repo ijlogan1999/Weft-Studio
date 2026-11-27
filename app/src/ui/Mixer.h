@@ -151,6 +151,8 @@ public:
         track in the last group used; Shift+click on the VCA slot asks to show that VCA's strip (onShowVca). */
     juce::TextButton group, vca;
     std::function<void (const Id&)> onShowVca;
+    /** A stack main's disclosure button (P-MX-11), left of the name: opens or closes the stack; Alt+click, every stack. */
+    juce::TextButton stackToggle;
     juce::ComboBox automation;
     juce::Slider pan, volume;
     juce::Label readout;

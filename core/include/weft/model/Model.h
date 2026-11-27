@@ -162,6 +162,14 @@ struct Track
     TrackPlayback playback; // instrument tracks
     Id groupId; // the group it's in (D-W6-15), or none
     Id vcaId;   // the VCA fader that scales it (D-W6-16), or none
+    /** Track stacks (D-W6-17). On a stack's main track (a bus): "folder" or "summing", and whether it's open.
+        On a member: its main track. Stacks don't nest. */
+    std::string stack;
+    bool stackOpen = true;
+    Id stackId;
+    bool isStackMain() const noexcept { return kind == TrackKind::bus && ! stack.empty(); }
+    bool isFolderStack() const noexcept { return kind == TrackKind::bus && stack == "folder"; }
+
     static Track fromValue (const Id& id, const Value& v);
     Value toValue() const;
 };

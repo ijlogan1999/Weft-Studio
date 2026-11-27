@@ -1067,6 +1067,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::searchTracks);
             add (Cmd::lockTrack);
             menu.addSeparator();
+            add (Cmd::createFolderStack);
+            add (Cmd::createSummingStack);
+            add (Cmd::flattenStack);
+            add (Cmd::toggleStack);
+            menu.addSeparator();
             add (Cmd::toggleAllTracksOff);
             add (Cmd::configureTrackHeader);
             break;
@@ -1075,6 +1080,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::newBus);
             add (Cmd::toggleMixer);
             add (Cmd::cycleMixerMode);
+            {
+                juce::PopupMenu::Item follow (commandInfo (Cmd::followStacks).name); // P-MX-10
+                follow.itemID = static_cast<int> (Cmd::followStacks) + 1;
+                follow.isTicked = studio.mixerFollowStacks;
+                menu.addItem (follow);
+            }
             menu.addSeparator();
             add (Cmd::searchPlugins);
             add (Cmd::pluginManager);

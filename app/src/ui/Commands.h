@@ -98,7 +98,9 @@ enum class Cmd
     recordToggle, toggleReplace, captureRecording,
     // D-W6-15, D-W6-16: groups and VCA faders
     toggleGroups, groupsWindow, createGroup, hideGroup1, hideGroup2, hideGroup3, hideGroup4, hideGroup5, hideGroup6, hideGroup7, hideGroup8,
-    hideGroup9, newVca
+    hideGroup9, newVca,
+    // D-W6-17: track stacks
+    createFolderStack, createSummingStack, flattenStack, toggleStack, followStacks
 };
 
 struct CommandInfo

@@ -188,6 +188,27 @@ std::vector<Id> ProjectModel::linkedSendTracks (const Id& trackId, int slot) con
     return out;
 }
 
+std::vector<Id> ProjectModel::stackMembers (const Id& mainId) const
+{
+    std::vector<Id> out;
+    const auto* main = track (mainId);
+    if (main == nullptr || ! main->isStackMain())
+        return out;
+    for (const auto& id : trackOrder)
+        if (const auto* t = track (id); t != nullptr && t->stackId == mainId && id != mainId)
+            out.push_back (id);
+    return out;
+}
+
+const Track* ProjectModel::stackMain (const Id& trackId) const
+{
+    const auto* t = track (trackId);
+    if (t == nullptr || t->stackId.empty() || t->stackId == trackId)
+        return nullptr;
+    const auto* main = track (t->stackId);
+    return main != nullptr && main->isStackMain() ? main : nullptr;
+}
+
 std::vector<const Vca*> ProjectModel::vcasInOrder() const
 {
     std::vector<const Vca*> out;
@@ -495,6 +516,10 @@ void Projector::derive (ProjectModel& m, const Document& document)
         // A group's H hides its tracks too (D-W6-15).
         const auto g = t->groupId.empty() ? m.groups.end() : m.groups.find (t->groupId);
         const bool groupHidden = g != m.groups.end() && g->second->hidden && g->second->enabled && m.info.groupsActive;
+        // A closed stack shows only its main track (D-W6-17).
+        const auto* main = m.stackMain (id);
+        if (main != nullptr && ! main->stackOpen)
+            continue;
         if ((! t->hidden && ! groupHidden) || m.info.showHiddenTracks)
             m.rows.push_back (id);
     }
