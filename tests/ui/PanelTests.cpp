@@ -1358,16 +1358,21 @@ TEST_CASE ("AT-LIB-5 Library: views, locations, tags, search, smart searches, ne
 
     // Replace Patch (Ctrl+Return) with an effect adds it to the selected track.
     lib.setView (LibraryView::effects);
-    lib.selectResult (0);
-    const auto effect = lib.selectedItem()->plugin->plugin; // the first by name
+    int builtinRow = 0; // a built-in effect: they have parameters wherever the tests run
+    while (builtinRow < static_cast<int> (lib.shown().size())
+           && library.items()[static_cast<std::size_t> (lib.shown()[static_cast<std::size_t> (builtinRow)])].plugin->plugin.format != "builtin")
+        ++builtinRow;
+    REQUIRE (builtinRow < static_cast<int> (lib.shown().size()));
+    lib.selectResult (builtinRow);
+    const auto effect = lib.selectedItem()->plugin->plugin;
     CHECK (lib.keyPressed (juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys::commandModifier, 0)));
     ui.settle();
     REQUIRE (ui.m().track (*synth)->strip.inserts.size() == 1);
     const auto effectId = ui.m().track (*synth)->strip.inserts.front().id;
     // Replace mode: a click puts the item on the track at once.
     lib.replaceMode = true;
-    lib.selectResult (0);
-    lib.list.getListBoxModel()->listBoxItemClicked (0, mouse (lib.list, {}));
+    lib.selectResult (builtinRow);
+    lib.list.getListBoxModel()->listBoxItemClicked (builtinRow, mouse (lib.list, {}));
     ui.settle();
     CHECK (ui.m().track (*synth)->strip.inserts.size() == 2);
     lib.replaceMode = false;
