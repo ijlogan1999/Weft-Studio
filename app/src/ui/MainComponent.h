@@ -115,6 +115,8 @@ public:
     const juce::OwnedArray<FloatingWindow>& floatingWindows() const noexcept { return floating; }
     /** Opens a big beats or time display, or the performance meter (scale 1 to 3). */
     void openFloating (Cmd kind, int scale = 1);
+    /** The Groups window (D-W6-15), or null when it's closed. Cmd::groupsWindow opens and closes it. */
+    FloatingWindow* groupsWindow() const noexcept { return groups.get(); }
     Inspector& inspector() noexcept { return inspectorPanel; }
     TracksArea& tracks() noexcept { return tracksArea; }
     BottomArea& bottom() noexcept { return bottomArea; }
@@ -188,6 +190,7 @@ private:
     ControlBar control;
     Toolbar toolbarRow { studio };
     juce::OwnedArray<FloatingWindow> floating;
+    std::unique_ptr<FloatingWindow> groups;
     Inspector inspectorPanel;
     TracksArea tracksArea;
     BottomArea bottomArea;

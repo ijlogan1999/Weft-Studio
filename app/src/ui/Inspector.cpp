@@ -636,9 +636,30 @@ void Inspector::refreshStrips()
         strip->refresh();
     };
     place (trackStrip, t != nullptr ? t->id : Id());
+    if (t == nullptr || t->vcaId != shownVca || ! m.vcas.contains (shownVca))
+        shownVca.clear();
+    if (! shownVca.empty())
+    {
+        outputId.clear();
+        if (vcaStrip == nullptr || vcaStrip->vcaId() != shownVca)
+        {
+            vcaStrip = std::make_unique<VcaStrip> (studio, shownVca);
+            body.addAndMakeVisible (*vcaStrip);
+        }
+        vcaStrip->refresh();
+    }
+    else
+        vcaStrip.reset();
     place (outputStrip, outputId);
     if (trackStrip != nullptr)
+    {
         trackStrip->highlightSelection = false;
+        trackStrip->onShowVca = [this] (const Id& vcaId) {
+            shownVca = vcaId;
+            refreshStrips();
+            resized();
+        };
+    }
     if (outputStrip != nullptr)
     {
         // Clicking the output's strip edits it without moving the selection off the track.
@@ -1151,6 +1172,8 @@ int Inspector::layout (int width, int visibleHeight)
     strips.removeFromLeft (space::s1);
     if (outputStrip != nullptr)
         outputStrip->setBounds (strips.withWidth (stripWidth));
+    if (vcaStrip != nullptr)
+        vcaStrip->setBounds (strips.withWidth (stripWidth));
     return r.getY() + space::s1;
 }
 } // namespace weft::ui

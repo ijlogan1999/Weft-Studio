@@ -907,3 +907,24 @@ TEST_CASE ("AT-PLG-11: a plug-in that isn't installed becomes a placeholder that
     CHECK (plugin.state.asBytes() == original);
     CHECK (plugin.params.at ("gain") == 0.25);
 }
+
+// AT-MIX-21 ---------------------------------------------------------------------------------
+
+TEST_CASE ("AT-MIX-21: a VCA fader scales and mutes the tracks assigned to it", "[E][mixer][vca][AT-MIX-21]")
+{
+    Rig rig;
+    addMedia (rig, "b3:half", { constant (0.5f), constant (0.5f) });
+    const auto t = trackPlaying (rig, "A", "b3:half");
+    const auto vca = rig.session.createVca().value();
+    REQUIRE (rig.session.setTrackVca (t, vca));
+    REQUIRE (rig.session.setVcaVolume (vca, -6.0206));
+    REQUIRE (rig.session.setTrackVolume (t, -6.0206));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.125).epsilon (1e-4)); // the fader and the VCA multiply
+    REQUIRE (rig.session.setVcaMute (vca, true));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == 0.0f);
+    REQUIRE (rig.session.setTrackVca (t, {}));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
+}

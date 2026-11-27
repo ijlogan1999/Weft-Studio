@@ -139,9 +139,10 @@ struct ChannelPlan
     model::TrackKind kind = model::TrackKind::audio;
     int sourceChannels = 2;    // 1 for mono audio tracks
     float gain = 1;            // fader
+    float vcaGain = 1;         // the VCA fader it's assigned to (D-W6-16), on top of the fader and its automation
     float panLeft = 1, panRight = 1; // constant-power pan (mono) or balance (stereo), F-MIX-3
     bool audible = true;       // false when muted, or silenced by another channel's solo (D-W6-1, D-W6-2)
-    bool soloAudible = true;   // not silenced by another channel's solo (mute automation keeps this)
+    bool soloAudible = true;   // not silenced by another channel's solo or a muted VCA (mute automation keeps this)
     int output = -1;           // channel index of the destination bus, or -1 for the master
     std::vector<SendPlan> sends;
     std::vector<InsertPlan> inserts;

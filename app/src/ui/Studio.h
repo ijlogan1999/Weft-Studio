@@ -306,6 +306,12 @@ public:
     /** The instrument track that MIDI auto record enable armed (D-W1-14). */
     Id autoArmed;
     void toggleSolo (const Id& trackId, bool exclusive = false);
+    /** Gives the track's group members (that link solo or record) the state its button has now. */
+    void linkSwitch (TrackSwitch which, const Id& trackId);
+    /** Adds the regions a selection-linking group picks with the selected ones (P-GRP-6). */
+    void linkSelection();
+    /** The group a track was last put in (Alt+click on a Group slot assigns it, M-MIX-21). */
+    Id lastGroup;
     /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */
     void toggleMute (const Id& trackId);
     /** Whether a track's button is on. */
@@ -817,6 +823,7 @@ private:
     void endPluginGesture();
     std::unique_ptr<project::ProjectFolder> folder;
     std::unique_ptr<commands::Session> sess;
+    bool inCommand = false; // perform() is running: Shift is part of a key command, not the group override
     commands::LocalView local;
     Preferences prefs;
     std::int64_t dropoutsSeen = 0;

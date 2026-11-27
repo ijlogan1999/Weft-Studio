@@ -229,6 +229,10 @@ std::vector<CommandInfo> build()
         { Cmd::recordToggle, "Record Toggle", "Alt+R", { key ('R', alt) } },
         { Cmd::toggleReplace, "Replace", "", {} },
         { Cmd::captureRecording, "Capture as Recording", "Ctrl+Shift+R", { key ('R', ctrl | shift) } },
+        { Cmd::toggleGroups, "Enable/Disable Groups", "Shift+G", { key ('G', shift) } },
+        { Cmd::groupsWindow, "Groups...", "Alt+Shift+G", { key ('G', alt | shift) } },
+        { Cmd::createGroup, "Create Group for Selected Tracks", "Ctrl+Alt+G", { key ('G', ctrl | alt) } },
+        { Cmd::newVca, "New VCA Fader", "", {} },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
@@ -238,6 +242,9 @@ std::vector<CommandInfo> build()
         { Cmd::automationLatchRead, "Toggle Track Automation Latch/Read", "Ctrl+Alt+Shift+L", { key ('L', ctrl | alt | shift) } },
         { Cmd::cycleAutomationParameter, "Cycle Through Used Automation Parameters", "Ctrl+Alt+Shift+A", { key ('A', ctrl | alt | shift) } },
     };
+    for (int n = 1; n <= 9; ++n)
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::hideGroup1) + n - 1), "Toggle Hide Group " + juce::String (n),
+                       "Ctrl+Shift+" + juce::String (n), { key ('0' + n, ctrl | shift) } });
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),
                        { key ('0' + n) } });

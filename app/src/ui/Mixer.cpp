@@ -411,6 +411,14 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     output.onClick = [this] { showMenu (outputMenu(), [this] (int item) { pickOutput (item); }); };
     addChildComponent (output);
 
+    for (auto* b : { &group, &vca })
+    {
+        small (*b);
+        addChildComponent (b);
+    }
+    group.onClick = [this] { clickGroup (juce::ModifierKeys::currentModifiers); };
+    vca.onClick = [this] { clickVca (juce::ModifierKeys::currentModifiers); };
+
     automation.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
     describe (automation, "Automation mode");
     automation.onChange = [this] {
@@ -580,8 +588,9 @@ int ChannelStrip::shownSendRows() const
 
 int ChannelStrip::preferredHeight() const
 {
-    // name, input, slots, output, automation, pan, fader (min), readout, buttons
+    // name, input, slots, output, group and VCA, automation, pan, fader (min), readout, buttons
     return space::s1 + rowHeight + gap + rowHeight + gap + (shownInsertRows() + 1 + shownSendRows()) * rowHeight + gap + rowHeight + gap + rowHeight + gap
+           + rowHeight + gap
            + space::s4 + gap + 120 + gap + rowHeight + gap + rowHeight + space::s1;
 }
 
@@ -672,8 +681,22 @@ void ChannelStrip::refresh()
     rebuildSlots();
 
     output.setVisible (! master);
+    group.setVisible (! master);
+    vca.setVisible (! master);
     if (! master)
     {
+        const auto& m = studio.model();
+        const auto g = m.groups.find (t->groupId);
+        const bool grouped = ! t->groupId.empty() && g != m.groups.end();
+        group.setButtonText (grouped ? juce::String (g->second->number) + " " + juce::String (g->second->name) : juce::String ("Group"));
+        describe (group, "Group", grouped ? "Group " + juce::String (g->second->number) + ": " + juce::String (g->second->name) + (g->second->enabled && m.info.groupsActive ? "" : " (off)")
+                                          : juce::String ("No group (Alt+click: the last group used)"));
+        setRole (group, grouped && g->second->enabled && m.info.groupsActive ? ButtonRole::normal : ButtonRole::flat);
+        const auto v = m.vcas.find (t->vcaId);
+        const bool assigned = ! t->vcaId.empty() && v != m.vcas.end();
+        vca.setButtonText (assigned ? juce::String (v->second->name) : juce::String ("VCA"));
+        describe (vca, "VCA", assigned ? "VCA: " + juce::String (v->second->name) + " (Shift+click: show its strip)" : juce::String ("No VCA"));
+        setRole (vca, assigned ? ButtonRole::normal : ButtonRole::flat);
         const auto disabled = studio.model().disabledEdges.contains (model::RoutingEdge { id, t->output.busId, {} }.key());
         output.setButtonText (busName (t->output.busId));
         describe (output, "Output", disabled ? juce::String ("Disabled: feedback loop") : "Output: " + busName (t->output.busId));
@@ -710,7 +733,7 @@ void ChannelStrip::refresh()
     const bool locked = studio.lockedByOther (id);
     const auto lockTip = studio.lockTooltip (id);
     name.setEditable (false, ! master && ! locked, true);
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &name, &input, &output, &automation, &pan, &volume, &readout, &mute, &monitor })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &name, &input, &output, &group, &vca, &automation, &pan, &volume, &readout, &mute, &monitor })
     {
         if (c != &name)
             c->setEnabled (! locked);
@@ -863,6 +886,12 @@ void ChannelStrip::resized()
         c->setBounds (slots.removeFromTop (rowHeight));
     r.removeFromTop (gap);
     output.setBounds (r.removeFromTop (rowHeight));
+    r.removeFromTop (gap);
+    {
+        auto slotsRow = r.removeFromTop (rowHeight);
+        group.setBounds (slotsRow.removeFromLeft ((slotsRow.getWidth() - gap) / 2));
+        vca.setBounds (slotsRow.withTrimmedLeft (gap));
+    }
     r.removeFromTop (gap);
     automation.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
@@ -1228,6 +1257,259 @@ void ChannelStrip::pickOutput (int itemId)
     studio.edited();
 }
 
+// Group and VCA slots (D-W6-15, D-W6-16) -----------------------------------------------------
+
+juce::PopupMenu ChannelStrip::groupMenu() const
+{
+    juce::PopupMenu menu;
+    const auto* t = track();
+    const Id current = t != nullptr ? t->groupId : Id();
+    menu.addItem (slotNone, "No Group", true, current.empty());
+    menu.addSeparator();
+    const auto groups = studio.model().groupsInOrder();
+    for (std::size_t i = 0; i < groups.size(); ++i)
+        menu.addItem (slotFirst + static_cast<int> (i), juce::String (groups[i]->number) + ": " + juce::String (groups[i]->name), true, groups[i]->id == current);
+    if (! groups.empty())
+        menu.addSeparator();
+    menu.addItem (slotNew, "New Group");
+    menu.addItem (slotSettings, "Group Settings...");
+    return menu;
+}
+
+void ChannelStrip::pickGroup (int itemId)
+{
+    auto& s = studio.session();
+    if (itemId == slotNone)
+        studio.check (s.setTrackGroup (id, {}));
+    else if (itemId == slotNew)
+    {
+        if (const auto made = s.createGroup ({ id }))
+            studio.lastGroup = *made;
+        else
+            studio.setStatus (juce::String (s.lastError()));
+    }
+    else if (itemId == slotSettings)
+    {
+        studio.perform (Cmd::groupsWindow);
+        return;
+    }
+    else if (itemId >= slotFirst)
+    {
+        const auto groups = studio.model().groupsInOrder();
+        const auto index = static_cast<std::size_t> (itemId - slotFirst);
+        if (index >= groups.size())
+            return;
+        const auto chosen = groups[index]->id;
+        if (studio.check (s.setTrackGroup (id, chosen)))
+            studio.lastGroup = chosen;
+    }
+    studio.edited();
+}
+
+void ChannelStrip::clickGroup (juce::ModifierKeys mods)
+{
+    // M-MIX-21: Alt+click puts the track in the group last used.
+    if (mods.isAltDown() && ! studio.lastGroup.empty() && studio.model().groups.contains (studio.lastGroup))
+    {
+        studio.check (studio.session().setTrackGroup (id, studio.lastGroup));
+        studio.edited();
+        return;
+    }
+    showMenu (groupMenu(), [this] (int item) { pickGroup (item); });
+}
+
+juce::PopupMenu ChannelStrip::vcaMenu() const
+{
+    juce::PopupMenu menu;
+    const auto* t = track();
+    const Id current = t != nullptr ? t->vcaId : Id();
+    menu.addItem (slotNone, "No VCA", true, current.empty());
+    menu.addSeparator();
+    const auto vcas = studio.model().vcasInOrder();
+    for (std::size_t i = 0; i < vcas.size(); ++i)
+        menu.addItem (slotFirst + static_cast<int> (i), juce::String (vcas[i]->name), true, vcas[i]->id == current);
+    if (! vcas.empty())
+        menu.addSeparator();
+    menu.addItem (slotNew, "New VCA");
+    return menu;
+}
+
+void ChannelStrip::pickVca (int itemId)
+{
+    auto& s = studio.session();
+    if (itemId == slotNone)
+        studio.check (s.setTrackVca (id, {}));
+    else if (itemId == slotNew)
+    {
+        // A new VCA and this track on it, as one undo step.
+        s.beginGesture ("New VCA");
+        const auto made = s.createVca();
+        if (made && s.setTrackVca (id, *made))
+            s.endGesture();
+        else
+        {
+            s.cancelGesture();
+            studio.setStatus (juce::String (s.lastError()));
+        }
+    }
+    else if (itemId >= slotFirst)
+    {
+        const auto vcas = studio.model().vcasInOrder();
+        const auto index = static_cast<std::size_t> (itemId - slotFirst);
+        if (index >= vcas.size())
+            return;
+        studio.check (s.setTrackVca (id, vcas[index]->id));
+    }
+    studio.edited();
+}
+
+void ChannelStrip::clickVca (juce::ModifierKeys mods)
+{
+    const auto* t = track();
+    if (mods.isShiftDown() && t != nullptr && ! t->vcaId.empty() && studio.model().vcas.contains (t->vcaId))
+    {
+        if (onShowVca)
+            onShowVca (t->vcaId); // P-INS-8
+        return;
+    }
+    showMenu (vcaMenu(), [this] (int item) { pickVca (item); });
+}
+
+// VCA strip (D-W6-16) ---------------------------------------------------------------------------
+
+VcaStrip::VcaStrip (Studio& s, Id vcaId) : studio (s), id (std::move (vcaId))
+{
+    name.setJustificationType (juce::Justification::centred);
+    name.setFont (font (Type::strong));
+    name.setEditable (false, true);
+    describe (name, "VCA name", "Double-click to rename");
+    name.onTextChange = [this] {
+        const auto text = name.getText().trim();
+        if (text.isNotEmpty())
+            studio.check (studio.session().renameVca (id, text.toStdString()));
+        studio.edited();
+    };
+    addAndMakeVisible (name);
+
+    members.setJustificationType (juce::Justification::centred);
+    members.setColour (juce::Label::textColourId, colour (Token::textDim));
+    addAndMakeVisible (members);
+
+    styleSlider (volume, juce::Slider::LinearVertical, fader::minDb, fader::maxDb, 0.0, *knobs);
+    volume.setNormalisableRange (fader::range());
+    describe (volume, "VCA volume", "VCA volume: scales its tracks (double-click: 0 dB)");
+    volume.textFromValueFunction = [] (double v) { return fader::dbText (v) + " dB"; };
+    volume.onDragStart = [this] { studio.session().beginGesture ("VCA Volume"); };
+    volume.onDragEnd = [this] { studio.session().endGesture(); };
+    volume.onValueChange = [this] {
+        const auto db = isSilent (volume.getValue()) ? fader::silentDb : volume.getValue();
+        studio.check (studio.session().setVcaVolume (id, db));
+        studio.edited();
+    };
+    addAndMakeVisible (volume);
+
+    readout.setJustificationType (juce::Justification::centred);
+    setField (readout);
+    readout.setEditable (false, true);
+    describe (readout, "VCA volume in dB", "Double-click to type a level");
+    readout.onTextChange = [this] {
+        if (const auto db = fader::parseDb (readout.getText()))
+            studio.check (studio.session().setVcaVolume (id, *db));
+        studio.edited();
+        refresh();
+    };
+    addAndMakeVisible (readout);
+
+    small (mute);
+    setRole (mute, ButtonRole::mute);
+    mute.setClickingTogglesState (false);
+    describe (mute, "Mute", "Mutes every track on this VCA");
+    mute.onClick = [this] {
+        if (const auto* v = studio.model().vcas.contains (id) ? studio.model().vcas.at (id).get() : nullptr)
+            studio.check (studio.session().setVcaMute (id, ! v->mute));
+        studio.edited();
+    };
+    addAndMakeVisible (mute);
+    refresh();
+}
+
+VcaStrip::~VcaStrip() { volume.setLookAndFeel (nullptr); }
+
+void VcaStrip::refresh()
+{
+    const auto& m = studio.model();
+    const auto it = m.vcas.find (id);
+    if (it == m.vcas.end())
+        return;
+    const auto& v = *it->second;
+    if (! name.isBeingEdited())
+        name.setText (v.name, juce::dontSendNotification);
+    setDbSlider (volume, v.volumeDb);
+    if (! readout.isBeingEdited())
+        readout.setText (fader::dbText (v.volumeDb), juce::dontSendNotification);
+    mute.setToggleState (v.mute, juce::dontSendNotification);
+    int count = 0;
+    for (const auto& [tid, t] : m.tracks)
+        count += t->vcaId == id ? 1 : 0;
+    members.setText (count == 1 ? juce::String ("1 track") : juce::String (count) + " tracks", juce::dontSendNotification);
+    repaint();
+}
+
+void VcaStrip::paint (juce::Graphics& g)
+{
+    const auto panel = getLocalBounds().toFloat().reduced (1.0f, 0.0f);
+    depth::shadow (g, panel, radius::r1, depth::Level::panel);
+    g.setColour (colour (Token::surface));
+    g.fillRoundedRectangle (panel, radius::r1);
+    depth::highlight (g, panel, radius::r1);
+    g.setColour (colour (Token::textDim));
+    g.fillRect (panel.withHeight (4.0f));
+}
+
+void VcaStrip::resized()
+{
+    auto r = getLocalBounds().reduced (space::half + 1, 0);
+    r.removeFromTop (space::s1);
+    r.removeFromBottom (space::s1);
+    name.setBounds (r.removeFromTop (rowHeight));
+    r.removeFromTop (gap);
+    members.setBounds (r.removeFromTop (rowHeight));
+    r.removeFromTop (gap);
+    mute.setBounds (r.removeFromBottom (rowHeight));
+    r.removeFromBottom (gap);
+    readout.setBounds (r.removeFromBottom (rowHeight));
+    r.removeFromBottom (gap);
+    volume.setBounds (r.withSizeKeepingCentre (std::min (r.getWidth(), space::s4), r.getHeight()));
+}
+
+void VcaStrip::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+        return;
+    juce::Component::SafePointer<VcaStrip> self (this);
+    menu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self] (int item) {
+        if (self != nullptr && item != 0)
+            self->pick (item);
+    });
+}
+
+juce::PopupMenu VcaStrip::menu() const
+{
+    juce::PopupMenu m;
+    m.addItem (itemDelete, "Delete VCA");
+    return m;
+}
+
+void VcaStrip::pick (int item)
+{
+    if (item == itemDelete)
+    {
+        studio.check (studio.session().deleteVca (id));
+        studio.edited();
+    }
+}
+
+
 // Mixer view ---------------------------------------------------------------------------------
 
 MixerView::MixerView (Studio& s) : studio (s)
@@ -1328,6 +1610,21 @@ void MixerView::refresh()
     for (auto& s : channelStrips)
         s->refresh();
     master->refresh();
+    // VCA strips after the channels (D-W6-16).
+    std::vector<std::unique_ptr<VcaStrip>> nextVcas;
+    for (const auto* v : m.vcasInOrder())
+    {
+        auto it = std::find_if (vcas.begin(), vcas.end(), [&] (const auto& s) { return s != nullptr && s->vcaId() == v->id; });
+        if (it != vcas.end())
+            nextVcas.push_back (std::move (*it));
+        else
+        {
+            nextVcas.push_back (std::make_unique<VcaStrip> (studio, v->id));
+            content.addAndMakeVisible (*nextVcas.back());
+        }
+        nextVcas.back()->refresh();
+    }
+    vcas = std::move (nextVcas);
     singleView.setToggleState (studio.mixerMode == Studio::MixerMode::single, juce::dontSendNotification);
     tracksView.setToggleState (studio.mixerMode == Studio::MixerMode::tracks, juce::dontSendNotification);
     allView.setToggleState (studio.mixerMode == Studio::MixerMode::all, juce::dontSendNotification);
@@ -1375,9 +1672,11 @@ void MixerView::resized()
         master->setBounds (r.removeFromRight (ChannelStrip::width + space::s1).withTrimmedLeft (space::s1).withHeight (std::max (r.getHeight(), master->preferredHeight())));
     viewport.setBounds (r);
     const auto innerHeight = std::max (viewport.getMaximumVisibleHeight(), channelStrips.empty() ? 0 : channelStrips.front()->preferredHeight());
-    content.setSize (static_cast<int> (channelStrips.size()) * ChannelStrip::width, innerHeight);
+    content.setSize (static_cast<int> (channelStrips.size() + vcas.size()) * ChannelStrip::width, innerHeight);
     for (std::size_t i = 0; i < channelStrips.size(); ++i)
         channelStrips[i]->setBounds (static_cast<int> (i) * ChannelStrip::width, 0, ChannelStrip::width, innerHeight);
+    for (std::size_t i = 0; i < vcas.size(); ++i)
+        vcas[i]->setBounds (static_cast<int> (channelStrips.size() + i) * ChannelStrip::width, 0, ChannelStrip::width, innerHeight);
 }
 
 void MixerView::paint (juce::Graphics& g) { g.fillAll (colour (Token::background)); }

@@ -426,6 +426,40 @@ public:
         signature changes and automation stay. One undo step "Move Section" or "Copy Section" (D-UI-45). */
     EditResult moveSection (const Id& sectionId, Ticks to, bool copy);
 
+    // Groups (D-W6-15) and VCA faders (D-W6-16) ----------------------------------------------
+    /** A group with the lowest free number, named "Group N", holding `trackIds` (taken out of their old
+        groups). Refused when all 32 numbers are taken. */
+    std::optional<Id> createGroup (const std::vector<Id>& trackIds = {});
+    /** Name, on, H and links (the id and number are kept). */
+    EditResult setGroup (const model::Group& group);
+    /** Removes the group; its tracks are in no group. */
+    EditResult deleteGroup (const Id& groupId);
+    /** Puts the track in a group (empty: none). */
+    EditResult setTrackGroup (const Id& trackId, const Id& groupId);
+    /** Groups active (P-GRP-2): off, no group links anything or hides tracks. */
+    EditResult setGroupsActive (bool active);
+    /** While on, changes go to the one track only (the temporary override, P-GRP-20). The UI also gives
+        a check that says whether Shift is held on a control right now. */
+    void setGroupOverride (bool on) noexcept { groupOverride = on; }
+    void setGroupOverrideCheck (std::function<bool()> check) { overrideCheck = std::move (check); }
+    bool groupOverridden() const { return groupOverride || (overrideCheck && overrideCheck()); }
+    /** The other tracks a change to `trackId` also goes to for `link`: none while overridden, and tracks
+        someone else has locked are left out. */
+    std::vector<Id> linkedTracks (const Id& trackId, bool model::Group::* link) const;
+    /** The same for send slot `slot` (0 to 7). */
+    std::vector<Id> linkedSendTracks (const Id& trackId, int slot) const;
+
+    /** A VCA fader at 0 dB; an empty name takes "VCA N". */
+    std::optional<Id> createVca (const std::string& name = {});
+    EditResult renameVca (const Id& vcaId, const std::string& name);
+    /** -inf to +6 dB, like a track fader. */
+    EditResult setVcaVolume (const Id& vcaId, double volumeDb);
+    EditResult setVcaMute (const Id& vcaId, bool mute);
+    /** Removes the VCA; its tracks are unassigned. */
+    EditResult deleteVca (const Id& vcaId);
+    /** Assigns the track to a VCA (empty: none). Not the master. */
+    EditResult setTrackVca (const Id& trackId, const Id& vcaId);
+
     // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------
     static constexpr std::int64_t lockExpiryMs = 24LL * 60 * 60 * 1000;
     /** Locks a track for this user. Refused while someone else holds an unexpired lock. */
@@ -539,6 +573,8 @@ private:
     std::string accessReason;
     std::map<int, std::function<void (const doc::Bytes&)>> changeListeners;
     bool projectOwner = true; // a project never shared belongs to its user
+    bool groupOverride = false;
+    std::function<bool()> overrideCheck;
     std::map<UserId, std::string> userNames;
     std::map<UserId, std::int64_t> lastSeen;
     std::vector<Notice> notices;

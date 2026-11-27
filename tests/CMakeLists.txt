@@ -9,6 +9,7 @@ add_executable(weft_unit_tests
     unit/MediaImportTests.cpp
     unit/TimeTests.cpp
     unit/TrackTests.cpp
+    unit/GroupTests.cpp
     unit/TransportTests.cpp
     unit/UndoTests.cpp
     unit/AutomationTests.cpp

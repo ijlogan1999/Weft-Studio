@@ -3,6 +3,7 @@
 #include "AboutPanel.h"
 #include "AudioSetup.h"
 #include "BounceDialog.h"
+#include "GroupsPanel.h"
 #include "NewTrackDialog.h"
 #include "PluginSearch.h"
 #include "ProjectDialogs.h"
@@ -600,6 +601,19 @@ void MainComponent::handleUiCommand (Cmd command)
                                                    if (safe != nullptr)
                                                        safe->control.pickCustomize (item);
                                                });
+    else if (command == Cmd::groupsWindow)
+    {
+        if (groups != nullptr)
+            groups.reset();
+        else
+            groups = std::make_unique<FloatingWindow> ("Groups", std::make_unique<GroupsPanel> (studio),
+                                                       [safe = juce::Component::SafePointer<MainComponent> (this)] (FloatingWindow*) {
+                                                           juce::MessageManager::callAsync ([safe] {
+                                                               if (safe != nullptr)
+                                                                   safe->groups.reset();
+                                                           });
+                                                       });
+    }
     else if (command == Cmd::settings && desktopWindows())
     {
         auto* dialog = launchDialog (std::make_unique<SettingsDialog> (studio), "Settings", this);
@@ -1068,6 +1082,20 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             menu.addSeparator();
             add (Cmd::copyChannelStrip);
             add (Cmd::pasteChannelStrip);
+            menu.addSeparator();
+            add (Cmd::groupsWindow);
+            add (Cmd::toggleGroups);
+            add (Cmd::createGroup);
+            {
+                juce::PopupMenu hide;
+                for (int n = 1; n <= 9; ++n)
+                {
+                    const auto c = static_cast<Cmd> (static_cast<int> (Cmd::hideGroup1) + n - 1);
+                    hide.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+                }
+                menu.addSubMenu ("Hide Groups", hide);
+            }
+            add (Cmd::newVca);
             break;
         case 4:
         {

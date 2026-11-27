@@ -1483,6 +1483,8 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
                     break;
             }
 
+        gain *= ch.vcaGain; // D-W6-16
+
         // Source.
         if (timeline && ! ch.segments.empty())
             mixSegments (ch, from, frames, left, right);
@@ -1581,7 +1583,7 @@ void Engine::renderSpan (const EngineSnapshot& snap, const float* const* inputs,
         {
             // Lane-following volume or pan: gains on the timeline grid (D-W8-6).
             gridGains (from, frames, rampLeft.data(), rampRight.data(), [&] (std::int64_t t) noexcept {
-                const float g = volumeLane != nullptr ? dbToGain (automation::toDb (volumeLane->laneValue (t))) : gain;
+                const float g = volumeLane != nullptr ? dbToGain (automation::toDb (volumeLane->laneValue (t))) * ch.vcaGain : gain;
                 auto lr = std::pair { panLeft, panRight };
                 if (panLane != nullptr)
                 {

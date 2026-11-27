@@ -147,6 +147,10 @@ public:
     juce::Label name;
     juce::TextButton input;  // audio input, or the instrument slot of an instrument track
     juce::TextButton output;
+    /** The Group and VCA slots (D-W6-15, D-W6-16), side by side under the output. Alt+click on the Group slot puts the
+        track in the last group used; Shift+click on the VCA slot asks to show that VCA's strip (onShowVca). */
+    juce::TextButton group, vca;
+    std::function<void (const Id&)> onShowVca;
     juce::ComboBox automation;
     juce::Slider pan, volume;
     juce::Label readout;
@@ -171,6 +175,21 @@ public:
     void pickSend (std::size_t slot, int itemId);
     juce::PopupMenu outputMenu() const;
     void pickOutput (int itemId);
+    /** No Group, the groups (ticked: this one's), New Group, Group Settings... */
+    juce::PopupMenu groupMenu() const;
+    void pickGroup (int itemId);
+    void clickGroup (juce::ModifierKeys mods);
+    /** No VCA, the VCAs, New VCA. */
+    juce::PopupMenu vcaMenu() const;
+    void pickVca (int itemId);
+    void clickVca (juce::ModifierKeys mods);
+    enum SlotItem
+    {
+        slotNone = 1,
+        slotNew,
+        slotSettings,
+        slotFirst = 10 // + index into groupsInOrder() or vcasInOrder()
+    };
     /** Item ids shared by the menus. */
     enum Item
     {
@@ -219,6 +238,32 @@ private:
     std::string shownSlots; // what the slot components were built from
 };
 
+/** A VCA fader's strip (D-W6-16): its name (double-click to rename), a fader with its readout, and Mute.
+    Right-click: Delete VCA. It scales the tracks assigned to it; it has no sound of its own. */
+class VcaStrip final : public juce::Component
+{
+public:
+    VcaStrip (Studio& studio, Id vcaId);
+    ~VcaStrip() override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void refresh();
+    const Id& vcaId() const noexcept { return id; }
+    juce::PopupMenu menu() const;
+    void pick (int item);
+    static constexpr int itemDelete = 1;
+
+    juce::SharedResourcePointer<KnobLook> knobs;
+    juce::Label name, readout, members;
+    juce::Slider volume;
+    juce::TextButton mute { "M" };
+
+private:
+    Studio& studio;
+    Id id;
+};
+
 class MixerView final : public juce::Component, private juce::ChangeListener, private juce::Timer
 {
 public:
@@ -232,6 +277,8 @@ public:
     const std::vector<std::unique_ptr<ChannelStrip>>& strips() const noexcept { return channelStrips; }
     ChannelStrip& masterStrip() noexcept { return *master; }
     ChannelStrip* stripFor (const Id& trackId);
+    /** The VCA strips, after the channels (D-W6-16). */
+    const std::vector<std::unique_ptr<VcaStrip>>& vcaStrips() const noexcept { return vcas; }
     void refresh();
 
     /** The view buttons and the strip filters above the strips (D-W6-14). Alt+click on a filter shows only that kind. */
@@ -250,6 +297,7 @@ private:
     juce::Component content;
     std::vector<std::unique_ptr<ChannelStrip>> channelStrips;
     std::unique_ptr<ChannelStrip> master;
+    std::vector<std::unique_ptr<VcaStrip>> vcas;
     std::vector<Id> shownOrder;
 };
 } // namespace weft::ui

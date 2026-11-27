@@ -95,7 +95,10 @@ enum class Cmd
     // D-W9-9, D-W9-10: exports
     exportSelectionMidi, exportTrackAudio, exportAllTracksAudio,
     // D-W1-12, D-W1-13: recording
-    recordToggle, toggleReplace, captureRecording
+    recordToggle, toggleReplace, captureRecording,
+    // D-W6-15, D-W6-16: groups and VCA faders
+    toggleGroups, groupsWindow, createGroup, hideGroup1, hideGroup2, hideGroup3, hideGroup4, hideGroup5, hideGroup6, hideGroup7, hideGroup8,
+    hideGroup9, newVca
 };
 
 struct CommandInfo

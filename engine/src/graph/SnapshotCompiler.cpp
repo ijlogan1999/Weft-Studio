@@ -599,6 +599,11 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
         plan.panLeft = l;
         plan.panRight = r;
         plan.soloAudible = local.soloed.empty() || audibleBySolo.contains (track->id);
+        if (const auto vca = model.vcas.find (track->vcaId); ! track->vcaId.empty() && vca != model.vcas.end())
+        {
+            plan.vcaGain = dbToGain (vca->second->volumeDb);
+            plan.soloAudible = plan.soloAudible && ! vca->second->mute;
+        }
         plan.audible = ! track->mute && plan.soloAudible;
         plan.instrument = track->kind == model::TrackKind::instrument ? instruments.find (track->id) : nullptr;
         plan.armed = local.armed.contains (track->id) && track->kind != model::TrackKind::bus;

@@ -57,6 +57,9 @@ Project {
   markers: Map<Id, Marker>
   keyChanges: Map<Id, KeyChange>  // D-UI-44; missing in older projects = none
   sections: Map<Id, Section>      // the arrangement (D-UI-45)
+  groups: Map<Id, Group>          // D-W6-15; missing in older projects = none
+  vcas: Map<Id, Vca>              // D-W6-16; missing in older projects = none
+  groupsActive: bool              // D-W6-15: false = no group links or hides anything; missing = true
   cycle: { enabled: bool, start: Ticks, end: Ticks }
   punch: { enabled: bool, start: Ticks, end: Ticks }
   endMarker: Ticks?
@@ -102,7 +105,30 @@ Track {
   strip: ChannelStrip           // §5
   automationMode: 'off'|'read'|'touch'|'latch'|'write'
   playback: TrackPlayback?      // instrument tracks; absent = defaults (D-W3-13)
+  groupId: Id?                  // its group (D-W6-15); a missing group = none. Not on the master
+  vcaId: Id?                    // the VCA fader that scales it (D-W6-16); a missing VCA = none. Not on the master
   visibleLaneIds: List<Id>      // LOCAL ONLY
+}
+
+Group {                         // D-W6-15; edited field by field, links too
+  id: Id
+  number: 1..32                 // the lowest free one when made; shown in the Group slot
+  name: string                  // "Group N" when made
+  enabled: bool = true          // "On"
+  hidden: bool = false          // "H": its tracks have no rows and no strips (while it's on and groups are active)
+  links: {
+    selection: bool = false, quantize: bool = false, automationMode: bool = false,
+    volume: bool = true, mute: bool = true, input: bool = false, pan: bool = false,
+    solo: bool = true, record: bool = false, color: bool = false, zoom: bool = false, hide: bool = false,
+    sends: int = 0              // bit n links send slot n + 1 (of 8)
+  }
+}
+
+Vca {                           // D-W6-16
+  id: Id
+  name: string                  // "VCA N" when made
+  volumeDb: float = 0           // -inf (-200) to +6
+  mute: bool = false
 }
 
 TrackPlayback {                 // edited field by field, so concurrent changes to different fields merge

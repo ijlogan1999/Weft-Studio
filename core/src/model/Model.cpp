@@ -304,6 +304,11 @@ Track Track::fromValue (const Id& id, const Value& v)
     t.automationMode = oneOf (v["automationMode"], { "off", "read", "touch", "latch", "write" }, "read");
     if (t.kind == TrackKind::instrument)
         t.playback = TrackPlayback::fromValue (v["playback"]);
+    if (t.kind != TrackKind::master)
+    {
+        t.groupId = v["groupId"].asString();
+        t.vcaId = v["vcaId"].asString();
+    }
     return t;
 }
 
@@ -327,7 +332,9 @@ Value Track::toValue() const
         .set ("locked", lock)
         .set ("strip", strip.toValue())
         .set ("automationMode", automationMode)
-        .set ("playback", playback.isDefault() ? Value() : playback.toValue());
+        .set ("playback", playback.isDefault() ? Value() : playback.toValue())
+        .set ("groupId", groupId.empty() ? Value() : Value (groupId))
+        .set ("vcaId", vcaId.empty() ? Value() : Value (vcaId));
 }
 
 // Region --------------------------------------------------------------------
@@ -609,6 +616,68 @@ KeyChange KeyChange::fromValue (const Id& id, const Value& v)
 }
 
 Value KeyChange::toValue() const { return Value::map().set ("id", id).set ("pos", pos).set ("key", key.toValue()); }
+
+Group Group::fromValue (const Id& id, const Value& v)
+{
+    Group g;
+    g.id = id;
+    g.number = static_cast<int> (std::clamp<std::int64_t> (v["number"].asInt (1), 1, Group::maxNumber));
+    g.name = v["name"].asString();
+    g.enabled = v["enabled"].isBool() ? v["enabled"].asBool() : true;
+    g.hidden = v["hidden"].asBool();
+    const auto link = v["links"];
+    const auto flag = [&] (const char* key, bool fallback) { return link[key].isBool() ? link[key].asBool() : fallback; };
+    g.linkSelection = flag ("selection", false);
+    g.linkQuantize = flag ("quantize", false);
+    g.linkAutomationMode = flag ("automationMode", false);
+    g.linkVolume = flag ("volume", true);
+    g.linkMute = flag ("mute", true);
+    g.linkInput = flag ("input", false);
+    g.linkPan = flag ("pan", false);
+    g.linkSolo = flag ("solo", true);
+    g.linkRecord = flag ("record", false);
+    g.linkColor = flag ("color", false);
+    g.linkZoom = flag ("zoom", false);
+    g.linkHide = flag ("hide", false);
+    g.linkSends = static_cast<int> (link["sends"].asInt (0)) & 0xff;
+    return g;
+}
+
+Value Group::toValue() const
+{
+    return Value::map()
+        .set ("id", id)
+        .set ("number", number)
+        .set ("name", name)
+        .set ("enabled", enabled)
+        .set ("hidden", hidden)
+        .set ("links", Value::map()
+                           .set ("selection", linkSelection)
+                           .set ("quantize", linkQuantize)
+                           .set ("automationMode", linkAutomationMode)
+                           .set ("volume", linkVolume)
+                           .set ("mute", linkMute)
+                           .set ("input", linkInput)
+                           .set ("pan", linkPan)
+                           .set ("solo", linkSolo)
+                           .set ("record", linkRecord)
+                           .set ("color", linkColor)
+                           .set ("zoom", linkZoom)
+                           .set ("hide", linkHide)
+                           .set ("sends", linkSends));
+}
+
+Vca Vca::fromValue (const Id& id, const Value& v)
+{
+    Vca x;
+    x.id = id;
+    x.name = v["name"].asString();
+    x.volumeDb = v["volumeDb"].isNumber() ? std::min (v["volumeDb"].asDouble(), 6.0) : 0.0;
+    x.mute = v["mute"].asBool();
+    return x;
+}
+
+Value Vca::toValue() const { return Value::map().set ("id", id).set ("name", name).set ("volumeDb", volumeDb).set ("mute", mute); }
 
 Section Section::fromValue (const Id& id, const Value& v)
 {

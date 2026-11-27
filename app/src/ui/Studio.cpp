@@ -463,7 +463,40 @@ bool Studio::moveTrackTo (const Id& trackId, std::size_t index)
 void Studio::toggleArm (const Id& trackId)
 {
     local.toggleArm (model(), trackId);
+    linkSwitch (TrackSwitch::arm, trackId);
     edited();
+}
+
+void Studio::linkSwitch (TrackSwitch which, const Id& trackId)
+{
+    // Solo and Record are this machine's, so their group links are here, not in the session (P-GRP-13, P-GRP-14).
+    if (which != TrackSwitch::solo && which != TrackSwitch::arm)
+        return;
+    const bool on = trackSwitch (which, trackId);
+    for (const auto& id : session().linkedTracks (trackId, which == TrackSwitch::solo ? &model::Group::linkSolo : &model::Group::linkRecord))
+        if (which == TrackSwitch::solo)
+            local.setSolo (id, on);
+        else
+            local.setArm (model(), id, on);
+}
+
+void Studio::linkSelection()
+{
+    // A group linking selection picks the regions over the same time on its other members (P-GRP-6).
+    const auto& m = model();
+    std::set<Id> picked = selection.regions();
+    for (const auto& id : selection.regions())
+    {
+        const auto* r = m.region (id);
+        if (r == nullptr)
+            continue;
+        const double from = static_cast<double> (r->start), to = m.regionEndTick (*r);
+        for (const auto& other : session().linkedTracks (m.effectiveTrackId (*r), &model::Group::linkSelection))
+            for (const auto* o : m.regionsOnTrack (other))
+                if (static_cast<double> (o->start) < to && m.regionEndTick (*o) > from)
+                    picked.insert (o->id);
+    }
+    selection.set ({ picked.begin(), picked.end() });
 }
 
 void Studio::toggleMute (const Id& trackId)
@@ -491,6 +524,7 @@ void Studio::toggleSolo (const Id& trackId, bool exclusive)
         local.soloOnly (trackId);
     else
         local.toggleSolo (trackId);
+    linkSwitch (TrackSwitch::solo, trackId);
     edited();
 }
 
@@ -527,10 +561,14 @@ void Studio::setTrackSwitch (TrackSwitch which, const Id& trackId, bool on)
     switch (which)
     {
         case TrackSwitch::mute: toggleMute (trackId); return;
-        case TrackSwitch::solo: local.setSolo (trackId, on); break;
+        case TrackSwitch::solo:
+            local.setSolo (trackId, on);
+            linkSwitch (which, trackId);
+            break;
         case TrackSwitch::arm:
             if (! local.setArm (model(), trackId, on))
                 return;
+            linkSwitch (which, trackId);
             break;
         case TrackSwitch::on:
             if (t->kind != model::TrackKind::audio && t->kind != model::TrackKind::instrument)
@@ -794,6 +832,8 @@ int Studio::trackHeight (const Id& trackId) const
 void Studio::setTrackHeight (const Id& trackId, int height)
 {
     heights[trackId] = std::clamp (height, minTrackHeight, maxTrackHeight);
+    for (const auto& id : session().linkedTracks (trackId, &model::Group::linkZoom)) // P-GRP-17
+        heights[id] = heights[trackId];
     sendChangeMessage();
 }
 
@@ -1707,6 +1747,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::configureGlobalTracks: case Cmd::showSingleGlobalTrack: case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack: case Cmd::markerTrackOnly: case Cmd::createSignatureChange: case Cmd::createKeyChange: case Cmd::addSection:
         case Cmd::exportSelectionMidi: case Cmd::exportTrackAudio: case Cmd::exportAllTracksAudio:
         case Cmd::recordToggle: case Cmd::toggleReplace: case Cmd::captureRecording:
+        case Cmd::toggleGroups: case Cmd::groupsWindow: case Cmd::createGroup: case Cmd::hideGroup1: case Cmd::hideGroup2: case Cmd::hideGroup3: case Cmd::hideGroup4: case Cmd::hideGroup5: case Cmd::hideGroup6: case Cmd::hideGroup7: case Cmd::hideGroup8: case Cmd::hideGroup9: case Cmd::newVca:
             break;
     }
     return std::nullopt;
@@ -1714,6 +1755,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
 
 bool Studio::perform (Cmd command)
 {
+    const juce::ScopedValueSetter<bool> asCommand (inCommand, true);
     endPluginGesture();
     if (previewing() && changesDocument (command))
     {
@@ -2787,6 +2829,67 @@ bool Studio::perform (Cmd command)
         case Cmd::cycleMixerMode:
             mixerMode = mixerMode == MixerMode::single ? MixerMode::tracks : mixerMode == MixerMode::tracks ? MixerMode::all : MixerMode::single;
             break;
+        case Cmd::toggleGroups:
+            if (! check (s.setGroupsActive (! model().info.groupsActive)))
+                return false;
+            setStatus (model().info.groupsActive ? "Groups on." : "Groups off: no group links its tracks.");
+            break;
+        case Cmd::groupsWindow:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::createGroup:
+        {
+            // D-W6-15: the selected track and the tracks of the selected regions.
+            std::vector<Id> members;
+            const auto add = [&] (const Id& id) {
+                if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master
+                                                       && std::find (members.begin(), members.end(), id) == members.end())
+                    members.push_back (id);
+            };
+            add (local.selectedTrack);
+            for (const auto& id : selection.ids())
+                if (const auto* r = model().region (id))
+                    add (model().effectiveTrackId (*r));
+            if (members.empty())
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            const auto made = s.createGroup (members);
+            if (! made)
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            lastGroup = *made;
+            setStatus ("Made " + juce::String (model().groups.at (*made)->name) + ".");
+            break;
+        }
+        case Cmd::hideGroup1: case Cmd::hideGroup2: case Cmd::hideGroup3: case Cmd::hideGroup4: case Cmd::hideGroup5: case Cmd::hideGroup6:
+        case Cmd::hideGroup7: case Cmd::hideGroup8: case Cmd::hideGroup9:
+        {
+            const int number = static_cast<int> (command) - static_cast<int> (Cmd::hideGroup1) + 1;
+            const model::Group* found = nullptr;
+            for (const auto* g : model().groupsInOrder())
+                if (g->number == number)
+                    found = g;
+            if (found == nullptr)
+            {
+                setStatus ("There's no group " + juce::String (number) + ".");
+                return false;
+            }
+            auto g = *found;
+            g.hidden = ! g.hidden;
+            return check (s.setGroup (g));
+        }
+        case Cmd::newVca:
+            if (! s.createVca())
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            break;
         case Cmd::copyChannelStrip: return copyChannelStrip (local.selectedTrack);
         case Cmd::pasteChannelStrip: return pasteChannelStrip (local.selectedTrack);
         case Cmd::lengthenNotes:
@@ -3502,6 +3605,8 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     releaseProject();
     folder = std::move (projectFolder);
     sess = std::move (session);
+    // P-GRP-20: Shift held while changing a control changes that track only (not from key commands).
+    sess->setGroupOverrideCheck ([this] { return ! inCommand && juce::ModifierKeys::currentModifiers.isShiftDown(); });
     scratch = isScratch;
     everEdited = false;
     unsaved = false;

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <set>
 #include <map>
+#include <tuple>
 
 namespace weft::commands
 {
@@ -240,8 +241,18 @@ EditResult Session::setTrackVolume (const Id& trackId, double volumeDb)
     // anything below -inf dB is silence and stores as -inf.
     if (std::isnan (volumeDb) || volumeDb > 6.0 + 1e-9)
         return reject ("Volume is -inf to +6 dB.");
+    const double target = std::clamp (volumeDb, minusInfinityDb, 6.0);
+    // Group members keep their levels relative to this one (P-GRP-9); from or to -inf they all follow.
+    const double before = projection.tracks.at (trackId)->strip.volumeDb;
+    const bool fromSilence = before <= minusInfinityDb || target <= minusInfinityDb;
+    std::vector<std::pair<Id, double>> others;
+    for (const auto& id : linkedTracks (trackId, &model::Group::linkVolume))
+        others.emplace_back (id, fromSilence ? target : std::clamp (projection.tracks.at (id)->strip.volumeDb + (target - before), minusInfinityDb, 6.0));
     return run ("Volume", [&] (TxnWriter& w) {
-        return wrote (w.put (trackPath (trackId) / "strip" / "volumeDb", Value (std::clamp (volumeDb, minusInfinityDb, 6.0))));
+        bool good = w.put (trackPath (trackId) / "strip" / "volumeDb", Value (target));
+        for (const auto& [id, db] : others)
+            good = good && w.put (trackPath (id) / "strip" / "volumeDb", Value (db));
+        return wrote (good);
     });
 }
 
@@ -251,14 +262,30 @@ EditResult Session::setTrackPan (const Id& trackId, double pan)
         return reject ("That track no longer exists.");
     if (std::isnan (pan) || std::abs (pan) > 1.0 + 1e-9)
         return reject ("Pan is -1 (left) to +1 (right).");
-    return run ("Pan", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "strip" / "pan", Value (std::clamp (pan, -1.0, 1.0)))); });
+    const double target = std::clamp (pan, -1.0, 1.0);
+    const double delta = target - projection.tracks.at (trackId)->strip.pan; // members keep their offsets (P-GRP-12)
+    std::vector<std::pair<Id, double>> others;
+    for (const auto& id : linkedTracks (trackId, &model::Group::linkPan))
+        others.emplace_back (id, std::clamp (projection.tracks.at (id)->strip.pan + delta, -1.0, 1.0));
+    return run ("Pan", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "strip" / "pan", Value (target));
+        for (const auto& [id, p] : others)
+            good = good && w.put (trackPath (id) / "strip" / "pan", Value (p));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackMute (const Id& trackId, bool mute)
 {
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
-    return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "mute", Value (mute))); });
+    const auto others = linkedTracks (trackId, &model::Group::linkMute);
+    return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "mute", Value (mute));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "mute", Value (mute));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackOff (const Id& trackId, bool off)
@@ -280,7 +307,13 @@ EditResult Session::setTrackHidden (const Id& trackId, bool hidden)
         return reject ("The master can't be hidden.");
     if (t->hidden == hidden)
         return reject (hidden ? "That track is already hidden." : "That track isn't hidden.");
-    return run (hidden ? "Hide Track" : "Unhide Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "hidden", Value (hidden))); });
+    const auto others = linkedTracks (trackId, &model::Group::linkHide);
+    return run (hidden ? "Hide Track" : "Unhide Track", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "hidden", Value (hidden));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "hidden", Value (hidden));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setShowHiddenTracks (bool show)
@@ -314,7 +347,16 @@ EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
         return reject ("That track no longer exists.");
     if (mode != "auto" && mode != "on" && mode != "off")
         return reject ("Monitoring is auto, on or off.");
-    return run ("Input Monitoring", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "monitor", Value (mode))); });
+    std::vector<Id> others;
+    for (const auto& id : linkedTracks (trackId, &model::Group::linkInput))
+        if (projection.tracks.at (id)->kind == t->kind)
+            others.push_back (id);
+    return run ("Input Monitoring", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "monitor", Value (mode));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "monitor", Value (mode));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackPlayback (const Id& trackId, const model::TrackPlayback& p)
@@ -352,7 +394,13 @@ EditResult Session::setTrackAutomationMode (const Id& trackId, const std::string
         return reject ("That track no longer exists.");
     if (mode != "off" && mode != "read" && mode != "touch" && mode != "latch" && mode != "write")
         return reject ("Automation mode is off, read, touch, latch or write.");
-    return run ("Automation Mode", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "automationMode", Value (mode))); });
+    const auto others = linkedTracks (trackId, &model::Group::linkAutomationMode);
+    return run ("Automation Mode", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "automationMode", Value (mode));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "automationMode", Value (mode));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackInput (const Id& trackId, const model::InputAssignment& input)
@@ -1236,8 +1284,24 @@ EditResult Session::setSendLevel (const Id& trackId, const Id& sendId, double le
     const auto* t = projection.track (trackId);
     if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
         return reject ("That send no longer exists.");
+    const double target = std::clamp (levelDb, minusInfinityDb, 6.0);
+    // Linked send slots keep their levels relative to this one (P-GRP-15).
+    const auto slot = std::find_if (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; });
+    const double before = slot->levelDb;
+    const bool fromSilence = before <= minusInfinityDb || target <= minusInfinityDb;
+    std::vector<std::tuple<Id, Id, double>> others;
+    for (const auto& id : linkedSendTracks (trackId, static_cast<int> (slot - t->strip.sends.begin())))
+    {
+        const auto& sends = projection.tracks.at (id)->strip.sends;
+        const auto index = static_cast<std::size_t> (slot - t->strip.sends.begin());
+        if (index < sends.size())
+            others.emplace_back (id, sends[index].id, fromSilence ? target : std::clamp (sends[index].levelDb + (target - before), minusInfinityDb, 6.0));
+    }
     return run ("Send Level", [&] (TxnWriter& w) {
-        return wrote (w.put (sendsPath (trackId) / PathSegment::id (sendId) / "levelDb", Value (std::clamp (levelDb, minusInfinityDb, 6.0))));
+        bool good = w.put (sendsPath (trackId) / PathSegment::id (sendId) / "levelDb", Value (target));
+        for (const auto& [id, send, db] : others)
+            good = good && w.put (sendsPath (id) / PathSegment::id (send) / "levelDb", Value (db));
+        return wrote (good);
     });
 }
 

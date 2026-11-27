@@ -2,6 +2,7 @@
 
 #include "UiFixture.h"
 
+#include "ui/GroupsPanel.h"
 #include "ui/PluginSearch.h"
 
 using namespace weft;
@@ -1081,4 +1082,127 @@ TEST_CASE ("AT-MIX-19 mixer views Single, Tracks and All, and the strip filters"
     // The buttons sit above the strips.
     CHECK (mixer.singleView.getBottom() <= MixerView::barHeight);
     CHECK (mixer.masterStrip().getY() >= MixerView::barHeight);
+}
+
+TEST_CASE ("AT-MIX-22 Group and VCA slots, VCA strips, the Groups window and the group commands", "[UI][AT-MIX-22]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto a = ui.m().trackOrder.front();
+    const auto b = s.createTrack (model::TrackKind::audio, "B").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    auto* stripA = mixer.stripFor (a);
+    auto* stripB = mixer.stripFor (b);
+    REQUIRE (stripA != nullptr);
+    REQUIRE (stripB != nullptr);
+    CHECK (stripA->group.getButtonText() == "Group");
+    CHECK_FALSE (mixer.masterStrip().group.isVisible());
+
+    // The Group slot: New Group puts the track in "Group 1"; Alt+click on another strip uses the last group.
+    REQUIRE (entry (stripA->groupMenu(), "New Group"));
+    stripA->pickGroup (ChannelStrip::slotNew);
+    ui.settle();
+    REQUIRE (ui.m().groups.size() == 1);
+    const auto g = ui.m().groups.begin()->first;
+    CHECK (ui.m().track (a)->groupId == g);
+    CHECK (mixer.stripFor (a)->group.getButtonText() == "1 Group 1");
+    mixer.stripFor (b)->clickGroup (alt());
+    ui.settle();
+    CHECK (ui.m().track (b)->groupId == g);
+    CHECK (entry (mixer.stripFor (b)->groupMenu(), "1: Group 1")->ticked);
+
+    // Linked volume: moving A's fader moves B's by the same amount; Shift (the override) moves only A.
+    mixer.stripFor (a)->volume.setValue (-6.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (b)->strip.volumeDb == Catch::Approx (-6.0));
+    s.setGroupOverride (true);
+    mixer.stripFor (a)->volume.setValue (-12.0, juce::sendNotificationSync);
+    s.setGroupOverride (false);
+    ui.settle();
+    CHECK (ui.m().track (b)->strip.volumeDb == Catch::Approx (-6.0));
+    // Solo links by default: soloing A solos B too.
+    ui.studio.toggleSolo (a);
+    CHECK (ui.studio.localView().soloed.contains (b));
+    ui.studio.toggleSolo (a);
+    CHECK_FALSE (ui.studio.localView().soloed.contains (b));
+
+    // The Groups window: On, name, H, Groups active, and the links.
+    REQUIRE (ui.studio.perform (Cmd::groupsWindow));
+    REQUIRE (ui.main->groupsWindow() != nullptr);
+    auto* panel = dynamic_cast<GroupsPanel*> (ui.main->groupsWindow()->getContentComponent());
+    REQUIRE (panel != nullptr);
+    REQUIRE (panel->rows().size() == 1);
+    CHECK (panel->chosen() == g);
+    CHECK (panel->volume.getToggleState());
+    CHECK_FALSE (panel->pan.getToggleState());
+    panel->pan.setToggleState (true, juce::dontSendNotification);
+    panel->pan.onClick();
+    CHECK (ui.m().groups.at (g)->linkPan);
+    panel->sends[1].setToggleState (true, juce::dontSendNotification);
+    panel->sends[1].onClick();
+    CHECK (ui.m().groups.at (g)->linkSends == 2);
+    panel->rows()[0]->name.setText ("Drums", juce::sendNotificationSync);
+    CHECK (ui.m().groups.at (g)->name == "Drums");
+    panel->rows()[0]->hide.setToggleState (true, juce::dontSendNotification);
+    panel->rows()[0]->hide.onClick();
+    CHECK (ui.m().rows.size() == 0);
+    // Ctrl+Shift+1 toggles group 1's H back.
+    REQUIRE (ui.studio.perform (Cmd::hideGroup1));
+    CHECK (ui.m().rows.size() == 2);
+    CHECK_FALSE (ui.studio.perform (Cmd::hideGroup2)); // there's no group 2
+    // Shift+G turns groups off: nothing links.
+    REQUIRE (ui.studio.perform (Cmd::toggleGroups));
+    ui.settle();
+    CHECK_FALSE (panel->active.getToggleState());
+    REQUIRE (s.setTrackMute (a, true));
+    CHECK_FALSE (ui.m().track (b)->mute);
+    REQUIRE (ui.studio.perform (Cmd::toggleGroups));
+    // Alt+click on a group selects its tracks' regions and its first track.
+    ui.studio.selectTrack (b);
+    panel->selectMembers (g);
+    CHECK (ui.studio.selectedTrack() == a);
+    REQUIRE (ui.studio.perform (Cmd::groupsWindow)); // closes it
+    CHECK (ui.main->groupsWindow() == nullptr);
+
+    // Create Group for Selected Tracks: the selected track goes into a new group 2.
+    ui.studio.selectTrack (b);
+    REQUIRE (ui.studio.perform (Cmd::createGroup));
+    CHECK (ui.m().groups.size() == 2);
+    CHECK (ui.m().groups.at (ui.m().track (b)->groupId)->number == 2);
+
+    // The VCA slot: New VCA makes "VCA 1" with this track on it (one undo step) and a VCA strip after the channels.
+    mixer.stripFor (a)->pickVca (ChannelStrip::slotNew);
+    ui.settle();
+    REQUIRE (ui.m().vcas.size() == 1);
+    const auto v = ui.m().vcas.begin()->first;
+    CHECK (ui.m().track (a)->vcaId == v);
+    CHECK (s.undoName() == "New VCA");
+    CHECK (mixer.stripFor (a)->vca.getButtonText() == "VCA 1");
+    REQUIRE (mixer.vcaStrips().size() == 1);
+    auto& vcaStrip = *mixer.vcaStrips().front();
+    CHECK (vcaStrip.members.getText() == "1 track");
+    vcaStrip.volume.setValue (-10.0, juce::sendNotificationSync);
+    CHECK (ui.m().vcas.at (v)->volumeDb == Catch::Approx (-10.0));
+    vcaStrip.mute.onClick();
+    CHECK (ui.m().vcas.at (v)->mute);
+    vcaStrip.name.setText ("Band", juce::sendNotificationSync);
+    CHECK (ui.m().vcas.at (v)->name == "Band");
+
+    // Shift+click on the inspector's VCA slot shows the VCA's strip in place of the output's (P-INS-8).
+    ui.studio.selectTrack (a);
+    ui.settle();
+    auto& inspector = ui.main->inspector();
+    REQUIRE (inspector.trackStrip != nullptr);
+    inspector.trackStrip->clickVca (juce::ModifierKeys (juce::ModifierKeys::shiftModifier));
+    REQUIRE (inspector.vcaStrip != nullptr);
+    CHECK (inspector.vcaStrip->vcaId() == v);
+    CHECK (inspector.outputStrip == nullptr);
+
+    // Delete VCA frees its tracks and removes the strip.
+    vcaStrip.pick (VcaStrip::itemDelete);
+    ui.settle();
+    CHECK (ui.m().vcas.empty());
+    CHECK (ui.m().track (a)->vcaId.empty());
+    CHECK (mixer.vcaStrips().empty());
 }

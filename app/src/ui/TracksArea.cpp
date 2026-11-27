@@ -2692,7 +2692,10 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
             return;
     }
     else if (! studio.selection.contains (r->id))
+    {
         studio.selection.click (r->id, false);
+        studio.linkSelection();
+    }
     startRegionDrag (*r, zone, p, mods);
     studio.sendChangeMessage();
 }

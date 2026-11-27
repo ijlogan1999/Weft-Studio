@@ -160,7 +160,8 @@ struct Track
     ChannelStrip strip;
     std::string automationMode = "read"; // off | read | touch | latch | write (F-AUT-5: read is default)
     TrackPlayback playback; // instrument tracks
-
+    Id groupId; // the group it's in (D-W6-15), or none
+    Id vcaId;   // the VCA fader that scales it (D-W6-16), or none
     static Track fromValue (const Id& id, const Value& v);
     Value toValue() const;
 };
@@ -488,6 +489,38 @@ struct Section
     Value toValue() const;
 };
 
+/** A group of tracks (D-W6-15): changing one member's linked properties changes the others'. */
+struct Group
+{
+    Id id;
+    int number = 1; // 1 to maxNumber, shown in the Group slot
+    std::string name;
+    bool enabled = true; // "On"
+    bool hidden = false; // "H": its tracks have no rows and no strips
+    // What it links (P-GRP-6 to P-GRP-18). Selection: picking regions on one member picks the ones over the same
+    // time on the others. Quantize: audio regions are quantized together (stored; audio quantize isn't built yet).
+    bool linkSelection = false, linkQuantize = false, linkAutomationMode = false, linkVolume = true, linkMute = true, linkInput = false,
+         linkPan = false, linkSolo = true, linkRecord = false, linkColor = false, linkZoom = false, linkHide = false;
+    int linkSends = 0; // bit n: send slot n + 1 (of 8) moves on all members
+
+    static constexpr int maxNumber = 32;
+
+    static Group fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A VCA fader (D-W6-16): scales the volume of the tracks assigned to it, and mutes them. */
+struct Vca
+{
+    Id id;
+    std::string name;
+    double volumeDb = 0.0; // -inf to +6
+    bool mute = false;
+
+    static Vca fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
 /** Scalar project fields (collections live in ProjectModel). */
 struct ProjectInfo
 {
@@ -505,6 +538,7 @@ struct ProjectInfo
     MetronomeSettings metronomeDefaults;
     KeySignature key;
     bool showHiddenTracks = false; // L-TRH-10: hidden tracks get rows again (to unhide them)
+    bool groupsActive = true;      // D-W6-15: off, no group links anything
     double panLawDb = -3.0;        // W-35: a mono source's level at centre pan (isValidPanLaw)
     int midiInputFilter = 0;       // W-35: midiFilter bits for live MIDI the project ignores
 };

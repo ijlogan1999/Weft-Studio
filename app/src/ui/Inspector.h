@@ -48,6 +48,10 @@ public:
 
     // Channel section: the selected track's strip and its output's (Master or a bus).
     std::unique_ptr<ChannelStrip> trackStrip, outputStrip;
+    /** Shift+click on the track strip's VCA slot shows that VCA's strip in place of the output's (P-INS-8),
+        until the track changes or leaves the VCA. */
+    std::unique_ptr<VcaStrip> vcaStrip;
+    Id shownVca;
     EqThumbnail eq;
     /** The scrolling area (the sections can be taller than the panel). */
     juce::Viewport viewport;

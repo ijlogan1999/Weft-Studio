@@ -47,6 +47,10 @@ std::string describe (const Path& p)
         return "a key change";
     if (c == model::keys::sections)
         return "a section";
+    if (c == model::keys::groups)
+        return "a group";
+    if (c == model::keys::vcas)
+        return "a VCA";
     if (c == model::keys::tempoMap)
         return "a tempo change";
     if (c == model::keys::signatureMap)
@@ -123,6 +127,8 @@ std::optional<Session> Session::createNew (const NewProjectOptions& options, Use
                      .set (model::keys::markers, Value::map())
                      .set (model::keys::keyChanges, Value::map())
                      .set (model::keys::sections, Value::map())
+                     .set (model::keys::groups, Value::map())
+                     .set (model::keys::vcas, Value::map())
                      .set ("cycle", model::TimeRange {}.toValue())
                      .set ("punch", model::TimeRange {}.toValue())
                      .set ("endMarker", Value())
