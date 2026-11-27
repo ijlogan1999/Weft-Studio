@@ -60,6 +60,7 @@ Project {
   groups: Map<Id, Group>          // D-W6-15; missing in older projects = none
   vcas: Map<Id, Vca>              // D-W6-16; missing in older projects = none
   groupsActive: bool              // D-W6-15: false = no group links or hides anything; missing = true
+  notes: string?                  // the project's notes (D-UI-47); missing = none
   cycle: { enabled: bool, start: Ticks, end: Ticks }
   punch: { enabled: bool, start: Ticks, end: Ticks }
   endMarker: Ticks?
@@ -107,6 +108,7 @@ Track {
   playback: TrackPlayback?      // instrument tracks; absent = defaults (D-W3-13)
   groupId: Id?                  // its group (D-W6-15); a missing group = none. Not on the master
   vcaId: Id?                    // the VCA fader that scales it (D-W6-16); a missing VCA = none. Not on the master
+  notes: string?                // the track's notes (D-UI-47); missing = none. Not on the master
   stack: 'folder' | 'summing'?  // buses only: this track is a stack's main (D-W6-17)
   stackOpen: bool = true        // a stack main: its members have rows (and strips, following stacks)
   stackId: Id?                  // a member: its stack's main; a missing or non-main track = not in a stack

@@ -169,6 +169,7 @@ struct Track
     Id stackId;
     bool isStackMain() const noexcept { return kind == TrackKind::bus && ! stack.empty(); }
     bool isFolderStack() const noexcept { return kind == TrackKind::bus && stack == "folder"; }
+    std::string notes; // track notes (D-UI-47)
 
     static Track fromValue (const Id& id, const Value& v);
     Value toValue() const;
@@ -547,6 +548,7 @@ struct ProjectInfo
     KeySignature key;
     bool showHiddenTracks = false; // L-TRH-10: hidden tracks get rows again (to unhide them)
     bool groupsActive = true;      // D-W6-15: off, no group links anything
+    std::string notes;             // project notes (D-UI-47)
     double panLawDb = -3.0;        // W-35: a mono source's level at centre pan (isValidPanLaw)
     int midiInputFilter = 0;       // W-35: midiFilter bits for live MIDI the project ignores
 };

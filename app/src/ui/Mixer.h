@@ -153,6 +153,9 @@ public:
     std::function<void (const Id&)> onShowVca;
     /** A stack main's disclosure button (P-MX-11), left of the name: opens or closes the stack; Alt+click, every stack. */
     juce::TextButton stackToggle;
+    /** The track's notes under the buttons, while the mixer shows them (P-MX-22). */
+    juce::Label notes;
+    static constexpr int notesHeight = 64;
     juce::ComboBox automation;
     juce::Slider pan, volume;
     juce::Label readout;
@@ -286,6 +289,8 @@ public:
     /** The view buttons and the strip filters above the strips (D-W6-14). Alt+click on a filter shows only that kind. */
     juce::TextButton singleView { "Single" }, tracksView { "Tracks" }, allView { "All" };
     juce::TextButton showAudio { "Audio" }, showInstrument { "Inst" }, showBus { "Bus" };
+    /** Track notes under the strips (P-MX-22). */
+    juce::TextButton showNotes { "Notes" };
     void clickFilter (juce::TextButton& filter, juce::ModifierKeys mods);
     static constexpr int barHeight = 32;
 

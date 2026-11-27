@@ -275,6 +275,8 @@ public:
     bool mixerAudio = true, mixerInstrument = true, mixerBus = true;
     /** View › Follow Track Stacks (P-MX-10): the mixer hides a closed stack's members as the tracks area does. */
     bool mixerFollowStacks = true;
+    /** Track notes under each mixer strip (P-MX-22, D-UI-47); this machine's. */
+    bool mixerNotes = false;
     /** Screensets (D-UI-46): numbered panel layouts, 1 to 99, this machine's. The current one follows the layout as
         it changes; recalling another keeps this one as it was left. */
     std::map<int, PanelLayout> screensets;

@@ -165,7 +165,7 @@ std::vector<Cmd> toolbarChoices()
 {
     return { Cmd::split, Cmd::splitAtCycle, Cmd::join, Cmd::repeat, Cmd::muteRegions, Cmd::loopRegion, Cmd::crossfade, Cmd::reverseRegions,
              Cmd::quantize, Cmd::setCycleToSelection, Cmd::addMarker, Cmd::zoomToFit, Cmd::tapTempo, Cmd::newTrack, Cmd::duplicateTrack,
-             Cmd::deleteUnusedTracks, Cmd::importAudio, Cmd::exportRegions, Cmd::bounce, Cmd::pluginManager, Cmd::searchPlugins };
+             Cmd::deleteUnusedTracks, Cmd::importAudio, Cmd::exportRegions, Cmd::bounce, Cmd::pluginManager, Cmd::searchPlugins, Cmd::toggleNotes };
 }
 
 namespace
@@ -1867,6 +1867,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::screensetTens1: case Cmd::screensetTens2: case Cmd::screensetTens3: case Cmd::screensetTens4: case Cmd::screensetTens5: case Cmd::screensetTens6: case Cmd::screensetTens7: case Cmd::screensetTens8: case Cmd::screensetTens9:
         case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow: case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow:
         case Cmd::cycleWindows: case Cmd::cycleWindowsBack: case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject: case Cmd::cycleWindowViews: case Cmd::cycleWindowViewsBack:
+        case Cmd::toggleNotes: case Cmd::mixerNotes:
             break;
     }
     return std::nullopt;
@@ -3019,8 +3020,12 @@ bool Studio::perform (Cmd command)
         case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow:
         case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow: case Cmd::cycleWindows: case Cmd::cycleWindowsBack:
         case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject:
+        case Cmd::toggleNotes:
             if (uiCommand)
                 uiCommand (command);
+            break;
+        case Cmd::mixerNotes:
+            mixerNotes = ! mixerNotes;
             break;
         case Cmd::createGroup:
         {

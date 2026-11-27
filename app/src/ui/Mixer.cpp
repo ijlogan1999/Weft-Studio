@@ -422,6 +422,12 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     describe (stackToggle, "Open or close the stack", "Opens or closes the stack (Alt+click: every stack)");
     stackToggle.onClick = [this] { studio.toggleStack (id, juce::ModifierKeys::currentModifiers.isAltDown()); };
     addChildComponent (stackToggle);
+    notes.setJustificationType (juce::Justification::topLeft);
+    notes.setMinimumHorizontalScale (1.0f);
+    notes.setFont (font (Type::caption));
+    notes.setColour (juce::Label::textColourId, colour (Token::textDim));
+    describe (notes, "Track notes", "The track's notes (edit them in the Notes tab)");
+    addChildComponent (notes);
     vca.onClick = [this] { clickVca (juce::ModifierKeys::currentModifiers); };
 
     automation.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
@@ -596,7 +602,7 @@ int ChannelStrip::preferredHeight() const
     // name, input, slots, output, group and VCA, automation, pan, fader (min), readout, buttons
     return space::s1 + rowHeight + gap + rowHeight + gap + (shownInsertRows() + 1 + shownSendRows()) * rowHeight + gap + rowHeight + gap + rowHeight + gap
            + rowHeight + gap
-           + space::s4 + gap + 120 + gap + rowHeight + gap + rowHeight + space::s1;
+           + space::s4 + gap + 120 + gap + rowHeight + gap + rowHeight + space::s1 + (studio.mixerNotes ? notesHeight + gap : 0);
 }
 
 void ChannelStrip::rebuildSlots()
@@ -694,6 +700,12 @@ void ChannelStrip::refresh()
     // A folder stack's main carries no sound (D-W6-17): no output, VCA or slots; its fader and mute act on its members.
     const bool folder = t->isFolderStack();
     stackToggle.setVisible (t->isStackMain());
+    if (notes.isVisible() != (studio.mixerNotes && ! master))
+    {
+        notes.setVisible (studio.mixerNotes && ! master);
+        resized();
+    }
+    notes.setText (juce::String::fromUTF8 (t->notes.c_str()), juce::dontSendNotification);
     stackToggle.setButtonText (juce::String::fromUTF8 (t->stackOpen ? "\xe2\x96\xbe" : "\xe2\x96\xb8"));
     output.setVisible (! master && ! folder);
     group.setVisible (! master);
@@ -917,6 +929,11 @@ void ChannelStrip::resized()
     r.removeFromTop (gap);
     pan.setBounds (r.removeFromTop (space::s4).withSizeKeepingCentre (space::s4, space::s4));
     r.removeFromTop (gap);
+    if (notes.isVisible())
+    {
+        notes.setBounds (r.removeFromBottom (notesHeight));
+        r.removeFromBottom (gap);
+    }
     buttonRow = r.removeFromBottom (rowHeight);
     auto buttons = buttonRow;
     std::vector<juce::TextButton*> shown;
@@ -1566,6 +1583,10 @@ MixerView::MixerView (Studio& s) : studio (s)
         b->onClick = [this, b] { clickFilter (*b, juce::ModifierKeys::currentModifiers); };
         addAndMakeVisible (*b);
     }
+    describe (showNotes, "Track notes", "Show each track's notes under its strip");
+    showNotes.setClickingTogglesState (false);
+    showNotes.onClick = [this] { studio.perform (Cmd::mixerNotes); studio.edited(); };
+    addAndMakeVisible (showNotes);
     studio.addChangeListener (this);
     refresh();
     startTimerHz (30);
@@ -1652,6 +1673,7 @@ void MixerView::refresh()
     showAudio.setToggleState (lists && studio.mixerAudio, juce::dontSendNotification);
     showInstrument.setToggleState (lists && studio.mixerInstrument, juce::dontSendNotification);
     showBus.setToggleState (lists && studio.mixerBus, juce::dontSendNotification);
+    showNotes.setToggleState (studio.mixerNotes, juce::dontSendNotification);
     layoutStrips();
 }
 
@@ -1688,6 +1710,8 @@ void MixerView::resized()
         b->setBounds (bar.removeFromLeft (56));
         bar.removeFromLeft (space::half);
     }
+    bar.removeFromLeft (space::s2);
+    showNotes.setBounds (bar.removeFromLeft (64));
     if (master != nullptr)
         master->setBounds (r.removeFromRight (ChannelStrip::width + space::s1).withTrimmedLeft (space::s1).withHeight (std::max (r.getHeight(), master->preferredHeight())));
     viewport.setBounds (r);

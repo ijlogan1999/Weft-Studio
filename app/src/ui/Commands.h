@@ -106,7 +106,9 @@ enum class Cmd
     screensetTens1, screensetTens2, screensetTens3, screensetTens4, screensetTens5, screensetTens6, screensetTens7, screensetTens8, screensetTens9,
     undoHistory, openMainWindow, mixerWindow, pianoRollWindow, audioEditorWindow, projectAudioWindow, regionInspectorWindow, closeWindow,
     cycleWindows, cycleWindowsBack, minimizeWindow, minimizeAllWindows, zoomWindow, fullScreen, closeProject, cycleWindowViews,
-    cycleWindowViewsBack
+    cycleWindowViewsBack,
+    // D-UI-47: notes
+    toggleNotes, mixerNotes
 };
 
 struct CommandInfo

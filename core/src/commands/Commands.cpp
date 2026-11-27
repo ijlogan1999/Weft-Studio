@@ -316,6 +316,23 @@ EditResult Session::setTrackHidden (const Id& trackId, bool hidden)
     });
 }
 
+EditResult Session::setProjectNotes (const std::string& text)
+{
+    if (projection.info.notes == text)
+        return reject ("The notes haven't changed.");
+    return run ("Project Notes", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "notes" }), text.empty() ? Value() : Value (text))); });
+}
+
+EditResult Session::setTrackNotes (const Id& trackId, const std::string& text)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (t->notes == text)
+        return reject ("The notes haven't changed.");
+    return run ("Track Notes", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "notes", text.empty() ? Value() : Value (text))); });
+}
+
 EditResult Session::setShowHiddenTracks (bool show)
 {
     return run (show ? "Show Hidden Tracks" : "Hide Hidden Tracks",

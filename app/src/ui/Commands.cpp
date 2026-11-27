@@ -255,6 +255,8 @@ std::vector<CommandInfo> build()
         { Cmd::closeProject, "Close Project", "Ctrl+Alt+W", { key ('W', ctrl | alt) } },
         { Cmd::cycleWindowViews, "Cycle Through Window Views", "", {} },
         { Cmd::cycleWindowViewsBack, "Cycle Through Window Views (Backwards)", "", {} },
+        { Cmd::toggleNotes, "Notes", "Alt+Shift+N", { key ('N', alt | shift) } },
+        { Cmd::mixerNotes, "Track Notes in the Mixer", "", {} },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },

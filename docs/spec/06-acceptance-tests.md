@@ -64,6 +64,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-20** [UI] · D-UI-42 · Project Settings lists nine count-in choices ending "2 beats", shows the pan law as "-3 dB (equal power)", and sets 2 beats, -6 dB and ignore pitch bend; reopening it shows them. Navigate › Count-in lists "6 Bars" and "1 Beat"; choosing 1 Beat, Shift+K turns it off and back to 1 beat ("Count-in: 1 beat."); the control bar's More menu sets 4 bars.
 
+**AT-PRJ-21** [U] · D-UI-47 · Setting the project's notes and a track's notes are undo steps "Project Notes" and "Track Notes"; setting the same text again, or notes on a missing track, is refused. Undo and redo restore them; they survive saving and reopening; clearing the project's notes removes them from the file.
+
 **AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
 
 ## 2. Transport (TRN)
@@ -601,6 +603,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-UI-14** [UI] · D-UI-43 · The control bar's customize menu lists every item ticked, the master choices, the time and tempo formats, the big displays, Apply Defaults, Save As Default and Revert. Unticking Tempo and then Key hides them and Revert shows Key again; after Save As Default, hiding the CPU reading and choosing Apply Defaults shows it again. The master volume slider sets the master's fader to -6 dB; Output Meter replaces it and None hides both. At 4.5 s the time reads 216000 as samples and 00:00:04:12 at 25 fps, and the tempo reads 120 without decimals. View › Control Bar hides the bar; View › Toolbar shows the eight default buttons under it, adding Split at Cycle puts it second and Restore Defaults removes it; the layout survives a restart. Two big beats displays and a big time display open as three windows showing the control bar's position and time, and the performance meter opens at twice its size.
 
 **AT-UI-15** [UI] · D-UI-46 · Recall Screenset 2, hide the inspector, Screenset 1 brings it back and 2 hides it again; Screenset 1x then 3 gives screenset 13 without moving to a marker; the screensets survive being written out and read back. After two renames, Undo History lists "Start" first and "Rename Track" last, current; clicking two rows up undoes both (the steps stay listed) and clicking the last redoes them; asking again doesn't open a second window. Open Mixer, Open Piano Roll and Region Inspector Float open windows holding those views; Close Window closes the inspector's. Cycle Through Window Views goes from none to Mixer, and backwards twice to Audio Editor. Close Project gives a new project with one track.
+
+**AT-UI-16** [UI] · D-UI-47 · View › Notes opens the side panel on the Notes tab showing "Audio 1"; both notes are read-only until Edit, and Done saves them (the last undo step is "Track Notes"). Selecting another track while editing saves what was typed for the first and shows the second's empty notes. Text Size large makes the text bigger. The mixer's Notes button shows the track's notes on its strip (not on the master's); Track Notes in the Mixer hides them again. Notes again closes the side panel.
 
 ## 16. Collaboration (COL)
 

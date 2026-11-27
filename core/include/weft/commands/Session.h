@@ -161,6 +161,9 @@ public:
     EditResult setTrackHidden (const Id& trackId, bool hidden);
     /** Whether hidden tracks get rows (L-TRH-10). */
     EditResult setShowHiddenTracks (bool show);
+    /** Project and track notes (D-UI-47): plain text, one undo step "Project Notes" / "Track Notes". */
+    EditResult setProjectNotes (const std::string& text);
+    EditResult setTrackNotes (const Id& trackId, const std::string& text);
     /** Project Settings (W-35): the pan law for mono sources, and the live MIDI the project ignores (model::midiFilter bits). */
     EditResult setPanLaw (double centreDb);
     EditResult setMidiInputFilter (int filter);

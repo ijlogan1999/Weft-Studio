@@ -287,6 +287,7 @@ void readInfo (ProjectModel& m, const Value& root)
     info.key = KeySignature::fromValue (root["key"]);
     info.showHiddenTracks = root["showHiddenTracks"].asBool();
     info.groupsActive = root["groupsActive"].isBool() ? root["groupsActive"].asBool() : true;
+    info.notes = root["notes"].asString();
     info.panLawDb = root["panLaw"].isNumber() && isValidPanLaw (root["panLaw"].asDouble()) ? root["panLaw"].asDouble() : -3.0;
     info.midiInputFilter = static_cast<int> (root["midiInputFilter"].asInt (0)) & midiFilter::all;
 
@@ -447,7 +448,7 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         // Project fields are small; re-read them all (but not the collections).
         Value root = Value::map();
         for (const char* k : { "schemaVersion", "id", "name", "sampleRate", "recordBitDepth", "createdAt", "createdBy", "masterTrackId", "cycle",
-                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", "groupsActive", "panLaw", "midiInputFilter",
+                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", "groupsActive", "notes", "panLaw", "midiInputFilter",
                                keys::trackOrder })
             if (auto v = document.get (doc::path ({ k })))
                 root.set (k, std::move (*v));

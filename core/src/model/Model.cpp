@@ -310,6 +310,7 @@ Track Track::fromValue (const Id& id, const Value& v)
         t.vcaId = v["vcaId"].asString();
         t.stackId = v["stackId"].asString();
     }
+    t.notes = v["notes"].asString();
     if (t.kind == TrackKind::bus)
     {
         t.stack = oneOf (v["stack"], { "", "folder", "summing" }, "");
@@ -343,7 +344,8 @@ Value Track::toValue() const
         .set ("vcaId", vcaId.empty() ? Value() : Value (vcaId))
         .set ("stackId", stackId.empty() ? Value() : Value (stackId))
         .set ("stack", stack.empty() ? Value() : Value (stack))
-        .set ("stackOpen", stack.empty() ? Value() : Value (stackOpen));
+        .set ("stackOpen", stack.empty() ? Value() : Value (stackOpen))
+        .set ("notes", notes.empty() ? Value() : Value (notes));
 }
 
 // Region --------------------------------------------------------------------

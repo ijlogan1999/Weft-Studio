@@ -656,3 +656,43 @@ TEST_CASE ("AT-ARR-46 moving and copying a section takes its regions, markers an
     CHECK (s.model().sections.size() == 2);
     CHECK (s.model().regions.size() == 3);
 }
+
+TEST_CASE ("AT-PRJ-21 project and track notes: set, undo, unchanged is refused, saved with the project", "[U][project][AT-PRJ-21]")
+{
+    TempDir tmp;
+    project::ProjectFolder folder (tmp.path / "Notes.weft");
+    REQUIRE (folder.create());
+    auto s = newSession();
+    const auto track = s.model().trackOrder.front();
+    CHECK (s.model().info.notes.empty());
+    CHECK (s.model().track (track)->notes.empty());
+
+    REQUIRE (s.setProjectNotes ("Mix by Friday.\nBass is too loud."));
+    CHECK (s.undoName() == "Project Notes");
+    REQUIRE (s.setTrackNotes (track, "Use take 3."));
+    CHECK (s.undoName() == "Track Notes");
+    CHECK (s.model().info.notes == "Mix by Friday.\nBass is too loud.");
+    CHECK (s.model().track (track)->notes == "Use take 3.");
+    // The same text again isn't a step.
+    CHECK_FALSE (s.setTrackNotes (track, "Use take 3."));
+    CHECK_FALSE (s.setProjectNotes ("Mix by Friday.\nBass is too loud."));
+    CHECK_FALSE (s.setTrackNotes ("no-such-track", "x"));
+
+    REQUIRE (s.undo().done);
+    CHECK (s.model().track (track)->notes.empty());
+    REQUIRE (s.redo().done);
+    CHECK (s.model().track (track)->notes == "Use take 3.");
+
+    REQUIRE (folder.save (s.document()));
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    Session reopened (std::move (*opened.document), "userB", fixedClock, 7);
+    CHECK (reopened.model().info.notes == "Mix by Friday.\nBass is too loud.");
+    CHECK (reopened.model().track (track)->notes == "Use take 3.");
+
+    // Clearing the notes removes them from the file.
+    REQUIRE (s.setProjectNotes (""));
+    CHECK (s.model().info.notes.empty());
+    const auto stored = s.document().get (doc::path ({ "notes" }));
+    CHECK ((! stored || stored->isNull()));
+}

@@ -602,6 +602,15 @@ void MainComponent::handleUiCommand (Cmd command)
                                                    if (safe != nullptr)
                                                        safe->control.pickCustomize (item);
                                                });
+    else if (command == Cmd::toggleNotes)
+    {
+        // Notes (D-UI-47): the side panel's Notes tab; again while it shows, the side panel closes.
+        const bool showing = studio.layout.sidePanel && sidePanel.tabs().getCurrentTabIndex() == SidePanel::notesTab;
+        studio.layout.sidePanel = ! showing;
+        if (! showing)
+            sidePanel.showTab (SidePanel::notesTab);
+        studio.sendChangeMessage();
+    }
     else if (command >= Cmd::undoHistory && command <= Cmd::closeProject)
         windowCommand (command);
     else if (command == Cmd::groupsWindow)
@@ -1188,6 +1197,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 follow.itemID = static_cast<int> (Cmd::followStacks) + 1;
                 follow.isTicked = studio.mixerFollowStacks;
                 menu.addItem (follow);
+                juce::PopupMenu::Item notes (commandInfo (Cmd::mixerNotes).name); // P-MX-22
+                notes.itemID = static_cast<int> (Cmd::mixerNotes) + 1;
+                notes.isTicked = studio.mixerNotes;
+                menu.addItem (notes);
             }
             menu.addSeparator();
             add (Cmd::searchPlugins);
@@ -1292,7 +1305,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         }
         case 5:
-            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
+            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             {

@@ -786,3 +786,82 @@ TEST_CASE ("AT-UI-15 screensets, Undo History, panes in their own windows, windo
     CHECK (ui.m().info.id != before);
     CHECK (ui.m().trackOrder.size() == 1);
 }
+
+TEST_CASE ("AT-UI-16 project and track notes in the Notes tab and under the mixer strips", "[UI][AT-UI-16]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    const auto track = ui.m().trackOrder.front();
+    studio.selectTrack (track);
+
+    // Notes opens the side panel on its Notes tab; again, it closes.
+    REQUIRE (ui.main->run (Cmd::toggleNotes));
+    ui.settle();
+    CHECK (studio.layout.sidePanel);
+    CHECK (ui.main->side().tabs().getCurrentTabIndex() == SidePanel::notesTab);
+    auto& notes = ui.main->side().notes();
+    CHECK (notes.trackTitle.getText() == "Audio 1");
+
+    // Read-only until Edit; Done saves each as one undo step.
+    CHECK (notes.projectNotes.isReadOnly());
+    CHECK (notes.trackNotes.isReadOnly());
+    notes.edit.onClick();
+    ui.settle();
+    CHECK (notes.editing());
+    CHECK (notes.edit.getButtonText() == "Done");
+    CHECK_FALSE (notes.projectNotes.isReadOnly());
+    CHECK_FALSE (notes.trackNotes.isReadOnly());
+    notes.projectNotes.setText ("Mix by Friday.");
+    notes.trackNotes.setText ("Use take 3.");
+    notes.edit.onClick();
+    ui.settle();
+    CHECK_FALSE (notes.editing());
+    CHECK (ui.m().info.notes == "Mix by Friday.");
+    CHECK (ui.m().track (track)->notes == "Use take 3.");
+    CHECK (studio.session().undoName() == "Track Notes");
+
+    // Another track shows its own (empty) notes; while editing, changing track keeps what was typed.
+    const auto second = ui.instrumentTracks (1).front();
+    notes.setEditing (true);
+    notes.trackNotes.setText ("Use take 4.");
+    studio.selectTrack (second);
+    ui.settle();
+    CHECK (ui.m().track (track)->notes == "Use take 4.");
+    CHECK (notes.trackNotes.getText().isEmpty());
+    notes.setEditing (false);
+    ui.settle();
+    CHECK (ui.m().track (second)->notes.empty()); // nothing typed, nothing saved
+
+    // Text Size.
+    CHECK (notes.textSizeIndex() == 1);
+    notes.setTextSize (2);
+    CHECK (notes.projectNotes.getFont().getHeight() > 16.0f);
+
+    // Track notes in the mixer: off by default; the Notes button and the Mix menu command show them.
+    auto& mixer = [&]() -> MixerView& {
+        if (studio.layout.bottom != BottomTab::mixer)
+            ui.main->run (Cmd::toggleMixer);
+        ui.settle();
+        return ui.main->bottom().mixerView();
+    }();
+    auto* strip = mixer.stripFor (track);
+    REQUIRE (strip != nullptr);
+    CHECK_FALSE (strip->notes.isVisible());
+    mixer.showNotes.onClick();
+    ui.settle();
+    strip = mixer.stripFor (track);
+    REQUIRE (strip != nullptr);
+    CHECK (studio.mixerNotes);
+    CHECK (mixer.showNotes.getToggleState());
+    CHECK (strip->notes.isVisible());
+    CHECK (strip->notes.getText() == "Use take 4.");
+    CHECK_FALSE (mixer.masterStrip().notes.isVisible());
+    REQUIRE (studio.perform (Cmd::mixerNotes));
+    ui.settle();
+    CHECK_FALSE (studio.mixerNotes);
+    CHECK_FALSE (mixer.stripFor (track)->notes.isVisible());
+
+    REQUIRE (ui.main->run (Cmd::toggleNotes));
+    ui.settle();
+    CHECK_FALSE (studio.layout.sidePanel);
+}
