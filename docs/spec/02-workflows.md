@@ -341,12 +341,13 @@ A live write pass is local until stop; then the points arrive as one CRDT change
 2. Dialog fields:
    - **Range:** start and end (default: cycle range if cycle on, else project start to end marker; if no end marker, end of last region).
    - **Include tail:** on (default) per F-EXP-11.
-   - **Mode:** Offline (default) / Real-time.
-   - **Formats:** one or more of WAV and MP3, each with settings:
-     - WAV: bit depth 16 / 24 (default) / 32-float; sample rate project (default) / 44.1 / 48 / 96 kHz.
-     - MP3: bitrate 320 kbps CBR (default), 256, 192, 128, or VBR quality 0–9; sample rate 44.1 or 48 kHz (default follows project if supported, else 44.1); tags Title (default project name), Artist (default user display name), Album, Year.
-   - **Dither:** Auto (TPDF when bit depth < 24, default) / Off / On.
-   - **Destination:** folder and filename (default `<project folder>/Bounces/<project name>.wav`).
+   - **Mode:** Automatic (default) / Offline / Real-time (D-W9-11). **2nd cycle pass:** off (default).
+   - **Formats:** one or more of WAV, AIFF, FLAC and MP3, each with settings:
+     - WAV: bit depth 16 / 24 (default) / 32-float; sample rate project (default) / 44.1 / 48 / 96 kHz. AIFF and FLAC use the same bit depth and rate (D-W9-8).
+     - MP3: bitrate 320 kbps CBR (default), 256, 192, 128, or VBR quality 0–9; sample rate 44.1 or 48 kHz (default follows project if supported, else 44.1); tags Title (default project name), Artist (default user display name), Album, Year; Include tempo (on).
+   - **Dither:** Auto (TPDF when bit depth < 24, default) / Off / On. **Normalize:** Off (default) / Overload Protection Only / On (D-W9-7).
+   - **Channels:** Interleaved (default) / Split (L and R files) / Mono (D-W9-8).
+   - **Destination:** folder (with Choose... and New Folder...) and filename (default `<project folder>/Bounces/<project name>.wav`).
 3. On **Bounce**, the system renders the master output over the range:
    - Offline: the audio engine renders in a separate render graph instance (the live engine stops), as fast as possible, with progress bar and Cancel.
    - Real-time: transport plays the range and the master output is captured; audio is audible during capture.
@@ -361,8 +362,13 @@ A live write pass is local until stop; then the points arrive as one CRDT change
 - Offline bounce output must be bit-identical between two runs with the same project and settings, provided all plugins are deterministic (built-in ones are). Dither uses a fixed seed per bounce for this reason. **Decision D-W9-2.**
 - **Decision D-W9-3 (tail end):** the tail is rendered until the output (both channels) has stayed below −90 dBFS for 200 ms, or 10 s past the range end. The file ends where that quiet stretch starts, never before the range end; the 200 ms only confirms the tail is over. So a project with nothing ringing past the range bounces to exactly the range even with Include tail on.
 - **Decision D-W9-4 (dither):** dither is TPDF of ±1 LSB at the target bit depth (the difference of two uniform values from a fixed-seed xorshift generator), added to the float mix after sample-rate conversion. The writer then rounds to the nearest step and clips integer formats at full scale. "Truncation" in AT-EXP-8 means this rounding without dither. In digital silence the dithered 16-bit output has an RMS of 0.5 LSB, about −96.3 dB relative to full scale; AT-EXP-8 checks −96.3 ± 2 dB (its "~−101 dBFS" was an estimate).
-- **Decision D-W9-5 (dialog details):** Range is typed as bar.beat.division.tick. Artist defaults to the computer user's full name until accounts arrive (M10). For D-W9-1 the warning sits in the dialog, the Bounce button reads "Bounce Anyway", and Cancel is the "Wait" choice. Add to project imports the first file written at the range start on a new audio track below the last one, and mutes that track. The cycle never loops a bounce: offline and real-time renders play the range straight through.
-- **Decision D-W9-6 (real-time-only plug-ins):** a VST3 plug-in reports that it can't render offline through the "OnlyRT" sub-category. Weft reads it from the plug-in list, and a bounce with such a plug-in on any track switches to real time and says which plug-in caused it.
+- **Decision D-W9-5 (dialog details):** Range is typed as bar.beat.division.tick. Artist defaults to the computer user's full name until accounts arrive (M10). For D-W9-1 the warning sits in the dialog, the Bounce button reads "Bounce Anyway", and Cancel is the "Wait" choice. Add to project imports the first file written at the range start on a new audio track below the last one, and mutes that track. The cycle never loops a bounce: offline and real-time renders play the range straight through, except for the second cycle pass (D-W9-11).
+- **Decision D-W9-6 (real-time-only plug-ins):** a VST3 plug-in reports that it can't render offline through the "OnlyRT" sub-category. Weft reads it from the plug-in list, and a bounce with such a plug-in on any track switches to real time and says which plug-in caused it (in Automatic mode; see D-W9-11).
+- **Decision D-W9-7 (normalize):** Normalize scales the float mix (after the mono mix-down, before sample-rate conversion and dither) so its highest sample peak is exactly 0 dBFS. On always does it; Overload Protection Only does it only when the peak is above 0 dBFS; Off (the default, so the clip warning still shows) never does. The completion notice adds "Normalized by +X.X dB", and a normalized bounce doesn't report clipping. Peaks between samples after conversion are not measured.
+- **Decision D-W9-8 (formats and channels):** AIFF and FLAC are written by the platform layer at the WAV row's bit depth and rate; they hold 16 or 24 bits, so 32-bit float writes them at 24. Split writes each side as a mono file named `<name>.L.<ext>` and `<name>.R.<ext>`; Mono writes one file of (L + R) / 2. MP3 is mono for Mono and stereo otherwise. Include tempo writes the tempo at the range start, rounded to a whole BPM, as the MP3 tag's TBPM frame; WAV, AIFF and FLAC files carry no tempo.
+- **Decision D-W9-9 (Export Track, Export All Tracks):** File › Export Track as Audio File exports the selected audio or instrument track; Export All Tracks as Audio Files exports every audio and instrument track that isn't muted, in track order. Both open the Bounce dialog, whose settings apply to each file; each track renders offline with only it soloed, so buses it feeds (and their effects) and the master strip are heard. One track is named after the track (editable); several are each named after their track. Replace / Keep both asks once for all of them, and the notice says "Exported N files."
+- **Decision D-W9-10 (Export Selection as MIDI File):** the selected MIDI regions go into one type 1 file at 960 PPQN, one file track per project track (in track order, named after it), starting at the earliest selected region; notes play as in AT-EXP-13, and the conductor track has the key, tempo and meter from that start. The file is chosen with a save dialog starting in `Bounces`.
+- **Decision D-W9-11 (mode and second cycle pass):** Automatic renders offline and switches to real time for a real-time-only plug-in (D-W9-6); Offline always renders offline and says such a plug-in is rendered anyway; Real-time plays the range. The 2nd cycle pass renders the range twice as a cycle and keeps the second time round, so delay and reverb tails from the end are heard at the start; no tail is added after it, and a real-time bounce ignores it with a note. Track exports are always offline.
 
 ---
 
@@ -511,6 +517,11 @@ Windows Explorer shows the folder as a normal folder; double-clicking `project.a
 | D-W9-4 | Dither: TPDF ±1 LSB, then rounding; noise level in AT-EXP-8. |
 | D-W9-5 | Bounce dialog details: range format, default Artist, missing-media choice, Add to project, no cycling. |
 | D-W9-6 | Real-time-only plug-ins are VST3 "OnlyRT". |
+| D-W9-7 | Normalize: Off, Overload Protection Only, On, to a 0 dBFS sample peak. |
+| D-W9-8 | AIFF and FLAC (16 or 24 bits), split and mono files, MP3 tempo tag. |
+| D-W9-9 | Export Track and Export All Tracks: each track soloed, offline, named after it. |
+| D-W9-10 | Export Selection as MIDI File: one track per project track, from the earliest region. |
+| D-W9-11 | Bounce modes Automatic, Offline, Real-time; the second cycle pass. |
 | D-W10-1 | Media stored by content hash. |
 | D-W10-2 | Project is a folder. |
 | D-W10-3 | Plain Save doesn't create a history version. |

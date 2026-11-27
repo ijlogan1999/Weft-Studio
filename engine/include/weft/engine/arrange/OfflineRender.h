@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace weft::engine
@@ -24,6 +25,7 @@ struct OfflineRenderOptions
     int blockSize = 512;
     Engine::PluginFactory plugins;      // hosted plug-ins; null: built-ins and placeholders only
     std::filesystem::path projectFolder; // where plug-in state blobs are
+    std::set<Id> soloed;                 // local solos: only these and what they feed are heard
 };
 
 /**
@@ -101,6 +103,13 @@ std::optional<media::AudioData> renderRegion (const model::ProjectModel& model, 
     from the region start at 960 PPQN, with the project's tempo and meter from there on.
 */
 media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& regionId);
+
+/**
+    Export Selection as MIDI File (D-W9-10): the selected MIDI regions in one type 1 file, one file
+    track per project track (in track order, named after it), from the earliest region's start.
+    Empty tracks when no MIDI region is selected.
+*/
+media::MidiFileData midiSelectionFile (const model::ProjectModel& model, const std::vector<Id>& regionIds);
 
 struct RegionExport
 {

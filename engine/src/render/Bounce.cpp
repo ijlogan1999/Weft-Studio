@@ -80,8 +80,21 @@ std::vector<std::filesystem::path> bounceTargets (const BounceSettings& s)
 {
     std::vector<std::filesystem::path> out;
     const auto base = s.folder / fromUtf8 (s.name);
+    const auto pcm = [&] (const char* ext) {
+        if (s.channels == FileChannels::split)
+        {
+            out.push_back (std::filesystem::path (base).concat (std::string (".L") + ext));
+            out.push_back (std::filesystem::path (base).concat (std::string (".R") + ext));
+        }
+        else
+            out.push_back (std::filesystem::path (base).concat (ext));
+    };
     if (s.wav)
-        out.push_back (std::filesystem::path (base).concat (".wav"));
+        pcm (".wav");
+    if (s.aiff)
+        pcm (".aif");
+    if (s.flac)
+        pcm (".flac");
     if (s.mp3)
         out.push_back (std::filesystem::path (base).concat (".mp3"));
     return out;
@@ -174,14 +187,37 @@ const model::PluginInstance* realtimeOnlyPlugin (const model::ProjectModel& m, c
 BounceJob::BounceJob (const model::ProjectModel& model, BounceSettings settings, Context context)
     : project (model), config (std::move (settings)), ctx (std::move (context)), tail (model.info.sampleRate)
 {
-    // The bounce plays its own range straight through.
+    // The bounce plays its own range straight through (or twice round, for the second cycle pass).
     project.info.cycle.enabled = false;
-    if (const auto* p = realtimeOnlyPlugin (project, ctx.realtimeOnly); p != nullptr && ! config.realtime)
+    if (! config.soloTracks.empty())
+        config.realtime = false; // the live engine plays the whole mix: a track export renders offline
+    else if (const auto* p = realtimeOnlyPlugin (project, ctx.realtimeOnly); p != nullptr && ! config.realtime)
     {
-        config.realtime = true;
-        why = p->name + " can only render in real time, so this bounce plays in real time.";
+        if (config.forceOffline)
+            why = p->name + " says it can only render in real time; Offline mode renders it offline anyway.";
+        else
+        {
+            config.realtime = true;
+            why = p->name + " can only render in real time, so this bounce plays in real time.";
+        }
     }
     rangeFrames = std::max<std::int64_t> (0, sampleAt (project, config.range.to) - sampleAt (project, config.range.from));
+    if (config.secondCyclePass)
+    {
+        if (config.realtime)
+        {
+            config.secondCyclePass = false;
+            why += std::string (why.empty() ? "" : " ") + "A real-time bounce plays the range once (no second cycle pass).";
+        }
+        else
+        {
+            project.info.cycle.enabled = true;
+            project.info.cycle.start = config.range.from;
+            project.info.cycle.end = config.range.to;
+            config.includeTail = false; // the tail wraps into the start instead
+            firstPass = rangeFrames;
+        }
+    }
     audio.sampleRate = project.info.sampleRate;
     audio.channels.resize (2);
     for (auto& c : audio.channels)
@@ -192,6 +228,7 @@ BounceJob::BounceJob (const model::ProjectModel& model, BounceSettings settings,
         options.from = config.range.from;
         options.plugins = ctx.plugins;
         options.projectFolder = ctx.projectFolder;
+        options.soloed = config.soloTracks;
         renderer = std::make_unique<OfflineRenderer> (project, *ctx.media, options);
     }
 }
@@ -243,9 +280,21 @@ bool BounceJob::stepOffline()
         stopped = true;
         return false;
     }
+    std::vector<float> left, right;
+    if (firstPass > 0)
+    {
+        // The first time round the cycle only fills the effects; it isn't kept.
+        const auto n = std::min (sliceFrames, firstPass);
+        if (! renderer->render (n, left, right))
+        {
+            stopped = true;
+            return false;
+        }
+        firstPass -= n;
+        return true;
+    }
     const auto have = static_cast<std::int64_t> (audio.channels[0].size());
     const auto n = have < rangeFrames ? std::min (sliceFrames, rangeFrames - have) : sliceFrames;
-    std::vector<float> left, right;
     if (! renderer->render (n, left, right))
     {
         stopped = true;
@@ -340,7 +389,10 @@ double BounceJob::progress() const noexcept
         return 1.0;
     if (rangeFrames <= 0)
         return 0.0;
-    return std::min (1.0, static_cast<double> (audio.channels[0].size()) / static_cast<double> (rangeFrames));
+    const auto done = static_cast<double> (audio.channels[0].size());
+    if (config.secondCyclePass)
+        return std::min (1.0, (static_cast<double> (rangeFrames - firstPass) + done) / (2.0 * static_cast<double> (rangeFrames)));
+    return std::min (1.0, done / static_cast<double> (rangeFrames));
 }
 
 void BounceJob::cancel()
@@ -351,15 +403,26 @@ void BounceJob::cancel()
 
 namespace
 {
-bool writeWavFile (const std::filesystem::path& file, const media::AudioData& mix, const WavFormat& format, const BounceSettings& s,
-                   double projectRate, std::string& error)
+/** WAV, AIFF or FLAC: `mix` holds the channels this file gets (one for split and mono files). */
+bool writePcmFile (const std::filesystem::path& file, const media::AudioData& mix, const WavFormat& format, const BounceSettings& s,
+                   double projectRate, const AudioEncoder* encoder, std::string& error)
 {
+    const auto ext = file.extension().string();
+    const bool wav = ext == ".wav";
+    const int bits = wav ? format.bitDepth : std::min (format.bitDepth, 24);
     const double rate = format.sampleRate > 0 ? format.sampleRate : projectRate;
     media::AudioData data = std::abs (rate - mix.sampleRate) > 0.5 ? media::resample (mix, rate) : mix;
     // Sample-rate conversion comes before dither (W-9 step 4).
-    if (dithers (s.dither, format.bitDepth))
-        addDither (data, format.bitDepth, s.ditherSeed);
-    return media::writeWav (file, data, media::formatForBitDepth (format.bitDepth), &error);
+    if (dithers (s.dither, bits))
+        addDither (data, bits, s.ditherSeed);
+    if (wav)
+        return media::writeWav (file, data, media::formatForBitDepth (bits), &error);
+    if (encoder == nullptr)
+    {
+        error = "this build can't write " + ext.substr (1) + " files";
+        return false;
+    }
+    return encoder->encode (file, data, bits, error);
 }
 
 bool writeMp3File (const std::filesystem::path& file, const media::AudioData& mix, const Mp3Format& format, double projectRate, std::string& error)
@@ -368,7 +431,9 @@ bool writeMp3File (const std::filesystem::path& file, const media::AudioData& mi
     const media::AudioData data = std::abs (rate - mix.sampleRate) > 0.5 ? media::resample (mix, rate) : mix;
     WeftMp3Settings settings {};
     settings.sample_rate = static_cast<int> (std::lround (rate));
-    settings.channels = 2;
+    settings.channels = static_cast<int> (std::clamp<std::size_t> (data.channels.size(), 1, 2));
+    const auto bpm = format.bpm > 0 ? std::to_string (static_cast<int> (std::lround (format.bpm))) : std::string();
+    settings.bpm = bpm.c_str();
     settings.vbr = format.vbr ? 1 : 0;
     settings.bitrate_kbps = format.bitrateKbps;
     settings.vbr_quality = format.vbrQuality;
@@ -384,7 +449,8 @@ bool writeMp3File (const std::filesystem::path& file, const media::AudioData& mi
         return false;
     }
     const auto frames = static_cast<std::size_t> (data.numFrames());
-    if (frames > 0 && weft_mp3_write (enc, data.channels[0].data(), data.channels[1].data(), frames, err.data(), err.size()) != 0)
+    const auto* right = data.channels.size() > 1 ? data.channels[1].data() : data.channels[0].data();
+    if (frames > 0 && weft_mp3_write (enc, data.channels[0].data(), right, frames, err.data(), err.size()) != 0)
     {
         weft_mp3_abort (enc);
         error = err.data();
@@ -409,11 +475,28 @@ BounceResult BounceJob::finish()
         return result;
     }
     result.frames = audio.numFrames(); // at the render rate
+    media::AudioData mix = audio;
+    if (config.channels == FileChannels::mono && mix.channels.size() == 2)
+    {
+        for (std::size_t i = 0; i < mix.channels[0].size(); ++i)
+            mix.channels[0][i] = 0.5f * (mix.channels[0][i] + mix.channels[1][i]);
+        mix.channels.resize (1);
+    }
     float peak = 0;
-    for (const auto& c : audio.channels)
+    for (const auto& c : mix.channels)
         for (const auto x : c)
             peak = std::max (peak, std::abs (x));
     result.peakDb = peak > 0 ? 20.0 * std::log10 (static_cast<double> (peak)) : -1000.0;
+    // Normalize (D-W9-7) to a 0 dBFS peak, before conversion and dither.
+    if (peak > 0 && (config.normalize == Normalize::on || (config.normalize == Normalize::overloadOnly && peak > 1.0f)))
+    {
+        const auto gain = 1.0f / peak;
+        for (auto& c : mix.channels)
+            for (auto& x : c)
+                x *= gain;
+        result.gainDb = -result.peakDb;
+        peak = 1.0f;
+    }
     result.clipped = peak > 1.0f;
 
     std::error_code ec;
@@ -423,10 +506,32 @@ BounceResult BounceJob::finish()
     {
         const auto file = config.replace ? wanted : keepBothPath (wanted);
         std::string error;
-        const bool wav = wanted.extension() == ".wav";
+        const auto ext = wanted.extension().string();
         const double projectRate = project.info.sampleRate;
-        const bool ok = wav ? writeWavFile (file, audio, *config.wav, config, projectRate, error)
-                            : writeMp3File (file, audio, *config.mp3, projectRate, error);
+        bool ok = false;
+        if (ext == ".mp3")
+        {
+            auto format = *config.mp3;
+            if (config.includeTempo)
+                format.bpm = project.tempo.bpmAt (config.range.from);
+            ok = writeMp3File (file, mix, format, projectRate, error);
+        }
+        else
+        {
+            const auto& format = ext == ".wav" ? *config.wav : ext == ".aif" ? *config.aiff : *config.flac;
+            const auto* encoder = ctx.encoder.get();
+            if (config.channels == FileChannels::split && mix.channels.size() == 2)
+            {
+                // "name.L.wav" and "name.R.wav": the stem's last letter says which.
+                const auto stem = wanted.stem().string();
+                media::AudioData one;
+                one.sampleRate = mix.sampleRate;
+                one.channels.push_back (mix.channels[! stem.empty() && stem.back() == 'R' ? 1 : 0]);
+                ok = writePcmFile (file, one, format, config, projectRate, encoder, error);
+            }
+            else
+                ok = writePcmFile (file, mix, format, config, projectRate, encoder, error);
+        }
         if (! ok)
         {
             std::filesystem::remove (file, ec);
@@ -440,6 +545,12 @@ BounceResult BounceJob::finish()
     for (const auto& f : result.files)
         names += (names.empty() ? "" : ", ") + utf8 (f.filename());
     result.message = "Bounced " + names + ".";
+    if (std::abs (result.gainDb) > 0.05)
+    {
+        std::array<char, 64> text {};
+        std::snprintf (text.data(), text.size(), " Normalized by %+.1f dB.", result.gainDb);
+        result.message += text.data();
+    }
     if (result.clipped)
         result.message += " " + clipMessage (result.peakDb) + ".";
     return result;

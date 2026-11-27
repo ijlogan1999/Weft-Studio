@@ -91,7 +91,9 @@ enum class Cmd
     toggleControlBar, toggleToolbar, customizeControlBar, bigBeatsDisplay, bigTimeDisplay, performanceMeter,
     // D-UI-44, D-UI-45: global tracks
     configureGlobalTracks, showSingleGlobalTrack, toggleArrangementTrack, toggleMarkerTrack, toggleTempoTrack, toggleSignatureTrack, toggleKeyTrack,
-    markerTrackOnly, createSignatureChange, createKeyChange, addSection
+    markerTrackOnly, createSignatureChange, createKeyChange, addSection,
+    // D-W9-9, D-W9-10: exports
+    exportSelectionMidi, exportTrackAudio, exportAllTracksAudio
 };
 
 struct CommandInfo

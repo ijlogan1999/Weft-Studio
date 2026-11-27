@@ -3,6 +3,7 @@
 #include "Theme.h"
 
 #include "weft/engine/dsp/BuiltinEffects.h"
+#include "weft/engine/media/JuceDecoders.h"
 #include "weft/media/Blobs.h"
 #include "weft/media/Decoder.h"
 
@@ -1131,22 +1132,79 @@ engine::Mp3Format Studio::defaultMp3Format() const
     return mp3;
 }
 
-bool Studio::startBounce (const engine::BounceSettings& settings)
+bool Studio::startBounce (const engine::BounceSettings& settings) { return startBounces ({ settings }); }
+
+bool Studio::startBounces (std::vector<engine::BounceSettings> settings)
 {
-    if (bounceJob != nullptr)
+    if (bounceJob != nullptr || settings.empty())
         return false;
-    if (settings.range.to <= settings.range.from)
+    for (const auto& s : settings)
     {
-        setStatus ("The bounce range is empty.");
-        return false;
-    }
-    if (! settings.wav && ! settings.mp3)
-    {
-        setStatus ("Choose WAV, MP3 or both.");
-        return false;
+        if (s.range.to <= s.range.from)
+        {
+            setStatus ("The bounce range is empty.");
+            return false;
+        }
+        if (! s.wav && ! s.aiff && ! s.flac && ! s.mp3)
+        {
+            setStatus ("Choose at least one file format.");
+            return false;
+        }
     }
     eng->stop();
     lastBounce.reset();
+    bounceCount = settings.size();
+    bouncesDone = 0;
+    bouncedSoFar.clear();
+    bounceQueue.assign (settings.begin() + 1, settings.end());
+    return beginJob (settings.front());
+}
+
+double Studio::bounceProgress() const noexcept
+{
+    if (bounceJob == nullptr || bounceCount == 0)
+        return 0.0;
+    return (static_cast<double> (bouncesDone) + bounceJob->progress()) / static_cast<double> (bounceCount);
+}
+
+std::vector<Id> Studio::exportableTracks (bool all) const
+{
+    const auto exportable = [] (const model::Track* t) {
+        return t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument);
+    };
+    if (! all)
+    {
+        const auto* t = model().track (selectedTrack());
+        return exportable (t) ? std::vector<Id> { t->id } : std::vector<Id> {};
+    }
+    std::vector<Id> out;
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); exportable (t) && ! t->mute)
+            out.push_back (id);
+    return out;
+}
+
+bool Studio::exportSelectionAsMidi (const fs::path& file)
+{
+    const auto ids = selection.ids();
+    const auto data = engine::midiSelectionFile (model(), { ids.begin(), ids.end() });
+    std::string error;
+    if (data.tracks.empty())
+    {
+        setStatus ("Select MIDI regions to export.");
+        return false;
+    }
+    if (! media::writeMidiFile (file, data, &error))
+    {
+        setStatus ("Couldn't write " + juce::String::fromUTF8 (reinterpret_cast<const char*> (file.filename().u8string().c_str())) + ": " + juce::String (error));
+        return false;
+    }
+    setStatus ("Exported " + juce::String::fromUTF8 (reinterpret_cast<const char*> (file.filename().u8string().c_str())) + ".");
+    return true;
+}
+
+bool Studio::beginJob (const engine::BounceSettings& settings)
+{
     engine::BounceJob::Context ctx;
     ctx.media = &pool;
     ctx.plugins = [this] (const model::PluginInstance& p, bool instrument) { return host->create (p, instrument); };
@@ -1158,6 +1216,7 @@ bool Studio::startBounce (const engine::BounceSettings& settings)
         const auto* info = catalog->find (p.pluginUid);
         return info != nullptr && engine::isRealtimeOnlyCategory (info->category);
     };
+    ctx.encoder = engine::makePlatformAudioEncoder();
     bounceFrom = settings.range.from;
     bounceJob = std::make_unique<engine::BounceJob> (model(), settings, std::move (ctx));
     setStatus (bounceJob->notice().empty() ? juce::String ("Bouncing...") : juce::String (bounceJob->notice()));
@@ -1177,6 +1236,21 @@ void Studio::stepBounce()
         return;
     lastBounce = bounceJob->finish();
     bounceJob.reset();
+    ++bouncesDone;
+    if (lastBounce->ok && bounceCount > 1)
+    {
+        bouncedSoFar.insert (bouncedSoFar.end(), lastBounce->files.begin(), lastBounce->files.end());
+        if (! bounceQueue.empty())
+        {
+            auto next = bounceQueue.front();
+            bounceQueue.erase (bounceQueue.begin());
+            if (beginJob (next))
+                return;
+        }
+        lastBounce->files = bouncedSoFar;
+        lastBounce->message = "Exported " + std::to_string (bouncedSoFar.size()) + " files.";
+    }
+    bounceQueue.clear();
     if (lastBounce->ok)
         setStatus (juce::String (lastBounce->message));
     else
@@ -1614,6 +1688,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
         case Cmd::toggleControlBar: case Cmd::toggleToolbar: case Cmd::customizeControlBar: case Cmd::bigBeatsDisplay: case Cmd::bigTimeDisplay: case Cmd::performanceMeter:
         case Cmd::configureGlobalTracks: case Cmd::showSingleGlobalTrack: case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack: case Cmd::markerTrackOnly: case Cmd::createSignatureChange: case Cmd::createKeyChange: case Cmd::addSection:
+        case Cmd::exportSelectionMidi: case Cmd::exportTrackAudio: case Cmd::exportAllTracksAudio:
             break;
     }
     return std::nullopt;
@@ -2337,6 +2412,31 @@ bool Studio::perform (Cmd command)
         case Cmd::saveVersion:
         case Cmd::importAudio:
         case Cmd::quit:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::exportSelectionMidi:
+        {
+            bool any = false;
+            for (const auto& id : selection.ids())
+                if (const auto* r = model().region (id); r != nullptr && r->isMidi)
+                    any = true;
+            if (! any)
+            {
+                setStatus ("Select MIDI regions to export.");
+                return false;
+            }
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        }
+        case Cmd::exportTrackAudio:
+        case Cmd::exportAllTracksAudio:
+            if (exportableTracks (command == Cmd::exportAllTracksAudio).empty())
+            {
+                setStatus (command == Cmd::exportTrackAudio ? "Select an audio or instrument track to export." : "There are no tracks to export.");
+                return false;
+            }
             if (uiCommand)
                 uiCommand (command);
             break;

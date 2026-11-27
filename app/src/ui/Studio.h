@@ -567,9 +567,15 @@ public:
     engine::Mp3Format defaultMp3Format() const;
     /** Stops the transport and starts a bounce; tick() renders it. False when one is running. */
     bool startBounce (const engine::BounceSettings& settings);
+    /** Several bounces one after the other (Export All Tracks); one result with every file. */
+    bool startBounces (std::vector<engine::BounceSettings> settings);
     void cancelBounce();
     bool bouncing() const noexcept { return bounceJob != nullptr; }
-    double bounceProgress() const noexcept { return bounceJob != nullptr ? bounceJob->progress() : 0.0; }
+    double bounceProgress() const noexcept;
+    /** Export Track (D-W9-9): the selected track, or every audio and instrument track that isn't muted. */
+    std::vector<Id> exportableTracks (bool all) const;
+    /** Export Selection as MIDI File (D-W9-10). */
+    bool exportSelectionAsMidi (const std::filesystem::path& file);
     /** Why the running bounce plays in real time, or empty. */
     juce::String bounceNotice() const { return bounceJob != nullptr ? juce::String (bounceJob->notice()) : juce::String(); }
     /** The last finished (or cancelled) bounce. */
@@ -819,6 +825,10 @@ private:
     std::unique_ptr<engine::LiveAutomation> live;
     std::unique_ptr<engine::MidiInputRouter> midiRouter;
     std::unique_ptr<engine::BounceJob> bounceJob;
+    std::vector<engine::BounceSettings> bounceQueue; // still to run after this one
+    std::vector<std::filesystem::path> bouncedSoFar;
+    std::size_t bounceCount = 0, bouncesDone = 0;
+    bool beginJob (const engine::BounceSettings& settings);
     Ticks bounceFrom = 0;
     void stepBounce();
     std::map<std::string, std::vector<float>> peakCache;

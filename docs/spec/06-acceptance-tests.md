@@ -528,6 +528,18 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-EXP-13** [E][U] · L-EXP-3 · A MIDI region exports to `<region name>.mid`, type 1 at 960 PPQN, starting at the region start: notes as they play (transpose and velocity offset applied, muted notes left out, cut at the region end), controllers, and the tempo and meter at the region start plus tempo changes inside it. Files Weft writes read back identically.
 
+**AT-EXP-14** [E] · D-W9-7, D-W9-8 · Normalize On brings a −12 dBFS sine to a 0 dBFS peak and the notice says "Normalized by +12.0 dB."; Overload Protection Only leaves it alone but brings a +2 dBFS mix down to 0 dBFS without a clip warning. Mono writes one channel of (L + R) / 2; Split writes `name.L.wav` and `name.R.wav` equal to the stereo file's sides.
+
+**AT-EXP-15** [E] · D-W9-11 · With a 50 ms burst at the end of a 1-bar range into a 250 ms delay, the plain bounce is silent 150–300 ms in and the 2nd cycle pass bounce has the echo there, at the same length. A real-time-only plug-in makes Automatic real time; Offline stays offline and says so; a real-time bounce drops the second pass with a note.
+
+**AT-EXP-16** [E] · D-W9-8 · AIFF and FLAC bounces at 16, 24 and 32 bits read back (through the platform decoders) as stereo, the range's length, at 16, 24 and 24 bits; with no encoder the bounce fails saying it can't write the format. An MP3 bounce of a 96 BPM project has a TBPM frame of "96".
+
+**AT-EXP-17** [E] · D-W9-9 · Exporting one of two tone tracks renders only its tone, offline even when real time was asked for; the mix has both.
+
+**AT-EXP-18** [E] · D-W9-10 · Three MIDI regions on two tracks export as one file with a track per project track in track order, named after them, notes timed from the earliest region, the tempo at that start; it parses back; nothing MIDI selected gives no tracks.
+
+**AT-EXP-19** [UI] · D-W9-7 to D-W9-11 · The File menu lists the three exports. The dialog maps Mode, Normalize, Channels, AIFF, FLAC and the 2nd cycle pass onto the settings, turns the tail off with the second pass and the second pass off in real time; New Folder makes a folder inside the current one and selects it. Export Track refuses the master and takes the selected track; Export All Tracks lists the unmuted audio and instrument tracks, names each file after its track, and one bounce run writes them all ("Exported N files."). Export Selection as MIDI File needs MIDI regions selected and writes a file.
+
 ## 14. Library (LIB)
 
 **AT-LIB-1** [UI] · F-LIB-1 · The file browser lists folders and supported audio/MIDI files; clicking an audio file previews it; dragging it into the arrange view behaves as AT-ARR-25.

@@ -3,6 +3,7 @@
 
 #include "EngineFixtures.h"
 
+#include "weft/engine/media/JuceDecoders.h"
 #include "weft/engine/render/Bounce.h"
 #include "weft/media/Resample.h"
 
@@ -55,4 +56,70 @@ TEST_CASE ("AT-EXP-2 WAV 16/24/32-float at 44.1/48/96 kHz read back with the rig
                 }
             }
         }
+}
+
+TEST_CASE ("AT-EXP-16 AIFF and FLAC bounces read back at 16 and 24 bits (32 writes 24); the MP3 tag carries the tempo", "[E][bounce][AT-EXP-16]")
+{
+    Rig rig;
+    rig.addAudioRegion (rig.audioTrack(), 0, 2 * barSamples);
+    TempFolder out;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    for (const int bits : { 16, 24, 32 })
+    {
+        BounceSettings s;
+        s.range = { 0, barTicks };
+        s.includeTail = false;
+        s.wav.reset();
+        s.aiff = WavFormat { bits, 0 };
+        s.flac = WavFormat { bits, 0 };
+        s.folder = out.path;
+        s.name = "Mix " + std::to_string (bits);
+        BounceJob::Context ctx { &rig.media, {}, rig.folder.path, nullptr, {} };
+        ctx.encoder = makePlatformAudioEncoder();
+        BounceJob job (rig.session.model(), s, ctx);
+        job.render();
+        const auto result = job.finish();
+        REQUIRE (result.ok);
+        REQUIRE (result.files.size() == 2);
+        CHECK (result.files[0].extension() == ".aif");
+        CHECK (result.files[1].extension() == ".flac");
+        for (const auto& file : result.files)
+        {
+            std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (juce::File (juce::String (file.u8string().c_str()))));
+            REQUIRE (reader != nullptr);
+            CHECK (reader->numChannels == 2);
+            CHECK (reader->lengthInSamples == barSamples);
+            CHECK (static_cast<int> (reader->bitsPerSample) == std::min (bits, 24));
+            CHECK (reader->sampleRate == 48000.0);
+        }
+    }
+    // Without an encoder the bounce says it can't write the format.
+    BounceSettings s;
+    s.range = { 0, barTicks };
+    s.wav.reset();
+    s.flac = WavFormat {};
+    s.folder = out.path;
+    s.name = "No encoder";
+    BounceJob job (rig.session.model(), s, { &rig.media, {}, rig.folder.path, nullptr, {} });
+    job.render();
+    const auto failed = job.finish();
+    CHECK_FALSE (failed.ok);
+    CHECK (failed.error.find ("can't write flac") != std::string::npos);
+
+    // Include Tempo Information writes the tempo at the range start as the tag's BPM.
+    REQUIRE (rig.session.setTempoAt (0, 96.0));
+    rig.sync();
+    s.flac.reset();
+    s.mp3 = Mp3Format {};
+    s.name = "Tagged";
+    BounceJob mp3Job (rig.session.model(), s, { &rig.media, {}, rig.folder.path, nullptr, {} });
+    mp3Job.render();
+    const auto tagged = mp3Job.finish();
+    REQUIRE (tagged.ok);
+    juce::MemoryBlock data;
+    REQUIRE (juce::File (juce::String (tagged.files.at (0).u8string().c_str())).loadFileAsData (data));
+    std::string bytes (static_cast<const char*> (data.getData()), std::min<std::size_t> (200, data.getSize()));
+    CHECK (bytes.find (std::string ("TBPM")) != std::string::npos);
+    CHECK (bytes.find (std::string ("\x03" "96", 3)) != std::string::npos);
 }

@@ -7,7 +7,17 @@ namespace weft::ui
 namespace
 {
 constexpr int labelX = 20, controlX = 130, rowHeight = 34;
-const juce::StringArray rowLabels { "Range", "", "", "", "Tags", "", "Dither", "Folder", "File name" };
+const juce::StringArray rowLabels { "Range", "", "", "", "", "Tags", "", "Dither", "Channels", "Folder", "File name" };
+constexpr int rowWav = 2, rowAiff = 3, rowMp3 = 4, rowTags = 5, rowDither = 7, rowChannels = 8, rowFolder = 9, rowName = 10, rowWarning = 11;
+
+/** A track name as a file name: no characters a file system refuses. */
+std::string fileNameFor (std::string name)
+{
+    for (auto& ch : name)
+        if (std::string_view ("\\/:*?\"<>|").find (ch) != std::string_view::npos)
+            ch = '_';
+    return name.empty() ? std::string ("Track") : name;
+}
 
 juce::String utf8 (const std::filesystem::path& p)
 {
@@ -22,9 +32,9 @@ std::filesystem::path fromUtf8 (const juce::String& s)
 }
 } // namespace
 
-BounceDialog::BounceDialog (Studio& s) : studio (s)
+BounceDialog::BounceDialog (Studio& s, std::vector<Id> ts) : tracks (std::move (ts)), studio (s)
 {
-    setTitle ("Bounce");
+    setTitle (tracks.empty() ? "Bounce" : tracks.size() == 1 ? "Export Track" : "Export All Tracks");
     const auto defaults = studio.defaultBounceSettings();
     const auto mp3Defaults = studio.defaultMp3Format();
     const auto& sigs = studio.model().signatures;
@@ -35,9 +45,18 @@ BounceDialog::BounceDialog (Studio& s) : studio (s)
     describe (end, "Range end", "Where the bounce ends (bar.beat.division.tick)");
     tail.setToggleState (defaults.includeTail, juce::dontSendNotification);
     describe (tail, "Include tail", "Keep rendering past the end until effects fall silent (up to 10 s)");
-    mode.addItemList ({ "Offline", "Real-time" }, 1);
+    mode.addItemList ({ "Automatic", "Offline", "Real-time" }, 1);
     mode.setSelectedItemIndex (0, juce::dontSendNotification);
-    describe (mode, "Mode", "Offline renders as fast as possible; real time plays the range while capturing it");
+    describe (mode, "Mode",
+              "Automatic renders offline unless a plug-in can only run in real time; Offline always renders as fast as possible; "
+              "Real-time plays the range while capturing it");
+    secondPass.setToggleState (false, juce::dontSendNotification);
+    describe (secondPass, "2nd cycle pass", "Render the range twice round and keep the second, so effect tails at the end carry into the start");
+    if (! tracks.empty())
+    {
+        mode.setSelectedItemIndex (1, juce::dontSendNotification);
+        mode.setEnabled (false); // track exports render offline
+    }
 
     wav.setToggleState (true, juce::dontSendNotification);
     describe (wav, "WAV", "Write a WAV file");
@@ -48,6 +67,8 @@ BounceDialog::BounceDialog (Studio& s) : studio (s)
     wavRate.addItemList ({ "Project (" + rate + ")", "44.1 kHz", "48 kHz", "96 kHz" }, 1);
     wavRate.setSelectedItemIndex (0, juce::dontSendNotification);
     describe (wavRate, "WAV sample rate");
+    describe (aiff, "AIFF", "Also write an AIFF file, at the WAV bit depth and rate (24-bit at most)");
+    describe (flac, "FLAC", "Also write a FLAC file, at the WAV bit depth and rate (24-bit at most)");
 
     mp3.setToggleState (false, juce::dontSendNotification);
     describe (mp3, "MP3", "Write an MP3 file");
@@ -67,13 +88,28 @@ BounceDialog::BounceDialog (Studio& s) : studio (s)
     describe (year, "Year");
     for (auto* e : { &title, &artist, &album, &year })
         e->setTextToShowWhenEmpty (e->getTitle(), colour (Token::textDim));
+    tempoInfo.setToggleState (true, juce::dontSendNotification);
+    describe (tempoInfo, "Include tempo", "Write the tempo at the range start into the MP3 tag");
 
     dither.addItemList ({ "Auto", "Off", "On" }, 1);
     dither.setSelectedItemIndex (0, juce::dontSendNotification);
     describe (dither, "Dither", "Auto adds TPDF dither below 24 bits");
+    normalize.addItemList ({ "Off", "Overload Protection Only", "On" }, 1);
+    normalize.setSelectedItemIndex (0, juce::dontSendNotification);
+    describe (normalize, "Normalize", "Scale the bounce so its loudest peak is 0 dBFS: always, or only when it would clip");
+    channels.addItemList ({ "Interleaved", "Split (L and R files)", "Mono" }, 1);
+    channels.setSelectedItemIndex (0, juce::dontSendNotification);
+    describe (channels, "Channels", "One stereo file; a mono file per side named .L and .R; or one mono file");
 
     folder.setText (utf8 (defaults.folder), false);
     name.setText (juce::String::fromUTF8 (defaults.name.c_str()), false);
+    if (! tracks.empty())
+    {
+        // Each file is named after its track.
+        const auto* t = studio.model().track (tracks.front());
+        name.setText (tracks.size() == 1 && t != nullptr ? juce::String::fromUTF8 (fileNameFor (t->name).c_str()) : juce::String ("Named after each track"), false);
+        name.setEnabled (tracks.size() == 1);
+    }
     describe (folder, "Folder", "Where the files go");
     describe (name, "File name", "Without the extension");
     describe (choose, "Choose...", "Pick the folder");
@@ -84,6 +120,21 @@ BounceDialog::BounceDialog (Studio& s) : studio (s)
                                   if (safe != nullptr && fc.getResult() != juce::File())
                                       safe->folder.setText (fc.getResult().getFullPathName(), false);
                               });
+    };
+    describe (makeFolder, "New Folder...", "Make a folder inside this one and bounce there");
+    makeFolder.onClick = [this] { newFolder(); };
+    askFolderName = [safe = juce::Component::SafePointer<BounceDialog> (this)] (std::function<void (juce::String)> done) {
+        if (safe == nullptr || ! desktopWindows())
+            return;
+        auto* w = new juce::AlertWindow ("New Folder", "Name the new folder.", juce::MessageBoxIconType::NoIcon, safe.getComponent());
+        w->addTextEditor ("name", "Bounces");
+        w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done] (int result) {
+                                if (result == 1)
+                                    done (w->getTextEditorContents ("name"));
+                            }),
+                            true);
     };
 
     // D-W9-1: media still downloading. Bounce becomes "Bounce Anyway"; Cancel waits.
@@ -119,18 +170,19 @@ BounceDialog::BounceDialog (Studio& s) : studio (s)
     };
     close.onClick = [this] { closeDialog(); };
 
-    for (auto* t : { &wav, &mp3 })
+    for (auto* t : { &wav, &aiff, &flac, &mp3, &secondPass })
         t->onClick = [this] { updateEnabled(); };
     bitDepth.onChange = [this] { updateEnabled(); };
+    mode.onChange = [this] { updateEnabled(); };
 
-    for (auto* c : std::initializer_list<juce::Component*> { &start, &end, &tail, &mode, &wav, &bitDepth, &wavRate, &mp3, &bitrate, &mp3Rate, &title,
-                                                             &artist, &album, &year, &dither, &folder, &choose, &name, &warning, &bounceButton,
-                                                             &cancel, &notice, &bar, &showInFolder, &addToProject, &close })
+    for (auto* c : settingsControls())
+        addChildComponent (c);
+    for (auto* c : std::initializer_list<juce::Component*> { &cancel, &notice, &bar, &showInFolder, &addToProject, &close })
         addChildComponent (c);
     notice.setJustificationType (juce::Justification::centred);
     setStage (Stage::settings);
     updateEnabled();
-    setSize (560, 410);
+    setSize (600, 16 + (rowWarning + 1) * rowHeight + 56);
 }
 
 BounceDialog::~BounceDialog()
@@ -149,15 +201,15 @@ engine::BounceSettings BounceDialog::settings() const
     if (const auto to = parseBarsBeats (end.getText().toStdString(), sigs))
         s.range.to = *to;
     s.includeTail = tail.getToggleState();
-    s.realtime = mode.getSelectedItemIndex() == 1;
-    if (wav.getToggleState())
-    {
-        static constexpr int depths[] = { 16, 24, 32 };
-        static constexpr double rates[] = { 0, 44100, 48000, 96000 };
-        s.wav = engine::WavFormat { depths[std::clamp (bitDepth.getSelectedItemIndex(), 0, 2)], rates[std::clamp (wavRate.getSelectedItemIndex(), 0, 3)] };
-    }
-    else
-        s.wav.reset();
+    s.realtime = mode.getSelectedItemIndex() == 2;
+    s.forceOffline = mode.getSelectedItemIndex() == 1;
+    s.secondCyclePass = secondPass.getToggleState() && ! s.realtime;
+    static constexpr int depths[] = { 16, 24, 32 };
+    static constexpr double rates[] = { 0, 44100, 48000, 96000 };
+    const engine::WavFormat pcm { depths[std::clamp (bitDepth.getSelectedItemIndex(), 0, 2)], rates[std::clamp (wavRate.getSelectedItemIndex(), 0, 3)] };
+    s.wav = wav.getToggleState() ? std::optional (pcm) : std::nullopt;
+    s.aiff = aiff.getToggleState() ? std::optional (pcm) : std::nullopt;
+    s.flac = flac.getToggleState() ? std::optional (pcm) : std::nullopt;
     if (mp3.getToggleState())
     {
         engine::Mp3Format f;
@@ -166,8 +218,8 @@ engine::BounceSettings BounceDialog::settings() const
         f.vbr = id >= 10;
         f.vbrQuality = f.vbr ? id - 10 : 2;
         f.bitrateKbps = f.vbr ? 320 : kbps[std::clamp (id - 1, 0, 3)];
-        static constexpr double rates[] = { 0, 44100, 48000 };
-        f.sampleRate = rates[std::clamp (mp3Rate.getSelectedItemIndex(), 0, 2)];
+        static constexpr double mp3Rates[] = { 0, 44100, 48000 };
+        f.sampleRate = mp3Rates[std::clamp (mp3Rate.getSelectedItemIndex(), 0, 2)];
         f.title = title.getText().toStdString();
         f.artist = artist.getText().toStdString();
         f.album = album.getText().toStdString();
@@ -176,6 +228,11 @@ engine::BounceSettings BounceDialog::settings() const
     }
     static constexpr engine::DitherMode modes[] = { engine::DitherMode::automatic, engine::DitherMode::off, engine::DitherMode::on };
     s.dither = modes[std::clamp (dither.getSelectedItemIndex(), 0, 2)];
+    static constexpr engine::Normalize levels[] = { engine::Normalize::off, engine::Normalize::overloadOnly, engine::Normalize::on };
+    s.normalize = levels[std::clamp (normalize.getSelectedItemIndex(), 0, 2)];
+    static constexpr engine::FileChannels layouts[] = { engine::FileChannels::interleaved, engine::FileChannels::split, engine::FileChannels::mono };
+    s.channels = layouts[std::clamp (channels.getSelectedItemIndex(), 0, 2)];
+    s.includeTempo = tempoInfo.getToggleState();
     s.folder = fromUtf8 (folder.getText());
     s.name = name.getText().trim().toStdString();
     if (s.name.empty())
@@ -183,16 +240,56 @@ engine::BounceSettings BounceDialog::settings() const
     return s;
 }
 
+std::vector<engine::BounceSettings> BounceDialog::allSettings() const
+{
+    const auto base = settings();
+    if (tracks.empty())
+        return { base };
+    std::vector<engine::BounceSettings> out;
+    for (const auto& id : tracks)
+    {
+        const auto* t = studio.model().track (id);
+        if (t == nullptr)
+            continue;
+        auto s = base;
+        s.soloTracks = { id };
+        if (tracks.size() > 1)
+            s.name = fileNameFor (t->name);
+        out.push_back (std::move (s));
+    }
+    return out;
+}
+
+void BounceDialog::newFolder()
+{
+    if (! askFolderName)
+        return;
+    askFolderName ([safe = juce::Component::SafePointer<BounceDialog> (this)] (juce::String folderName) {
+        folderName = folderName.trim();
+        if (safe == nullptr || folderName.isEmpty())
+            return;
+        const auto made = fromUtf8 (safe->folder.getText()) / fromUtf8 (juce::String (fileNameFor (folderName.toStdString())));
+        std::error_code ec;
+        std::filesystem::create_directories (made, ec);
+        if (ec)
+        {
+            safe->warning.setText ("Couldn't make the folder: " + juce::String (ec.message()), juce::dontSendNotification);
+            return;
+        }
+        safe->folder.setText (utf8 (made), false);
+    });
+}
+
 void BounceDialog::bounce()
 {
-    const auto s = settings();
     juce::StringArray existing;
-    for (const auto& file : engine::bounceTargets (s))
-        if (std::filesystem::exists (file))
-            existing.add (utf8 (file.filename()));
+    for (const auto& s : allSettings())
+        for (const auto& file : engine::bounceTargets (s))
+            if (std::filesystem::exists (file))
+                existing.add (utf8 (file.filename()));
     if (existing.isEmpty())
     {
-        begin (s);
+        begin (false);
         return;
     }
     asked = existing.joinIntoString (" and ") + (existing.size() == 1 ? " already exists." : " already exist.");
@@ -221,18 +318,19 @@ void BounceDialog::answer (int choice)
     }
     if (choice == cancelAnswer)
         return;
-    auto s = settings();
-    s.replace = choice == replaceAnswer;
-    begin (s);
+    begin (choice == replaceAnswer);
 }
 
-void BounceDialog::begin (engine::BounceSettings s)
+void BounceDialog::begin (bool replace)
 {
+    auto all = allSettings();
+    for (auto& s : all)
+        s.replace = replace;
     studio.onBounceDone = [safe = juce::Component::SafePointer<BounceDialog> (this)] {
         if (safe != nullptr)
             safe->finished();
     };
-    if (! studio.startBounce (s))
+    if (! studio.startBounces (std::move (all)))
     {
         studio.onBounceDone = nullptr;
         notice.setText (studio.status, juce::dontSendNotification);
@@ -275,8 +373,7 @@ void BounceDialog::setStage (Stage s)
 {
     current = s;
     const bool settingsShown = s == Stage::settings;
-    for (auto* c : std::initializer_list<juce::Component*> { &start, &end, &tail, &mode, &wav, &bitDepth, &wavRate, &mp3, &bitrate, &mp3Rate, &title,
-                                                             &artist, &album, &year, &dither, &folder, &choose, &name, &warning, &bounceButton })
+    for (auto* c : settingsControls())
         c->setVisible (settingsShown);
     cancel.setVisible (s != Stage::done);
     notice.setVisible (s != Stage::settings);
@@ -286,13 +383,24 @@ void BounceDialog::setStage (Stage s)
     repaint();
 }
 
+std::vector<juce::Component*> BounceDialog::settingsControls()
+{
+    return { &start, &end, &tail, &mode, &secondPass, &wav, &bitDepth, &wavRate, &aiff, &flac, &mp3, &bitrate, &mp3Rate, &title, &artist, &album,
+             &year, &tempoInfo, &dither, &normalize, &channels, &folder, &choose, &makeFolder, &name, &warning, &bounceButton };
+}
+
 void BounceDialog::updateEnabled()
 {
-    bitDepth.setEnabled (wav.getToggleState());
-    wavRate.setEnabled (wav.getToggleState());
-    for (auto* c : std::initializer_list<juce::Component*> { &bitrate, &mp3Rate, &title, &artist, &album, &year })
+    const bool pcm = wav.getToggleState() || aiff.getToggleState() || flac.getToggleState();
+    bitDepth.setEnabled (pcm);
+    wavRate.setEnabled (pcm);
+    for (auto* c : std::initializer_list<juce::Component*> { &bitrate, &mp3Rate, &title, &artist, &album, &year, &tempoInfo })
         c->setEnabled (mp3.getToggleState());
-    bounceButton.setEnabled (wav.getToggleState() || mp3.getToggleState());
+    // The second pass replaces the tail, and a real-time bounce plays the range once.
+    const bool realtime = mode.getSelectedItemIndex() == 2;
+    secondPass.setEnabled (! realtime);
+    tail.setEnabled (! (secondPass.getToggleState() && ! realtime));
+    bounceButton.setEnabled (pcm || mp3.getToggleState());
 }
 
 void BounceDialog::closeDialog()
@@ -311,6 +419,7 @@ void BounceDialog::paint (juce::Graphics& g)
     for (int i = 0; i < rowLabels.size(); ++i)
         g.drawText (rowLabels[i], labelX, 16 + i * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
     g.drawText ("to", 252, 16, 28, 26, juce::Justification::centred);
+    g.drawText ("Normalize", controlX + 140, 16 + rowDither * rowHeight, 80, 26, juce::Justification::centredLeft);
 }
 
 void BounceDialog::resized()
@@ -319,23 +428,30 @@ void BounceDialog::resized()
     auto row = [] (int i) { return 16 + i * rowHeight; };
     start.setBounds (controlX, row (0), 120, 26);
     end.setBounds (282, row (0), 120, 26);
-    tail.setBounds (controlX, row (1), 130, 26);
-    mode.setBounds (controlX + 140, row (1), 130, 26);
-    wav.setBounds (labelX, row (2), 100, 26);
-    bitDepth.setBounds (controlX, row (2), 130, 26);
-    wavRate.setBounds (controlX + 140, row (2), 160, 26);
-    mp3.setBounds (labelX, row (3), 100, 26);
-    bitrate.setBounds (controlX, row (3), 130, 26);
-    mp3Rate.setBounds (controlX + 140, row (3), 160, 26);
-    title.setBounds (controlX, row (4), w / 2 - 5, 26);
-    artist.setBounds (controlX + w / 2 + 5, row (4), w / 2 - 5, 26);
-    album.setBounds (controlX, row (5), w / 2 - 5, 26);
-    year.setBounds (controlX + w / 2 + 5, row (5), 80, 26);
-    dither.setBounds (controlX, row (6), 130, 26);
-    folder.setBounds (controlX, row (7), w - 95, 26);
-    choose.setBounds (getWidth() - 105, row (7), 85, 26);
-    name.setBounds (controlX, row (8), w, 26);
-    warning.setBounds (labelX, row (9), getWidth() - 2 * labelX, 26);
+    tail.setBounds (controlX, row (1), 120, 26);
+    mode.setBounds (controlX + 130, row (1), 120, 26);
+    secondPass.setBounds (controlX + 260, row (1), 140, 26);
+    wav.setBounds (labelX, row (rowWav), 100, 26);
+    bitDepth.setBounds (controlX, row (rowWav), 130, 26);
+    wavRate.setBounds (controlX + 140, row (rowWav), 160, 26);
+    aiff.setBounds (labelX, row (rowAiff), 100, 26);
+    flac.setBounds (controlX, row (rowAiff), 100, 26);
+    mp3.setBounds (labelX, row (rowMp3), 100, 26);
+    bitrate.setBounds (controlX, row (rowMp3), 130, 26);
+    mp3Rate.setBounds (controlX + 140, row (rowMp3), 160, 26);
+    title.setBounds (controlX, row (rowTags), w / 2 - 5, 26);
+    artist.setBounds (controlX + w / 2 + 5, row (rowTags), w / 2 - 5, 26);
+    album.setBounds (controlX, row (rowTags + 1), w / 2 - 5, 26);
+    year.setBounds (controlX + w / 2 + 5, row (rowTags + 1), 70, 26);
+    tempoInfo.setBounds (controlX + w / 2 + 80, row (rowTags + 1), w / 2 - 80, 26);
+    dither.setBounds (controlX, row (rowDither), 130, 26);
+    normalize.setBounds (controlX + 220, row (rowDither), w - 220, 26);
+    channels.setBounds (controlX, row (rowChannels), 200, 26);
+    folder.setBounds (controlX, row (rowFolder), w - 200, 26);
+    choose.setBounds (getWidth() - 210, row (rowFolder), 85, 26);
+    makeFolder.setBounds (getWidth() - 115, row (rowFolder), 95, 26);
+    name.setBounds (controlX, row (rowName), w, 26);
+    warning.setBounds (labelX, row (rowWarning), getWidth() - 2 * labelX, 26);
     bounceButton.setBounds (getWidth() - 200, getHeight() - 46, 85, 28); // primary first, as in every dialog
     cancel.setBounds (getWidth() - 105, getHeight() - 46, 85, 28);
 
@@ -346,12 +462,12 @@ void BounceDialog::resized()
     close.setBounds (getWidth() - 105, getHeight() - 46, 85, 28);
 }
 
-void BounceDialog::show (Studio& studio, juce::Component* parent)
+void BounceDialog::show (Studio& studio, juce::Component* parent, std::vector<Id> tracks)
 {
-    auto* dialog = new BounceDialog (studio);
+    auto* dialog = new BounceDialog (studio, std::move (tracks));
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned (dialog);
-    options.dialogTitle = "Bounce";
+    options.dialogTitle = dialog->getTitle();
     options.dialogBackgroundColour = colour (Token::surfaceRaised);
     options.componentToCentreAround = parent;
     options.useNativeTitleBar = true;

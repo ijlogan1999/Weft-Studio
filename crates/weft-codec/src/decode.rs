@@ -184,6 +184,7 @@ mod tests {
             artist: artist.as_ptr(),
             album: std::ptr::null(),
             year: std::ptr::null(),
+            bpm: std::ptr::null(),
         };
         let frames = 44100usize;
         let sine: Vec<f32> = (0..frames)

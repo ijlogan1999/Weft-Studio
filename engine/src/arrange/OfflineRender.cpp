@@ -23,6 +23,8 @@ OfflineRenderer::OfflineRenderer (const model::ProjectModel& model, MediaPool& m
     engine.setDiskThread (false);
     engine.setPluginFactory (options.plugins);
     engine.setProjectFolder (options.projectFolder);
+    if (! options.soloed.empty())
+        engine.setSoloedTracks (options.soloed);
 
     DeviceConfig config;
     config.sampleRate = model.info.sampleRate;
@@ -229,6 +231,52 @@ std::optional<media::AudioData> renderRegion (const model::ProjectModel& model, 
     return audio;
 }
 
+namespace
+{
+/** A MIDI region's notes and controllers as they play, `shift` ticks after the file's start. */
+void appendRegionEvents (media::MidiFileTrack& track, const model::ProjectModel& model, const model::Region& r, Ticks shift)
+{
+    const auto offset = r.midi.sequenceOffset;
+    const auto end = offset + r.length;
+    const auto* seq = model.sequence (r.midi.sequenceId);
+    if (seq == nullptr)
+        return;
+    for (const auto* n : seq->sortedNotes())
+    {
+        if (n->muted || n->pos < offset || n->pos >= end)
+            continue;
+        media::MidiFileNote out;
+        out.tick = n->pos - offset + shift;
+        out.length = std::max<std::int64_t> (1, std::min (n->length, end - n->pos));
+        out.channel = n->channel;
+        out.pitch = std::clamp (n->pitch + r.midi.transpose, 0, 127);
+        out.velocity = std::clamp (n->velocity + r.midi.velocityOffset, 1, 127);
+        out.releaseVelocity = n->releaseVelocity;
+        track.notes.push_back (out);
+    }
+    for (const auto& [id, c] : seq->controllers)
+        if (c.pos >= offset && c.pos < end)
+            track.controllers.push_back ({ c.pos - offset + shift, c.kind, c.number, c.value, c.channel });
+}
+
+/** The key, tempo and meter in force at `from`, and every key and tempo change before `to`. */
+void addConductor (media::MidiFileData& file, const model::ProjectModel& model, Ticks from, Ticks to)
+{
+    const auto startKey = model.keyAt (from); // and each key change inside the span (D-UI-44)
+    file.keys.push_back ({ 0, startKey.fifths(), startKey.minor });
+    for (const auto* k : model.keyChangesInOrder())
+        if (k->pos > from && k->pos < to)
+            file.keys.push_back ({ k->pos - from, k->key.fifths(), k->key.minor });
+    file.tempos.push_back ({ 0, model.tempo.bpmAt (from) });
+    for (const auto& p : model.storedTempoPoints)
+        if (p.pos > from && p.pos < to)
+            file.tempos.push_back ({ p.pos - from, p.bpm });
+    const auto at = model.signatures.barAt (from);
+    const auto& sig = model.signatures.signatureAtBar (at.bar);
+    file.signatures.push_back ({ 0, sig.numerator, sig.denominator });
+}
+} // namespace
+
 media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& regionId)
 {
     media::MidiFileData file;
@@ -237,47 +285,55 @@ media::MidiFileData midiRegionFile (const model::ProjectModel& model, const Id& 
     const auto* r = model.region (regionId);
     if (r == nullptr || ! r->isMidi)
         return file;
-    const auto offset = r->midi.sequenceOffset;
-    const auto end = offset + r->length;
     media::MidiFileTrack track;
     track.name = r->name;
-    if (const auto* seq = model.sequence (r->midi.sequenceId))
-    {
-        for (const auto* n : seq->sortedNotes())
-        {
-            if (n->muted || n->pos < offset || n->pos >= end)
-                continue;
-            media::MidiFileNote out;
-            out.tick = n->pos - offset;
-            out.length = std::max<std::int64_t> (1, std::min (n->length, end - n->pos));
-            out.channel = n->channel;
-            out.pitch = std::clamp (n->pitch + r->midi.transpose, 0, 127);
-            out.velocity = std::clamp (n->velocity + r->midi.velocityOffset, 1, 127);
-            out.releaseVelocity = n->releaseVelocity;
-            track.notes.push_back (out);
-        }
-        for (const auto& [id, c] : seq->controllers)
-            if (c.pos >= offset && c.pos < end)
-                track.controllers.push_back ({ c.pos - offset, c.kind, c.number, c.value, c.channel });
-        std::stable_sort (track.controllers.begin(), track.controllers.end(), [] (const auto& a, const auto& b) { return a.tick < b.tick; });
-    }
+    appendRegionEvents (track, model, *r, 0);
+    std::stable_sort (track.controllers.begin(), track.controllers.end(), [] (const auto& a, const auto& b) { return a.tick < b.tick; });
     file.tracks.push_back (std::move (track));
-
     // The project key (F-TMP-10), then the tempo and meter in force at the region start and
     // every change inside it.
-    const auto regionEnd = r->start + r->length;
-    const auto startKey = model.keyAt (r->start); // and each key change inside the region (D-UI-44)
-    file.keys.push_back ({ 0, startKey.fifths(), startKey.minor });
-    for (const auto* k : model.keyChangesInOrder())
-        if (k->pos > r->start && k->pos < regionEnd)
-            file.keys.push_back ({ k->pos - r->start, k->key.fifths(), k->key.minor });
-    file.tempos.push_back ({ 0, model.tempo.bpmAt (r->start) });
-    for (const auto& p : model.storedTempoPoints)
-        if (p.pos > r->start && p.pos < regionEnd)
-            file.tempos.push_back ({ p.pos - r->start, p.bpm });
-    const auto at = model.signatures.barAt (r->start);
-    const auto& sig = model.signatures.signatureAtBar (at.bar);
-    file.signatures.push_back ({ 0, sig.numerator, sig.denominator });
+    addConductor (file, model, r->start, r->start + r->length);
+    return file;
+}
+
+media::MidiFileData midiSelectionFile (const model::ProjectModel& model, const std::vector<Id>& regionIds)
+{
+    media::MidiFileData file;
+    file.format = 1;
+    file.ticksPerQuarter = static_cast<int> (ticksPerQuarter);
+    std::vector<const model::Region*> regions;
+    for (const auto& id : regionIds)
+        if (const auto* r = model.region (id); r != nullptr && r->isMidi)
+            regions.push_back (r);
+    if (regions.empty())
+        return file;
+    Ticks from = regions.front()->start, to = 0;
+    for (const auto* r : regions)
+    {
+        from = std::min (from, r->start);
+        to = std::max (to, r->start + r->length);
+    }
+    for (const auto& trackId : model.trackOrder)
+    {
+        const auto* t = model.track (trackId);
+        if (t == nullptr)
+            continue;
+        media::MidiFileTrack track;
+        track.name = t->name;
+        bool any = false;
+        for (const auto* r : regions)
+            if (r->trackId == t->id)
+            {
+                appendRegionEvents (track, model, *r, r->start - from);
+                any = true;
+            }
+        if (! any)
+            continue;
+        std::stable_sort (track.notes.begin(), track.notes.end(), [] (const auto& a, const auto& b) { return a.tick < b.tick; });
+        std::stable_sort (track.controllers.begin(), track.controllers.end(), [] (const auto& a, const auto& b) { return a.tick < b.tick; });
+        file.tracks.push_back (std::move (track));
+    }
+    addConductor (file, model, from, to);
     return file;
 }
 

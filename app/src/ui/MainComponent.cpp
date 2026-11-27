@@ -494,6 +494,23 @@ void MainComponent::handleUiCommand (Cmd command)
         deleteSelectedTrack();
     else if (command == Cmd::bounce)
         BounceDialog::show (studio, this);
+    else if (command == Cmd::exportTrackAudio || command == Cmd::exportAllTracksAudio)
+        BounceDialog::show (studio, this, studio.exportableTracks (command == Cmd::exportAllTracksAudio));
+    else if (command == Cmd::exportSelectionMidi)
+    {
+        if (! desktopWindows())
+            return;
+        const auto start = studio.projectRoot() / "Bounces";
+        std::error_code ec;
+        std::filesystem::create_directories (start, ec);
+        const auto suggested = start / std::filesystem::path (std::u8string (reinterpret_cast<const char8_t*> ((studio.model().info.name.empty() ? std::string ("Selection") : studio.model().info.name).c_str())));
+        importChooser = std::make_unique<juce::FileChooser> ("Export Selection as MIDI File", juce::File (pathText (suggested) + ".mid"), "*.mid");
+        importChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                                    [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                        if (safe != nullptr && fc.getResult() != juce::File())
+                                            safe->studio.exportSelectionAsMidi (textPath (fc.getResult().withFileExtension ("mid").getFullPathName()));
+                                    });
+    }
     else if (command == Cmd::exportRegions)
     {
         if (! desktopWindows())
@@ -933,6 +950,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::bounce);
             add (Cmd::importAudio);
             add (Cmd::exportRegions);
+            add (Cmd::exportSelectionMidi);
+            add (Cmd::exportTrackAudio);
+            add (Cmd::exportAllTracksAudio);
             menu.addSeparator();
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);

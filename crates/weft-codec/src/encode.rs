@@ -20,6 +20,8 @@ pub struct WeftMp3Settings {
     pub artist: *const c_char,
     pub album: *const c_char,
     pub year: *const c_char,
+    /// Tempo in BPM as text (the TBPM frame); may be null or empty.
+    pub bpm: *const c_char,
 }
 
 pub struct WeftMp3Encoder {
@@ -91,6 +93,7 @@ impl WeftMp3Encoder {
                 (b"TPE1", &text(s.artist)),
                 (b"TALB", &text(s.album)),
                 (b"TDRC", &text(s.year)),
+                (b"TBPM", &text(s.bpm)),
             ])
         };
         enc.file.write_all(&tag).map_err(|e| e.to_string())?;
