@@ -258,6 +258,49 @@ TEST_CASE ("AT-MIX-3: a mono source pans at -3 dB; a stereo source uses balance"
     CHECK (sr[800] == 0.0f);
 }
 
+TEST_CASE ("AT-PRJ-18: the project pan law sets a mono source's centre level; stereo balance is unchanged", "[E][mixer][AT-PRJ-18]")
+{
+    Rig rig;
+    addMedia (rig, "b3:one", { constant (1.0f) });
+    const auto mono = trackPlaying (rig, "Mono", "b3:one", 1);
+    addMedia (rig, "b3:lr", { constant (0.5f), constant (0.5f) });
+    const auto stereo = trackPlaying (rig, "Stereo", "b3:lr");
+    REQUIRE (rig.session.setTrackMute (stereo, true));
+    const auto sides = [&] (double pan) {
+        REQUIRE (rig.session.setTrackPan (mono, pan));
+        rig.sync();
+        auto [l, r] = playBoth (rig, 1000);
+        return std::pair { l[800], r[800] };
+    };
+    const auto law = [&] (double db) {
+        REQUIRE (rig.session.setPanLaw (db));
+        rig.sync();
+    };
+
+    law (-6.0);
+    CHECK (db (sides (0.0).first) == Catch::Approx (-6.02).margin (0.01));
+    CHECK (sides (-1.0).first == Catch::Approx (1.0).epsilon (1e-6));
+    CHECK (db (sides (0.5).second) == Catch::Approx (db (0.75f)).margin (0.01)); // linear
+    law (-4.5);
+    CHECK (db (sides (0.0).first) == Catch::Approx (-4.52).margin (0.01));
+    CHECK (sides (1.0).second == Catch::Approx (1.0).epsilon (1e-6));
+    law (0.0);
+    CHECK (db (sides (0.0).first) == Catch::Approx (0.0).margin (0.01));
+    CHECK (db (sides (0.0).second) == Catch::Approx (0.0).margin (0.01));
+    CHECK (db (sides (-1.0).first) == Catch::Approx (3.01).margin (0.01));
+    law (-3.0);
+    CHECK (db (sides (0.0).first) == Catch::Approx (-3.01).margin (0.01));
+
+    // A stereo source keeps balance whatever the law.
+    REQUIRE (rig.session.setTrackMute (mono, true));
+    REQUIRE (rig.session.setTrackMute (stereo, false));
+    REQUIRE (rig.session.setTrackPan (stereo, 0.0));
+    law (-6.0);
+    auto [sl, sr] = playBoth (rig, 1000);
+    CHECK (sl[800] == 0.5f);
+    CHECK (sr[800] == 0.5f);
+}
+
 // AT-MIX-4 ---------------------------------------------------------------------------------
 
 TEST_CASE ("AT-MIX-4: meters show the peak, latch clips until reset and hold the peak for 2 s", "[E][mixer][meters][AT-MIX-4]")
@@ -863,4 +906,46 @@ TEST_CASE ("AT-PLG-11: a plug-in that isn't installed becomes a placeholder that
     CHECK (plugin.name == "Missing Verb");
     CHECK (plugin.state.asBytes() == original);
     CHECK (plugin.params.at ("gain") == 0.25);
+}
+
+// AT-MIX-21 ---------------------------------------------------------------------------------
+
+TEST_CASE ("AT-MIX-21: a VCA fader scales and mutes the tracks assigned to it", "[E][mixer][vca][AT-MIX-21]")
+{
+    Rig rig;
+    addMedia (rig, "b3:half", { constant (0.5f), constant (0.5f) });
+    const auto t = trackPlaying (rig, "A", "b3:half");
+    const auto vca = rig.session.createVca().value();
+    REQUIRE (rig.session.setTrackVca (t, vca));
+    REQUIRE (rig.session.setVcaVolume (vca, -6.0206));
+    REQUIRE (rig.session.setTrackVolume (t, -6.0206));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.125).epsilon (1e-4)); // the fader and the VCA multiply
+    REQUIRE (rig.session.setVcaMute (vca, true));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == 0.0f);
+    REQUIRE (rig.session.setTrackVca (t, {}));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
+}
+
+// AT-MIX-23 ---------------------------------------------------------------------------------
+
+TEST_CASE ("AT-MIX-23: a folder stack's fader and mute act on its members; a summing stack is their bus", "[E][mixer][stacks][AT-MIX-23]")
+{
+    Rig rig;
+    addMedia (rig, "b3:half", { constant (0.5f), constant (0.5f) });
+    const auto t = trackPlaying (rig, "A", "b3:half");
+    const auto folder = rig.session.createStack ({ t }, false).value();
+    REQUIRE (rig.session.setTrackVolume (folder, -6.0206));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
+    REQUIRE (rig.session.setTrackMute (folder, true));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == 0.0f);
+    REQUIRE (rig.session.flattenStack (folder));
+    const auto sum = rig.session.createStack ({ t }, true).value();
+    REQUIRE (rig.session.setTrackVolume (sum, -6.0206));
+    rig.sync();
+    CHECK (playBoth (rig, 2000).first[1500] == Catch::Approx (0.25).epsilon (1e-4));
 }

@@ -95,8 +95,12 @@ public:
     juce::ComboBox key;        // ids: tonic + 1 (major), tonic + 13 (minor)
     juce::ToggleButton metronome { "Metronome on" };
     juce::ComboBox metronomeDuring; // 1 record, 2 play, 3 both
-    juce::ComboBox countIn;         // ids: bars + 1
+    juce::ComboBox countIn;         // ids: index in model::countInChoices + 1
     juce::Slider metronomeLevel;    // dB
+    juce::ComboBox panLaw;          // ids: index in model::panLaws + 1
+    /** MIDI input filter (W-35): one box per model::midiFilter bit, in bit order; ticked = ignored. */
+    juce::ToggleButton ignoreMidi[6] { juce::ToggleButton ("Notes"), juce::ToggleButton ("Program change"), juce::ToggleButton ("Pitch bend"),
+                                       juce::ToggleButton ("Controllers"), juce::ToggleButton ("Aftertouch"), juce::ToggleButton ("Poly aftertouch") };
     juce::TextButton ok { "OK" }, cancel { "Cancel" };
     juce::Label error;
     std::function<void()> onClose;
@@ -104,6 +108,36 @@ public:
     bool apply();
 
 private:
+    Studio& studio;
+};
+
+/** Settings (D-UI-41): this computer's General, Audio and View settings; each change applies at once. */
+class SettingsDialog final : public juce::Component
+{
+public:
+    explicit SettingsDialog (Studio& studio);
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+    // General
+    juce::ComboBox startup;     // 1 Welcome window, 2 most recent project
+    juce::ComboBox recentItems; // ids: the count
+    // Audio
+    juce::ToggleButton softwareMonitoring { "Software monitoring" };
+    juce::ToggleButton monitorSelectedOnly { "Monitor only the selected track" };
+    juce::ToggleButton overloadMessage { "Say when the audio drops out" };
+    juce::ToggleButton autoArmMidi { "Record-enable the selected instrument track" };
+    juce::TextButton audioDevice { "Audio & MIDI Settings..." };
+    // View
+    juce::ComboBox appearance; // 1 dark, 2 light, 3 follow the system
+    juce::ComboBox middleC;    // ids: 3, 4
+    juce::ToggleButton widePlayhead { "Wide playhead" };
+    juce::ToggleButton helpTags { "Show help tags" };
+    juce::TextButton close { "Close" };
+    std::function<void()> onClose, onAudioSettings;
+
+private:
+    void change (const std::function<void (Preferences&)>& edit);
     Studio& studio;
 };
 

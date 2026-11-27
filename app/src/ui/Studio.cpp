@@ -3,6 +3,7 @@
 #include "Theme.h"
 
 #include "weft/engine/dsp/BuiltinEffects.h"
+#include "weft/engine/media/JuceDecoders.h"
 #include "weft/media/Blobs.h"
 #include "weft/media/Decoder.h"
 
@@ -47,6 +48,11 @@ juce::String toolName (Tool t)
         case Tool::glue: return "Glue";
         case Tool::eraser: return "Eraser";
         case Tool::mute: return "Mute";
+        case Tool::text: return "Text";
+        case Tool::zoom: return "Zoom";
+        case Tool::fade: return "Fade";
+        case Tool::gain: return "Gain";
+        case Tool::quantize: return "Quantize";
     }
     return {};
 }
@@ -61,19 +67,134 @@ std::optional<Tool> toolForKey (juce::juce_wchar key)
         case 'j': return Tool::glue;
         case 'e': return Tool::eraser;
         case 'm': return Tool::mute;
+        case 'n': return Tool::text;
+        case 'z': return Tool::zoom;
+        case 'a': return Tool::fade;
+        case 'g': return Tool::gain;
+        case 'q': return Tool::quantize;
         default: return std::nullopt;
     }
 }
 
 juce::String toolKey (Tool t)
 {
-    for (const auto c : juce::String ("tpijem"))
+    for (const auto c : juce::String ("tpijemnzagq"))
         if (toolForKey (c) == t)
             return juce::String::charToString (juce::CharacterFunctions::toUpperCase (c));
     return {};
 }
 
 // Layout ---------------------------------------------------------------------------
+
+juce::var ControlBarLayout::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("items", items);
+    o->setProperty ("master", master == Master::none ? "none" : master == Master::meter ? "meter" : "volume");
+    static const char* const formats[] = { "milliseconds", "samples", "timecode24", "timecode25", "timecode30" };
+    o->setProperty ("time", formats[static_cast<int> (timeFormat)]);
+    o->setProperty ("tempoDecimals", tempoDecimals);
+    static const char* const units[] = { "percent", "tempo", "semitones", "tuning" };
+    o->setProperty ("varispeedUnit", units[static_cast<int> (varispeedUnit)]);
+    return juce::var (o);
+}
+
+ControlBarLayout ControlBarLayout::fromVar (const juce::var& v)
+{
+    ControlBarLayout l;
+    if (! v.isObject())
+        return l;
+    if (v.hasProperty ("items"))
+        l.items = static_cast<int> (v["items"]) & knownItems;
+    const auto master = v["master"].toString();
+    l.master = master == "none" ? Master::none : master == "meter" ? Master::meter : Master::volume;
+    const auto time = v["time"].toString();
+    l.timeFormat = time == "samples"      ? TimeFormat::samples
+                   : time == "timecode24" ? TimeFormat::timecode24
+                   : time == "timecode25" ? TimeFormat::timecode25
+                   : time == "timecode30" ? TimeFormat::timecode30
+                                          : TimeFormat::milliseconds;
+    const int decimals = v.hasProperty ("tempoDecimals") ? static_cast<int> (v["tempoDecimals"]) : 2;
+    l.tempoDecimals = decimals <= 0 ? 0 : decimals >= 4 ? 4 : 2;
+    using U = engine::varispeed::Unit;
+    const auto unit = v["varispeedUnit"].toString();
+    l.varispeedUnit = unit == "tempo" ? U::tempo : unit == "semitones" ? U::semitones : unit == "tuning" ? U::tuning : U::percent;
+    return l;
+}
+
+juce::String formatDisplayTime (double seconds, double sampleRate, ControlBarLayout::TimeFormat format)
+{
+    using F = ControlBarLayout::TimeFormat;
+    const auto negative = seconds < 0;
+    const auto s = std::abs (seconds);
+    const juce::String sign = negative ? "-" : "";
+    switch (format)
+    {
+        case F::samples:
+            return sign + juce::String (static_cast<juce::int64> (std::llround (s * sampleRate)));
+        case F::timecode24:
+        case F::timecode25:
+        case F::timecode30:
+        {
+            const int fps = format == F::timecode24 ? 24 : format == F::timecode25 ? 25 : 30;
+            const auto frames = static_cast<juce::int64> (std::floor (s * fps + 1e-9));
+            const auto whole = frames / fps;
+            return sign + juce::String::formatted ("%02d:%02d:%02d:%02d", static_cast<int> (whole / 3600), static_cast<int> (whole / 60 % 60),
+                                                   static_cast<int> (whole % 60), static_cast<int> (frames % fps));
+        }
+        case F::milliseconds:
+        default:
+            return sign + juce::String::formatted ("%d:%06.3f", static_cast<int> (s / 60.0), std::fmod (s, 60.0));
+    }
+}
+
+juce::String globalLaneName (GlobalLane lane)
+{
+    switch (lane)
+    {
+        case laneArrangement: return "Arrangement";
+        case laneMarkers: return "Markers";
+        case laneTempo: return "Tempo";
+        case laneSignature: return "Signature";
+        case laneKey: return "Key";
+        default: return {};
+    }
+}
+
+std::vector<Cmd> defaultToolbarCommands()
+{
+    return { Cmd::split, Cmd::join, Cmd::repeat, Cmd::quantize, Cmd::setCycleToSelection, Cmd::addMarker, Cmd::zoomToFit, Cmd::bounce };
+}
+
+std::vector<Cmd> toolbarChoices()
+{
+    return { Cmd::split, Cmd::splitAtCycle, Cmd::join, Cmd::repeat, Cmd::muteRegions, Cmd::loopRegion, Cmd::crossfade, Cmd::reverseRegions,
+             Cmd::quantize, Cmd::setCycleToSelection, Cmd::addMarker, Cmd::zoomToFit, Cmd::tapTempo, Cmd::newTrack, Cmd::duplicateTrack,
+             Cmd::deleteUnusedTracks, Cmd::importAudio, Cmd::exportRegions, Cmd::bounce, Cmd::pluginManager, Cmd::searchPlugins, Cmd::toggleNotes, Cmd::listEditors };
+}
+
+namespace
+{
+juce::var commandList (const std::vector<Cmd>& cmds)
+{
+    juce::Array<juce::var> names;
+    for (const auto c : cmds)
+        names.add (juce::String (commandInfo (c).name));
+    return names;
+}
+
+std::vector<Cmd> commandsNamed (const juce::var& v, std::vector<Cmd> fallback)
+{
+    if (! v.isArray())
+        return fallback;
+    std::vector<Cmd> out;
+    for (const auto& name : *v.getArray())
+        for (const auto c : toolbarChoices())
+            if (name.toString() == juce::String (commandInfo (c).name) && std::find (out.begin(), out.end(), c) == out.end())
+                out.push_back (c);
+    return out;
+}
+} // namespace
 
 juce::String PanelLayout::toString() const
 {
@@ -86,6 +207,15 @@ juce::String PanelLayout::toString() const
     o->setProperty ("sidePanelWidth", sidePanelWidth);
     o->setProperty ("bottomHeight", bottomHeight);
     o->setProperty ("darkTheme", darkTheme);
+    o->setProperty ("globalLanes", globalLanes);
+    o->setProperty ("singleGlobalLane", singleGlobalLane);
+    o->setProperty ("singleLane", static_cast<int> (singleLane));
+    o->setProperty ("controlBar", controlBar);
+    o->setProperty ("toolbar", toolbar);
+    o->setProperty ("bar", bar.toVar());
+    o->setProperty ("barDefault", barDefault.toVar());
+    o->setProperty ("toolbarCommands", commandList (toolbarCommands));
+    o->setProperty ("toolbarDefault", commandList (toolbarDefault));
     return juce::JSON::toString (juce::var (o), true);
 }
 
@@ -102,12 +232,64 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
     l.inspector = get ("inspector", l.inspector);
     l.sidePanel = get ("sidePanel", l.sidePanel);
     l.globalTracks = get ("globalTracks", l.globalTracks);
-    l.bottom = static_cast<BottomTab> (std::clamp (get ("bottom", 0), 0, 3));
+    l.bottom = static_cast<BottomTab> (std::clamp (get ("bottom", 0), 0, 4));
     l.inspectorWidth = std::clamp (get ("inspectorWidth", l.inspectorWidth), 160, 600);
     l.sidePanelWidth = std::clamp (get ("sidePanelWidth", l.sidePanelWidth), 200, 700);
     l.bottomHeight = std::clamp (get ("bottomHeight", l.bottomHeight), 160, 2000);
     l.darkTheme = get ("darkTheme", l.darkTheme);
+    l.globalLanes = get ("globalLanes", l.globalLanes) & allGlobalLanes;
+    l.singleGlobalLane = get ("singleGlobalLane", l.singleGlobalLane);
+    for (const auto lane : globalLaneOrder)
+        if (get ("singleLane", 0) == static_cast<int> (lane))
+            l.singleLane = lane;
+    l.controlBar = get ("controlBar", l.controlBar);
+    l.toolbar = get ("toolbar", l.toolbar);
+    l.bar = ControlBarLayout::fromVar (v["bar"]);
+    l.barDefault = ControlBarLayout::fromVar (v["barDefault"]);
+    l.toolbarCommands = commandsNamed (v["toolbarCommands"], l.toolbarCommands);
+    l.toolbarDefault = commandsNamed (v["toolbarDefault"], l.toolbarDefault);
     return l;
+}
+
+juce::String Preferences::toString() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("startup", startup == Startup::lastProject ? "lastProject" : "welcome");
+    o->setProperty ("recentItems", recentItems);
+    o->setProperty ("softwareMonitoring", softwareMonitoring);
+    o->setProperty ("monitorSelectedOnly", monitorSelectedOnly);
+    o->setProperty ("overloadMessage", overloadMessage);
+    o->setProperty ("appearance", appearance == Appearance::light ? "light" : appearance == Appearance::system ? "system" : "dark");
+    o->setProperty ("widePlayhead", widePlayhead);
+    o->setProperty ("middleC", middleC);
+    o->setProperty ("helpTags", helpTags);
+    o->setProperty ("autoArmMidi", autoArmMidi);
+    return juce::JSON::toString (juce::var (o), true);
+}
+
+Preferences Preferences::fromString (const juce::String& text)
+{
+    Preferences p;
+    const auto v = juce::JSON::parse (text);
+    if (! v.isObject())
+        return p;
+    auto get = [&] (const char* key, auto fallback) {
+        const auto x = v.getProperty (key, juce::var());
+        return x.isVoid() ? fallback : static_cast<decltype (fallback)> (x);
+    };
+    p.startup = v.getProperty ("startup", "welcome").toString() == "lastProject" ? Startup::lastProject : Startup::welcome;
+    const auto recent = get ("recentItems", p.recentItems);
+    p.recentItems = recent <= 5 ? 5 : recent <= 10 ? 10 : recent <= 20 ? 20 : 50;
+    p.softwareMonitoring = get ("softwareMonitoring", p.softwareMonitoring);
+    p.monitorSelectedOnly = get ("monitorSelectedOnly", p.monitorSelectedOnly);
+    p.overloadMessage = get ("overloadMessage", p.overloadMessage);
+    const auto look = v.getProperty ("appearance", "dark").toString();
+    p.appearance = look == "light" ? Appearance::light : look == "system" ? Appearance::system : Appearance::dark;
+    p.widePlayhead = get ("widePlayhead", p.widePlayhead);
+    p.middleC = get ("middleC", p.middleC) == 4 ? 4 : 3;
+    p.helpTags = get ("helpTags", p.helpTags);
+    p.autoArmMidi = get ("autoArmMidi", p.autoArmMidi);
+    return p;
 }
 
 // Studio -------------------------------------------------------------------------------
@@ -118,6 +300,13 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     eng = std::make_unique<engine::Engine> (pool, rack);
     live = std::make_unique<engine::LiveAutomation> (*eng);
     midiRouter = std::make_unique<engine::MidiInputRouter> (*eng);
+    // Controllers from MIDI devices also reach the Smart Controls, on the message thread.
+    midiRouter->setControllerTap ([weak = std::weak_ptr<bool> (alive), this] (std::uint8_t kind, std::uint8_t d1, std::uint8_t d2) {
+        juce::MessageManager::callAsync ([weak, this, kind, d1, d2] {
+            if (weak.lock())
+                smartControlMidi (kind, d1, d2);
+        });
+    });
     catalog = std::make_unique<engine::PluginCatalog> (settingsFolder() / "plugins.json");
     catalog->load();
     host = std::make_unique<engine::Vst3Host> (*catalog);
@@ -148,6 +337,7 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
 
 Studio::~Studio()
 {
+    midiRouter->setControllerTap (nullptr);
     if (silentClock != nullptr)
         silentClock->stop();
     if (audioDevice != nullptr)
@@ -174,6 +364,30 @@ void Studio::edited()
     syncEngine();
     ++editCount;
     mediaDirty = true;
+    sendChangeMessage();
+}
+
+bool Studio::wantsDarkTheme() const
+{
+    if (prefs.appearance == Preferences::Appearance::system)
+        return juce::Desktop::getInstance().isDarkModeActive();
+    return prefs.appearance == Preferences::Appearance::dark;
+}
+
+void Studio::setPreferences (const Preferences& p)
+{
+    prefs = p;
+    commands::setMiddleCOctave (prefs.middleC);
+    recent.setLimit (static_cast<std::size_t> (prefs.recentItems));
+    local.softwareMonitoring = prefs.softwareMonitoring;
+    local.monitorSelectedOnly = prefs.monitorSelectedOnly;
+    layout.darkTheme = wantsDarkTheme();
+    Theme::get().setDark (layout.darkTheme);
+    Theme::get().widePlayhead = prefs.widePlayhead;
+    dropoutsSeen = eng->dropouts();
+    syncEngine();
+    if (onPreferencesChanged)
+        onPreferencesChanged (prefs);
     sendChangeMessage();
 }
 
@@ -218,6 +432,21 @@ void Studio::selectTrack (const Id& trackId)
 {
     local.selectedTrack = trackId;
     eng->setSelectedTrack (trackId);
+    // MIDI auto record enable (D-W1-14): the selected instrument track is armed, and the one armed
+    // that way before is disarmed; tracks armed by hand stay. Not while recording.
+    if (prefs.autoArmMidi && ! recording())
+        if (const auto* t = model().track (trackId); t != nullptr && t->kind == model::TrackKind::instrument && trackId != autoArmed)
+        {
+            if (! autoArmed.empty() && local.armed.contains (autoArmed))
+                local.armed.erase (autoArmed);
+            autoArmed.clear();
+            if (! local.armed.contains (trackId))
+            {
+                local.armed.insert (trackId);
+                autoArmed = trackId;
+            }
+            eng->setArmedTracks (local.armed);
+        }
     sendChangeMessage();
 }
 
@@ -247,7 +476,148 @@ bool Studio::moveTrackTo (const Id& trackId, std::size_t index)
 void Studio::toggleArm (const Id& trackId)
 {
     local.toggleArm (model(), trackId);
+    linkSwitch (TrackSwitch::arm, trackId);
     edited();
+}
+
+void Studio::linkSwitch (TrackSwitch which, const Id& trackId)
+{
+    // Solo and Record are this machine's, so their group links are here, not in the session (P-GRP-13, P-GRP-14).
+    if (which != TrackSwitch::solo && which != TrackSwitch::arm)
+        return;
+    const bool on = trackSwitch (which, trackId);
+    // A folder stack's main has no sound of its own: its solo is its members' (D-W6-17).
+    if (const auto* t = model().track (trackId); which == TrackSwitch::solo && t != nullptr && t->isFolderStack())
+        for (const auto& id : model().stackMembers (trackId))
+            local.setSolo (id, on);
+    for (const auto& id : session().linkedTracks (trackId, which == TrackSwitch::solo ? &model::Group::linkSolo : &model::Group::linkRecord))
+        if (which == TrackSwitch::solo)
+            local.setSolo (id, on);
+        else
+            local.setArm (model(), id, on);
+}
+
+std::vector<Id> Studio::selectedTracksAndRegionTracks() const
+{
+    std::vector<Id> out;
+    const auto add = [&] (const Id& id) {
+        if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master && std::find (out.begin(), out.end(), id) == out.end())
+            out.push_back (id);
+    };
+    add (local.selectedTrack);
+    for (const auto& id : selection.ids())
+        if (const auto* r = model().region (id))
+            add (model().effectiveTrackId (*r));
+    return out;
+}
+
+bool Studio::recallScreenset (int number)
+{
+    if (number < 1 || number > 99)
+        return false;
+    // The screenset left keeps the layout as it is now; one never used starts as a copy of it.
+    screensets[screenset] = layout;
+    screenset = number;
+    if (const auto it = screensets.find (number); it != screensets.end())
+    {
+        // The theme and the control bar's and toolbar's contents aren't part of a screenset.
+        auto next = it->second;
+        next.darkTheme = layout.darkTheme;
+        next.bar = layout.bar;
+        next.barDefault = layout.barDefault;
+        next.toolbarCommands = layout.toolbarCommands;
+        next.toolbarDefault = layout.toolbarDefault;
+        layout = next;
+    }
+    else
+        screensets[number] = layout;
+    setStatus ("Screenset " + juce::String (number) + ".");
+    if (onScreensetsChanged)
+        onScreensetsChanged();
+    sendChangeMessage();
+    return true;
+}
+
+juce::String Studio::screensetsToString() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("current", screenset);
+    auto* sets = new juce::DynamicObject();
+    auto all = screensets;
+    all[screenset] = layout;
+    for (const auto& [n, l] : all)
+        sets->setProperty (juce::String (n), l.toString());
+    o->setProperty ("sets", juce::var (sets));
+    return juce::JSON::toString (juce::var (o), true);
+}
+
+void Studio::screensetsFromString (const juce::String& text)
+{
+    const auto v = juce::JSON::parse (text);
+    screensets.clear();
+    if (auto* sets = v["sets"].getDynamicObject())
+        for (const auto& p : sets->getProperties())
+            if (const int n = p.name.toString().getIntValue(); n >= 1 && n <= 99)
+                screensets[n] = PanelLayout::fromString (p.value.toString());
+    screenset = std::clamp (static_cast<int> (v["current"]), 1, 99);
+}
+
+bool Studio::closeProject()
+{
+    // Close Project (D-UI-46): an empty untitled project takes its place, as at startup.
+    std::string error;
+    if (! newProject (projectParent, {}, &error, true))
+    {
+        setStatus (juce::String (error));
+        return false;
+    }
+    return true;
+}
+
+bool Studio::toggleStack (const Id& trackId, bool all)
+{
+    const auto& m = model();
+    const auto* main = m.track (trackId);
+    if (main == nullptr || ! main->isStackMain())
+        main = m.stackMain (trackId);
+    if (main == nullptr)
+        return false;
+    const bool open = ! main->stackOpen;
+    const Id mainId = main->id;
+    std::vector<Id> mains { mainId };
+    if (all)
+        for (const auto& [id, t] : m.tracks)
+            if (t->isStackMain() && id != mainId)
+                mains.push_back (id);
+    sess->beginGesture (open ? "Open Stack" : "Close Stack");
+    for (const auto& id : mains)
+        if (const auto* t = model().track (id); t != nullptr && t->stackOpen != open)
+            sess->setStackOpen (id, open);
+    sess->endGesture();
+    // A member of a stack that closes isn't selectable any more: the main is.
+    if (! open && model().stackMain (local.selectedTrack) != nullptr && ! model().stackMain (local.selectedTrack)->stackOpen)
+        local.selectedTrack = model().stackMain (local.selectedTrack)->id;
+    edited();
+    return true;
+}
+
+void Studio::linkSelection()
+{
+    // A group linking selection picks the regions over the same time on its other members (P-GRP-6).
+    const auto& m = model();
+    std::set<Id> picked = selection.regions();
+    for (const auto& id : selection.regions())
+    {
+        const auto* r = m.region (id);
+        if (r == nullptr)
+            continue;
+        const double from = static_cast<double> (r->start), to = m.regionEndTick (*r);
+        for (const auto& other : session().linkedTracks (m.effectiveTrackId (*r), &model::Group::linkSelection))
+            for (const auto* o : m.regionsOnTrack (other))
+                if (static_cast<double> (o->start) < to && m.regionEndTick (*o) > from)
+                    picked.insert (o->id);
+    }
+    selection.set ({ picked.begin(), picked.end() });
 }
 
 void Studio::toggleMute (const Id& trackId)
@@ -275,6 +645,7 @@ void Studio::toggleSolo (const Id& trackId, bool exclusive)
         local.soloOnly (trackId);
     else
         local.toggleSolo (trackId);
+    linkSwitch (TrackSwitch::solo, trackId);
     edited();
 }
 
@@ -289,6 +660,16 @@ bool Studio::trackSwitch (TrackSwitch which, const Id& trackId) const
         }
         case TrackSwitch::solo: return local.soloed.contains (trackId);
         case TrackSwitch::arm: return local.armed.contains (trackId);
+        case TrackSwitch::on:
+        {
+            const auto* t = model().track (trackId);
+            return t != nullptr && ! t->off;
+        }
+        case TrackSwitch::monitor:
+        {
+            const auto* t = model().track (trackId);
+            return t != nullptr && t->monitor == "on";
+        }
     }
     return false;
 }
@@ -301,11 +682,25 @@ void Studio::setTrackSwitch (TrackSwitch which, const Id& trackId, bool on)
     switch (which)
     {
         case TrackSwitch::mute: toggleMute (trackId); return;
-        case TrackSwitch::solo: local.setSolo (trackId, on); break;
+        case TrackSwitch::solo:
+            local.setSolo (trackId, on);
+            linkSwitch (which, trackId);
+            break;
         case TrackSwitch::arm:
             if (! local.setArm (model(), trackId, on))
                 return;
+            linkSwitch (which, trackId);
             break;
+        case TrackSwitch::on:
+            if (t->kind != model::TrackKind::audio && t->kind != model::TrackKind::instrument)
+                return;
+            check (sess->setTrackOff (trackId, ! on));
+            return;
+        case TrackSwitch::monitor:
+            if (t->kind != model::TrackKind::audio)
+                return;
+            check (sess->setTrackMonitor (trackId, on ? "on" : "auto"));
+            return;
     }
     edited();
 }
@@ -319,6 +714,8 @@ void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::Modif
             case TrackSwitch::mute: toggleMute (trackId); break;
             case TrackSwitch::solo: toggleSolo (trackId); break;
             case TrackSwitch::arm: toggleArm (trackId); break;
+            case TrackSwitch::on:
+            case TrackSwitch::monitor: setTrackSwitch (which, trackId, ! trackSwitch (which, trackId)); break;
         }
         return;
     }
@@ -329,9 +726,14 @@ void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::Modif
     for (const auto& id : model().trackOrder)
         if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master)
             ids.push_back (id); // by value: a mute edit rebuilds the model
-    const bool own = which == TrackSwitch::mute && ! sess->inGesture();
+    // The switches saved in the project make one undo step; solo and record are local.
+    const bool own = documentSwitch (which) && ! sess->inGesture();
     if (own)
-        sess->beginGesture (only ? "Mute Only" : target ? "Mute All" : "Unmute All");
+        sess->beginGesture (which == TrackSwitch::on    ? (only ? "Turn On Only" : target ? "Turn All Tracks On" : "Turn All Tracks Off")
+                            : which == TrackSwitch::monitor ? "Input Monitoring"
+                            : only                          ? "Mute Only"
+                            : target                        ? "Mute All"
+                                                            : "Unmute All");
     for (const auto& id : ids)
         setTrackSwitch (which, id, only ? id == trackId : target);
     if (own)
@@ -341,9 +743,9 @@ void Studio::clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::Modif
 
 void Studio::beginSwitchSwipe (TrackSwitch which)
 {
-    swipeGesture = which == TrackSwitch::mute && ! sess->inGesture();
+    swipeGesture = documentSwitch (which) && ! sess->inGesture();
     if (swipeGesture)
-        sess->beginGesture ("Mute Tracks");
+        sess->beginGesture (which == TrackSwitch::on ? "Turn Tracks On/Off" : which == TrackSwitch::monitor ? "Input Monitoring" : "Mute Tracks");
 }
 
 void Studio::endSwitchSwipe()
@@ -351,6 +753,186 @@ void Studio::endSwitchSwipe()
     if (std::exchange (swipeGesture, false))
         sess->endGesture();
     edited();
+}
+
+bool Studio::documentSwitch (TrackSwitch which) noexcept
+{
+    return which == TrackSwitch::mute || which == TrackSwitch::on || which == TrackSwitch::monitor;
+}
+
+bool Studio::setAllTracksOff (bool off)
+{
+    std::vector<Id> ids; // by value: each edit rebuilds the model
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id);
+            t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument) && t->off != off && ! lockedByOther (id))
+            ids.push_back (id);
+    if (ids.empty())
+        return false;
+    sess->beginGesture (off ? "Turn All Tracks Off" : "Turn All Tracks On");
+    for (const auto& id : ids)
+        sess->setTrackOff (id, off);
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+std::vector<Id> Studio::mixerOrder() const
+{
+    const auto& m = model();
+    const auto kindShown = [&] (const model::Track& t) {
+        switch (t.kind)
+        {
+            case model::TrackKind::audio: return mixerAudio;
+            case model::TrackKind::instrument: return mixerInstrument;
+            case model::TrackKind::bus: return mixerBus;
+            case model::TrackKind::master: return false;
+        }
+        return false;
+    };
+    std::set<Id> wanted;
+    if (mixerMode == MixerMode::single)
+    {
+        // The selected channel, then every bus its signal reaches through outputs and sends.
+        std::vector<Id> todo;
+        if (const auto* t = m.track (local.selectedTrack); t != nullptr && t->kind != model::TrackKind::master)
+            todo.push_back (t->id);
+        while (! todo.empty())
+        {
+            const auto id = todo.back();
+            todo.pop_back();
+            if (! wanted.insert (id).second)
+                continue;
+            if (const auto* t = m.track (id))
+            {
+                if (! t->output.toMaster())
+                    todo.push_back (t->output.busId);
+                for (const auto& send : t->strip.sends)
+                    todo.push_back (send.targetBusId);
+            }
+        }
+    }
+    std::vector<Id> order;
+    for (const bool buses : { false, true })
+        for (const auto& tid : m.trackOrder)
+        {
+            const auto* t = m.track (tid);
+            // A stack's main sits with its members, not with the buses (D-W6-17).
+            if (t == nullptr || t->kind == model::TrackKind::master || (t->kind == model::TrackKind::bus && ! t->isStackMain()) != buses)
+                continue;
+            // Following stacks, a closed stack shows only its main (P-MX-10).
+            if (const auto* main = m.stackMain (tid); mixerFollowStacks && main != nullptr && ! main->stackOpen && mixerMode != MixerMode::single)
+                continue;
+            const auto* group = m.activeGroup (tid);
+            const bool hiddenRow = t->hidden || (group != nullptr && group->hidden); // H hides a group's strips too (D-W6-15)
+            if (mixerMode == MixerMode::single ? wanted.contains (tid)
+                                               : kindShown (*t) && (mixerMode == MixerMode::all || ! hiddenRow || m.info.showHiddenTracks))
+                order.push_back (tid);
+        }
+    return order;
+}
+
+bool Studio::copyChannelStrip (const Id& trackId)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr)
+    {
+        setStatus ("Select a track first.");
+        return false;
+    }
+    for (const auto& p : t->strip.inserts)
+        writePluginState (p.id); // the editors' last changes go with the copy
+    t = model().track (trackId);
+    stripClipboard = t->strip;
+    setStatus ("Copied the channel strip of " + juce::String (t->name) + ".");
+    return true;
+}
+
+bool Studio::pasteChannelStrip (const Id& trackId)
+{
+    const auto* t = model().track (trackId);
+    if (t == nullptr || ! stripClipboard)
+    {
+        setStatus (t == nullptr ? "Select a track first." : "Copy a channel strip setting first.");
+        return false;
+    }
+    // D-W6-13: volume, pan and the insert effects (fresh copies, settings and bypass kept); sends and routing stay.
+    const auto from = *stripClipboard;
+    std::vector<Id> old;
+    for (const auto& p : t->strip.inserts)
+        old.push_back (p.id);
+    endPluginGesture();
+    sess->beginGesture ("Paste Channel Strip Setting");
+    sess->setTrackVolume (trackId, from.volumeDb);
+    sess->setTrackPan (trackId, from.pan);
+    for (const auto& id : old)
+        sess->removeInsert (trackId, id);
+    for (auto p : from.inserts)
+    {
+        p.id.clear(); // a fresh plug-in: the same one can be pasted onto several tracks
+        sess->addInsert (trackId, p);
+    }
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+bool Studio::toggleAllTracksOff()
+{
+    bool anyOff = false;
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); t != nullptr && t->off)
+            anyOff = true;
+    if (! setAllTracksOff (! anyOff))
+    {
+        setStatus ("No audio or instrument tracks to turn on or off.");
+        return false;
+    }
+    return true;
+}
+
+juce::PopupMenu Studio::headerOptionsMenu (int base) const
+{
+    juce::PopupMenu m;
+    const auto& h = header;
+    m.addSectionHeader ("Buttons");
+    m.addItem (base + headerOnOff, "On/Off", true, h.onOff);
+    m.addItem (base + headerMonitor, "Input Monitoring", true, h.monitor);
+    m.addItem (base + headerHide, "Hide", true, h.hide);
+    m.addSectionHeader ("Show");
+    m.addItem (base + headerVolume, "Volume", true, h.volume);
+    m.addItem (base + headerPan, "Pan", true, h.pan);
+    m.addItem (base + headerNumbers, "Track Numbers", true, h.numbers);
+    m.addItem (base + headerColorBars, "Color Bars", true, h.colorBars);
+    m.addItem (base + headerIcons, "Track Icons", true, h.icons);
+    return m;
+}
+
+void Studio::toggleHeaderOption (int option)
+{
+    auto& h = header;
+    switch (option)
+    {
+        case headerMonitor: h.monitor = ! h.monitor; break;
+        case headerOnOff: h.onOff = ! h.onOff; break;
+        case headerHide: h.hide = ! h.hide; break;
+        case headerVolume: h.volume = ! h.volume; break;
+        case headerPan: h.pan = ! h.pan; break;
+        case headerNumbers: h.numbers = ! h.numbers; break;
+        case headerColorBars: h.colorBars = ! h.colorBars; break;
+        case headerIcons: h.icons = ! h.icons; break;
+        default: return;
+    }
+    sendChangeMessage();
+}
+
+void Studio::setHeaderWidth (int width)
+{
+    width = std::clamp (width, minHeaderWidth, maxHeaderWidth);
+    if (width == header.width)
+        return;
+    header.width = width;
+    sendChangeMessage();
 }
 
 bool Studio::silencedBySolo (const Id& trackId) const
@@ -377,6 +959,8 @@ int Studio::trackHeight (const Id& trackId) const
 void Studio::setTrackHeight (const Id& trackId, int height)
 {
     heights[trackId] = std::clamp (height, minTrackHeight, maxTrackHeight);
+    for (const auto& id : session().linkedTracks (trackId, &model::Group::linkZoom)) // P-GRP-17
+        heights[id] = heights[trackId];
     sendChangeMessage();
 }
 
@@ -417,6 +1001,72 @@ void Studio::setShownLane (const Id& trackId, std::size_t index, const model::Au
     lanesShown[trackId] = lanes;
     pointSelection = {};
     sendChangeMessage();
+}
+
+void Studio::removeShownLane (const Id& trackId, std::size_t index)
+{
+    auto lanes = shownLanes (trackId);
+    if (index >= lanes.size())
+        return;
+    lanes.erase (lanes.begin() + static_cast<std::ptrdiff_t> (index));
+    lanesShown[trackId] = lanes; // the last one closed leaves Volume showing
+    pointSelection = {};
+    sendChangeMessage();
+}
+
+bool Studio::cycleAutomationParameter (const Id& trackId)
+{
+    // D-W8-7: the first lane goes to the next parameter that has automation, in the parameter menu's order.
+    if (model().track (trackId) == nullptr)
+    {
+        setStatus ("Select a track first.");
+        return false;
+    }
+    std::vector<model::AutomationTarget> used;
+    for (const auto& choice : automationTargets (trackId))
+        if (const auto* lane = model().lane (trackId, choice.target); lane != nullptr && ! lane->points.empty())
+            used.push_back (choice.target);
+    if (used.empty())
+    {
+        setStatus ("This track has no automation yet.");
+        return false;
+    }
+    const auto current = shownLanes (trackId).front().key();
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < used.size(); ++i)
+        if (used[i].key() == current)
+            next = (i + 1) % used.size();
+    automationView = true;
+    setShownLane (trackId, 0, used[next]);
+    return true;
+}
+
+bool Studio::setAllAutomationModes (const std::string& mode)
+{
+    std::vector<Id> ids; // by value: each edit rebuilds the model
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); t != nullptr && t->automationMode != mode && ! lockedByOther (id))
+            ids.push_back (id);
+    if (ids.empty())
+        return false;
+    sess->beginGesture ("Automation Mode");
+    for (const auto& id : ids)
+        sess->setTrackAutomationMode (id, mode);
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+bool Studio::nudgeAutomationPoints (double by)
+{
+    const auto* lane = model().automationLanes.contains (pointSelection.laneId) ? &*model().automationLanes.at (pointSelection.laneId) : nullptr;
+    if (lane == nullptr)
+        return false;
+    std::vector<commands::Session::PointMove> moves;
+    for (const auto& id : pointSelection.points)
+        if (const auto it = lane->points.find (id); it != lane->points.end())
+            moves.push_back ({ id, it->second.pos, std::clamp (it->second.value + by, 0.0, 1.0) });
+    return ! moves.empty() && check (sess->moveAutomationPoints (pointSelection.laneId, moves));
 }
 
 void Studio::addShownLane (const Id& trackId)
@@ -486,6 +1136,220 @@ std::optional<double> Studio::automationValue (const Id& trackId, const model::A
     return eng->automationValue (trackId, target);
 }
 
+double Studio::targetValue (const Id& trackId, const model::AutomationTarget& target) const
+{
+    if (const auto v = eng->automationValue (trackId, target))
+        return *v;
+    const auto* t = model().track (trackId);
+    if (t == nullptr)
+        return 0.0;
+    double fallback = 0.0;
+    if (target.kind == "pluginParam")
+        if (const auto proc = eng->processor (target.pluginId))
+            if (const auto index = proc->parameterIndex (target.paramId); index >= 0)
+                fallback = proc->parameter (index);
+    return automation::staticValue (*t, target, fallback);
+}
+
+juce::String Studio::targetValueText (const Id& trackId, const model::AutomationTarget& target, double normalized) const
+{
+    juce::ignoreUnused (trackId);
+    if (target.kind == "volume" || target.kind == "sendLevel")
+    {
+        const auto db = automation::toDb (normalized);
+        return db <= -100.0 ? juce::String ("-inf dB") : juce::String (db, 1) + " dB";
+    }
+    if (target.kind == "pan")
+    {
+        const auto pan = juce::roundToInt (automation::toPan (normalized) * 64.0);
+        return pan == 0 ? juce::String ("C") : (pan < 0 ? "L " : "R ") + juce::String (std::abs (pan));
+    }
+    if (target.kind == "mute")
+        return automation::toMute (normalized) ? "On" : "Off";
+    if (const auto proc = eng->processor (target.pluginId))
+        if (const auto index = proc->parameterIndex (target.paramId); index >= 0)
+            return juce::String (proc->parameterText (index, normalized));
+    return juce::String (juce::roundToInt (normalized * 100.0)) + "%";
+}
+
+model::SmartControls Studio::smartControls (const Id& trackId, int knobs) const
+{
+    const auto* t = model().track (trackId);
+    if (t != nullptr && t->smartControls)
+    {
+        auto own = *t->smartControls;
+        if (knobs > 0 && knobs != own.layout)
+        {
+            own.layout = knobs;
+            own.controls.resize (static_cast<std::size_t> (knobs));
+        }
+        return own;
+    }
+    // Automatic: the plug-ins' parameters (instrument first, then inserts in slot order) and the sends on the
+    // first knobs, Volume and Pan on the last two.
+    model::SmartControls out;
+    out.layout = knobs > 0 ? knobs : 8;
+    out.controls.resize (static_cast<std::size_t> (out.layout));
+    if (t == nullptr)
+        return out;
+    std::vector<model::AutomationTarget> first, last;
+    for (const auto& choice : automationTargets (trackId))
+    {
+        if (choice.target.kind == "volume" || choice.target.kind == "pan")
+            last.push_back (choice.target);
+        else if (choice.target.kind == "pluginParam")
+            first.push_back (choice.target);
+    }
+    for (const auto& choice : automationTargets (trackId))
+        if (choice.target.kind == "sendLevel")
+            first.push_back (choice.target);
+    const auto ends = std::min (last.size(), out.controls.size());
+    const auto room = out.controls.size() - ends;
+    for (std::size_t i = 0; i < room && i < first.size(); ++i)
+        out.controls[i].mappings.push_back ({ first[i], 0.0, 1.0 });
+    for (std::size_t i = 0; i < ends; ++i)
+        out.controls[room + i].mappings.push_back ({ last[i], 0.0, 1.0 });
+    return out;
+}
+
+std::optional<double> Studio::smartControlPosition (const Id& trackId, const model::SmartControl& control) const
+{
+    for (const auto& m : control.mappings)
+    {
+        if (! automation::targetExists (model(), trackId, m.target))
+            continue;
+        const auto v = targetValue (trackId, m.target);
+        if (std::abs (m.max - m.min) < 1e-9)
+            return 0.0;
+        return std::clamp ((v - m.min) / (m.max - m.min), 0.0, 1.0);
+    }
+    return std::nullopt;
+}
+
+juce::String Studio::smartControlName (const Id& trackId, const model::SmartControl& control) const
+{
+    if (! control.name.empty())
+        return juce::String (control.name);
+    for (const auto& m : control.mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            return automationTargetName (trackId, m.target);
+    return {};
+}
+
+juce::String Studio::smartControlText (const Id& trackId, const model::SmartControl& control) const
+{
+    for (const auto& m : control.mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            return targetValueText (trackId, m.target, targetValue (trackId, m.target));
+    return {};
+}
+
+void Studio::turnSmartControl (const Id& trackId, int index, double position)
+{
+    const auto controls = smartControls (trackId);
+    if (index < 0 || index >= static_cast<int> (controls.controls.size()))
+        return;
+    position = std::clamp (position, 0.0, 1.0);
+    for (const auto& m : controls.controls[static_cast<std::size_t> (index)].mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            touchControl (trackId, m.target, m.min + position * (m.max - m.min));
+}
+
+void Studio::releaseSmartControl (const Id& trackId, int index)
+{
+    const auto controls = smartControls (trackId);
+    if (index < 0 || index >= static_cast<int> (controls.controls.size()))
+        return;
+    for (const auto& m : controls.controls[static_cast<std::size_t> (index)].mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            releaseControl (trackId, m.target);
+}
+
+bool Studio::smartControlMidi (std::uint8_t kind, std::uint8_t data1, std::uint8_t data2)
+{
+    if ((kind & 0xF0) != 0xB0 || data1 > 127)
+        return false;
+    const auto trackId = selectedTrack();
+    if (trackId.empty() || model().track (trackId) == nullptr)
+        return false;
+    const int channel = (kind & 0x0F) + 1;
+    auto controls = smartControls (trackId);
+    if (smartLearn)
+    {
+        const auto index = *smartLearn;
+        smartLearn.reset();
+        if (index < 0 || index >= static_cast<int> (controls.controls.size()))
+            return false;
+        // A controller turns one knob: it leaves any other it was on.
+        for (auto& c : controls.controls)
+            if (c.cc == data1 && (c.ccChannel == 0 || c.ccChannel == channel))
+                c.cc = -1;
+        controls.controls[static_cast<std::size_t> (index)].cc = data1;
+        controls.controls[static_cast<std::size_t> (index)].ccChannel = channel;
+        check (sess->setSmartControls (trackId, controls));
+        edited();
+        return true;
+    }
+    bool used = false;
+    for (std::size_t i = 0; i < controls.controls.size(); ++i)
+    {
+        const auto& c = controls.controls[i];
+        if (c.cc != data1 || (c.ccChannel != 0 && c.ccChannel != channel))
+            continue;
+        if (! hardwareGesture)
+        {
+            sess->beginGesture ("Smart Control");
+            hardwareGesture = true;
+        }
+        hardwareTurnMs = juce::Time::getMillisecondCounterHiRes();
+        turnSmartControl (trackId, static_cast<int> (i), static_cast<double> (data2) / 127.0);
+        used = true;
+    }
+    return used;
+}
+
+Studio::ViewSnapshot Studio::viewSnapshot() const
+{
+    ViewSnapshot v;
+    v.originTick = view.originTick;
+    v.pixelsPerTick = view.pixelsPerTick;
+    v.heights = heights;
+    v.scrollY = verticalScroll ? verticalScroll() : 0;
+    return v;
+}
+
+void Studio::restoreView (const ViewSnapshot& v)
+{
+    view.originTick = v.originTick;
+    view.pixelsPerTick = std::clamp (v.pixelsPerTick, arrange::TimelineView::minPixelsPerTick, arrange::TimelineView::maxPixelsPerTick);
+    heights = v.heights;
+    zoomedFrom.clear();
+    if (setVerticalScroll)
+        setVerticalScroll (v.scrollY);
+    sendChangeMessage();
+}
+
+void Studio::rememberView()
+{
+    backViews.push_back (viewSnapshot());
+    if (backViews.size() > 50)
+        backViews.erase (backViews.begin());
+    forwardViews.clear();
+}
+
+void Studio::scaleTrackHeights (double factor)
+{
+    for (const auto& id : model().trackOrder)
+    {
+        const auto h = trackHeight (id);
+        auto next = juce::roundToInt (h * factor);
+        if (next == h)
+            next += factor > 1.0 ? 1 : -1; // always a visible step
+        heights[id] = std::clamp (next, minTrackHeight, maxTrackHeight);
+    }
+    sendChangeMessage();
+}
+
 void Studio::setAllTrackHeights (int height)
 {
     for (const auto& id : model().trackOrder)
@@ -507,6 +1371,7 @@ void Studio::locate (Ticks t)
     t = std::max<Ticks> (t, 0);
     eng->locate (t);
     locatedAt = t;
+    lastLocate = t;
     locatedFrame = eng->deviceFrames();
     sendChangeMessage();
 }
@@ -517,6 +1382,20 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 void Studio::tick()
 {
     checkDevice();
+    // A knob turned from hardware is one undo step until it rests for half a second.
+    if (hardwareGesture && juce::Time::getMillisecondCounterHiRes() - hardwareTurnMs > 500.0)
+    {
+        hardwareGesture = false;
+        sess->endGesture();
+        edited();
+    }
+    // D-UI-41: say so when the audio engine drops out.
+    if (const auto dropouts = eng->dropouts(); dropouts > dropoutsSeen)
+    {
+        dropoutsSeen = dropouts;
+        if (prefs.overloadMessage)
+            setStatus ("The audio engine couldn't keep up and dropped out. A larger buffer size in Audio & MIDI Settings can help.");
+    }
     if (silentClock != nullptr)
     {
         // No-audio mode: the engine runs on the message thread, in step with the system clock.
@@ -616,22 +1495,79 @@ engine::Mp3Format Studio::defaultMp3Format() const
     return mp3;
 }
 
-bool Studio::startBounce (const engine::BounceSettings& settings)
+bool Studio::startBounce (const engine::BounceSettings& settings) { return startBounces ({ settings }); }
+
+bool Studio::startBounces (std::vector<engine::BounceSettings> settings)
 {
-    if (bounceJob != nullptr)
+    if (bounceJob != nullptr || settings.empty())
         return false;
-    if (settings.range.to <= settings.range.from)
+    for (const auto& s : settings)
     {
-        setStatus ("The bounce range is empty.");
-        return false;
-    }
-    if (! settings.wav && ! settings.mp3)
-    {
-        setStatus ("Choose WAV, MP3 or both.");
-        return false;
+        if (s.range.to <= s.range.from)
+        {
+            setStatus ("The bounce range is empty.");
+            return false;
+        }
+        if (! s.wav && ! s.aiff && ! s.flac && ! s.mp3)
+        {
+            setStatus ("Choose at least one file format.");
+            return false;
+        }
     }
     eng->stop();
     lastBounce.reset();
+    bounceCount = settings.size();
+    bouncesDone = 0;
+    bouncedSoFar.clear();
+    bounceQueue.assign (settings.begin() + 1, settings.end());
+    return beginJob (settings.front());
+}
+
+double Studio::bounceProgress() const noexcept
+{
+    if (bounceJob == nullptr || bounceCount == 0)
+        return 0.0;
+    return (static_cast<double> (bouncesDone) + bounceJob->progress()) / static_cast<double> (bounceCount);
+}
+
+std::vector<Id> Studio::exportableTracks (bool all) const
+{
+    const auto exportable = [] (const model::Track* t) {
+        return t != nullptr && (t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument);
+    };
+    if (! all)
+    {
+        const auto* t = model().track (selectedTrack());
+        return exportable (t) ? std::vector<Id> { t->id } : std::vector<Id> {};
+    }
+    std::vector<Id> out;
+    for (const auto& id : model().trackOrder)
+        if (const auto* t = model().track (id); exportable (t) && ! t->mute)
+            out.push_back (id);
+    return out;
+}
+
+bool Studio::exportSelectionAsMidi (const fs::path& file)
+{
+    const auto ids = selection.ids();
+    const auto data = engine::midiSelectionFile (model(), { ids.begin(), ids.end() });
+    std::string error;
+    if (data.tracks.empty())
+    {
+        setStatus ("Select MIDI regions to export.");
+        return false;
+    }
+    if (! media::writeMidiFile (file, data, &error))
+    {
+        setStatus ("Couldn't write " + juce::String::fromUTF8 (reinterpret_cast<const char*> (file.filename().u8string().c_str())) + ": " + juce::String (error));
+        return false;
+    }
+    setStatus ("Exported " + juce::String::fromUTF8 (reinterpret_cast<const char*> (file.filename().u8string().c_str())) + ".");
+    return true;
+}
+
+bool Studio::beginJob (const engine::BounceSettings& settings)
+{
     engine::BounceJob::Context ctx;
     ctx.media = &pool;
     ctx.plugins = [this] (const model::PluginInstance& p, bool instrument) { return host->create (p, instrument); };
@@ -643,6 +1579,7 @@ bool Studio::startBounce (const engine::BounceSettings& settings)
         const auto* info = catalog->find (p.pluginUid);
         return info != nullptr && engine::isRealtimeOnlyCategory (info->category);
     };
+    ctx.encoder = engine::makePlatformAudioEncoder();
     bounceFrom = settings.range.from;
     bounceJob = std::make_unique<engine::BounceJob> (model(), settings, std::move (ctx));
     setStatus (bounceJob->notice().empty() ? juce::String ("Bouncing...") : juce::String (bounceJob->notice()));
@@ -662,6 +1599,21 @@ void Studio::stepBounce()
         return;
     lastBounce = bounceJob->finish();
     bounceJob.reset();
+    ++bouncesDone;
+    if (lastBounce->ok && bounceCount > 1)
+    {
+        bouncedSoFar.insert (bouncedSoFar.end(), lastBounce->files.begin(), lastBounce->files.end());
+        if (! bounceQueue.empty())
+        {
+            auto next = bounceQueue.front();
+            bounceQueue.erase (bounceQueue.begin());
+            if (beginJob (next))
+                return;
+        }
+        lastBounce->files = bouncedSoFar;
+        lastBounce->message = "Exported " + std::to_string (bouncedSoFar.size()) + " files.";
+    }
+    bounceQueue.clear();
     if (lastBounce->ok)
         setStatus (juce::String (lastBounce->message));
     else
@@ -724,7 +1676,7 @@ void Studio::zoomToFit()
     view.fit (span->first, span->second, timelineWidth, 0.9);
 }
 
-bool Studio::stepRegion (int direction)
+bool Studio::stepRegion (int direction, bool add)
 {
     const auto& m = model();
     const model::Region* anchor = nullptr;
@@ -760,7 +1712,14 @@ bool Studio::stepRegion (int direction)
     }
     if (to == nullptr)
         return false;
-    selection.set ({ to->id });
+    if (add) // Add Previous/Next Region to Selection (D-W3-12)
+    {
+        auto now = selection.ids();
+        now.push_back (to->id);
+        selection.set (now);
+    }
+    else
+        selection.set ({ to->id });
     sendChangeMessage();
     return true;
 }
@@ -816,6 +1775,43 @@ std::optional<bool> Studio::performNotes (Cmd command)
         if (notes.empty())
             setStatus ("Select notes first.");
         return ! notes.empty();
+    };
+    // The shown notes (or only the selected ones) where they sit on the timeline (D-W4-14).
+    const auto timed = [&] (bool selectedOnly) {
+        std::vector<commands::TimedNote> out;
+        for (const auto& id : regions)
+        {
+            const auto* r = m.region (id);
+            if (const auto* seq = m.sequence (r->midi.sequenceId))
+                for (const auto& [noteId, n] : seq->notes)
+                    if (n.pos >= r->midi.sequenceOffset && n.pos < r->midi.sequenceOffset + r->length
+                        && (! selectedOnly || piano.selection.contains ({ id, noteId })))
+                        out.push_back ({ { id, noteId }, r->start + n.pos - r->midi.sequenceOffset, n.length, n.pitch });
+        }
+        return out;
+    };
+    const auto applySpans = [&] (const std::map<commands::NoteRef, commands::NoteSpan>& spans, const char* name) {
+        if (spans.empty())
+        {
+            setStatus ("Nothing to change.");
+            return false;
+        }
+        const bool own = ! s.inGesture();
+        if (own)
+            s.beginGesture (name);
+        for (const auto& [ref, span] : spans)
+            if (! s.setNoteSpan (ref, span.start, span.length))
+            {
+                if (own)
+                    s.cancelGesture();
+                setStatus (juce::String (s.lastError()));
+                edited();
+                return false;
+            }
+        if (own)
+            s.endGesture();
+        edited();
+        return true;
     };
     const auto audition = [&] {
         if (! notes.empty())
@@ -943,13 +1939,88 @@ std::optional<bool> Studio::performNotes (Cmd command)
             sendChangeMessage();
             return true;
         }
+        case Cmd::selectAllFollowing:
+        {
+            // D-W4-14: every shown note starting at or after the earliest selected one, or the playhead.
+            Ticks from = playhead();
+            bool any = false;
+            for (const auto& n : timed (true))
+                if (! any || n.start < from)
+                    from = n.start, any = true;
+            piano.selection.clear();
+            for (const auto& n : timed (false))
+                if (n.start >= from)
+                    piano.selection.insert (n.ref);
+            piano.point.reset();
+            sendChangeMessage();
+            return ! piano.selection.empty();
+        }
+        case Cmd::legato:
+            return needNotes() && applySpans (commands::legatoSpans (timed (true)), "Legato");
+        case Cmd::removeOverlaps:
+            return needNotes() && applySpans (commands::overlapFreeSpans (timed (true), timed (false)), "Remove Overlaps");
+        case Cmd::noteStartToPlayhead:
+            return needNotes() && applySpans (commands::startToPlayheadSpans (timed (true), playhead()), "Note Start to Playhead");
+        case Cmd::noteEndToPlayhead:
+            return needNotes() && applySpans (commands::endToPlayheadSpans (timed (true), playhead()), "Note End to Playhead");
+        case Cmd::lengthenNotes:
+        case Cmd::shortenNotes:
+        {
+            if (! needNotes())
+                return false;
+            // By the snap value (a sixteenth with snap off); never shorter than one tick.
+            const auto step = piano.grid > 0 ? piano.grid : Ticks (240);
+            std::map<commands::NoteRef, commands::NoteSpan> spans;
+            for (const auto& n : timed (true))
+                if (const auto length = std::max<Ticks> (1, n.length + (command == Cmd::lengthenNotes ? step : -step)); length != n.length)
+                    spans[n.ref] = { n.start, length };
+            return applySpans (spans, "Note Length");
+        }
+        case Cmd::scaleQuantize:
+        {
+            if (! needNotes())
+                return false;
+            const auto& list = commands::scales();
+            const auto degrees = list[static_cast<std::size_t> (std::clamp (piano.scale, 0, static_cast<int> (list.size()) - 1))].degrees;
+            std::vector<model::Note> changed;
+            std::vector<Id> regionOf;
+            for (const auto& ref : notes)
+                if (const auto* n = commands::findNote (m, ref))
+                    if (const auto to = commands::scaleQuantizePitch (n->pitch, piano.scaleRoot, degrees); to != n->pitch)
+                    {
+                        changed.push_back (*n);
+                        changed.back().pitch = to;
+                        regionOf.push_back (ref.regionId);
+                    }
+            if (changed.empty())
+            {
+                setStatus ("The selected notes are already in the scale.");
+                return false;
+            }
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture ("Scale Quantize");
+            for (std::size_t i = 0; i < changed.size(); ++i)
+                if (! s.updateNote (regionOf[i], changed[i]))
+                {
+                    if (own)
+                        s.cancelGesture();
+                    setStatus (juce::String (s.lastError()));
+                    edited();
+                    return false;
+                }
+            if (own)
+                s.endGesture();
+            edited();
+            return true;
+        }
         case Cmd::escape:
             if (piano.selection.empty())
                 return std::nullopt;
             piano.selection.clear();
             sendChangeMessage();
             return true;
-        case Cmd::playStop: case Cmd::record: case Cmd::cycle: case Cmd::metronome: case Cmd::goToStart: case Cmd::goToEnd:
+        case Cmd::playStop: case Cmd::record: case Cmd::cycle: case Cmd::metronome: case Cmd::toggleVarispeed: case Cmd::goToStart: case Cmd::goToEnd:
         case Cmd::previousBar: case Cmd::nextBar: case Cmd::autopunch: case Cmd::followPlayhead: case Cmd::save: case Cmd::newTrack:
         case Cmd::undo: case Cmd::redo: case Cmd::split: case Cmd::join: case Cmd::muteRegions:
         case Cmd::repeat: case Cmd::crossfade: case Cmd::loopRegion: case Cmd::setCycleToSelection: case Cmd::zoomToFit: case Cmd::zoomIn:
@@ -959,7 +2030,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::marker7: case Cmd::marker8: case Cmd::marker9: case Cmd::snapToggle: case Cmd::keyboardMidi: case Cmd::toggleTheme:
         case Cmd::about: case Cmd::applyQuantize: case Cmd::deleteTrack: case Cmd::newBus: case Cmd::pluginManager:
         case Cmd::toggleAutomation: case Cmd::bounce: case Cmd::newProject: case Cmd::openProject: case Cmd::saveAs:
-        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
+        case Cmd::projectSettings: case Cmd::audioSettings: case Cmd::settings: case Cmd::shareProject: case Cmd::shareFolder: case Cmd::joinProject: case Cmd::signIn:
         case Cmd::signOut: case Cmd::goOffline: case Cmd::addComment: case Cmd::saveVersion: case Cmd::lockTrack:
         case Cmd::importAudio: case Cmd::quit: case Cmd::duplicateTrack: case Cmd::duplicateTrackWithRegions: case Cmd::moveTrackUp:
         case Cmd::moveTrackDown: case Cmd::pause: case Cmd::exportRegions: case Cmd::discardRecording:
@@ -968,6 +2039,30 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::newInstrumentTrack: case Cmd::renameMarker: case Cmd::deleteMarker: case Cmd::marker10: case Cmd::marker11:
         case Cmd::marker12: case Cmd::marker13: case Cmd::marker14: case Cmd::marker15: case Cmd::marker16: case Cmd::marker17:
         case Cmd::marker18: case Cmd::marker19: case Cmd::searchPlugins: case Cmd::deleteUnusedTracks:
+        case Cmd::nudgeByGrid: case Cmd::nudgeByBar: case Cmd::nudgeByBeat: case Cmd::nudgeByDivision: case Cmd::nudgeByTick: case Cmd::slipLeft: case Cmd::slipRight: case Cmd::shuffleLeft: case Cmd::shuffleRight: case Cmd::gridLines:
+        case Cmd::nextTool: case Cmd::previousTool:
+        case Cmd::newTrackNextInput: case Cmd::searchTracks: case Cmd::configureTrackHeader: case Cmd::toggleAllTracksOff: case Cmd::togglePluginWindows:
+        case Cmd::unmuteAll: case Cmd::clearRecallSolo: case Cmd::soloSelectedRegions: case Cmd::monitorTrack: case Cmd::copyChannelStrip: case Cmd::pasteChannelStrip: case Cmd::cycleMixerMode:
+        case Cmd::zoomVerticalIn: case Cmd::zoomVerticalOut: case Cmd::saveZoom1: case Cmd::saveZoom2: case Cmd::saveZoom3: case Cmd::recallZoom1: case Cmd::recallZoom2: case Cmd::recallZoom3: case Cmd::navigateBack: case Cmd::navigateForward: case Cmd::pageUp: case Cmd::pageDown: case Cmd::pageLeft: case Cmd::pageRight: case Cmd::zoomTrack:
+        case Cmd::selectPreviousTrack: case Cmd::selectNextTrack: case Cmd::selectInsideCycle: case Cmd::selectMutedRegions: case Cmd::selectSameColor: case Cmd::selectFirst: case Cmd::selectLast: case Cmd::togglePreviousRegion: case Cmd::toggleNextRegion: case Cmd::scrollToSelection: case Cmd::moveToPlayhead: case Cmd::moveToPlayheadSelectNext: case Cmd::regionStartToPlayhead: case Cmd::regionEndToPlayhead: case Cmd::splitAtCycle:
+        case Cmd::automationAllOff: case Cmd::automationAllRead: case Cmd::automationAllTouch: case Cmd::automationAllLatch: case Cmd::automationOffRead: case Cmd::automationLatchRead: case Cmd::cycleAutomationParameter:
+        case Cmd::markerForSelection: case Cmd::cycleToMarker: case Cmd::cycleToPreviousMarker: case Cmd::cycleToNextMarker: case Cmd::previousMarkerSetLocators: case Cmd::nextMarkerSetLocators: case Cmd::goToMarkerNumber:
+        case Cmd::applyRegionParameters: case Cmd::applyRegionParametersExceptDelay:
+        case Cmd::goToCycleStart: case Cmd::goToCycleEnd: case Cmd::goToSelectionStart: case Cmd::goToSelectionEnd: case Cmd::goToLastLocate: case Cmd::goToPosition: case Cmd::playFromStart: case Cmd::playFromCycleStart: case Cmd::playFromSelection: case Cmd::playFromWindowEdge: case Cmd::playFromPreviousBar: case Cmd::playFromLastLocate: case Cmd::stopGoToStart: case Cmd::stopGoToCycleStart: case Cmd::stopGoToLastLocate: case Cmd::cycleForward: case Cmd::cycleBack: case Cmd::doubleCycle: case Cmd::halveCycle:
+        case Cmd::toggleControlBar: case Cmd::toggleToolbar: case Cmd::customizeControlBar: case Cmd::bigBeatsDisplay: case Cmd::bigTimeDisplay: case Cmd::performanceMeter:
+        case Cmd::configureGlobalTracks: case Cmd::showSingleGlobalTrack: case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack: case Cmd::markerTrackOnly: case Cmd::createSignatureChange: case Cmd::createKeyChange: case Cmd::addSection:
+        case Cmd::exportSelectionMidi: case Cmd::exportTrackAudio: case Cmd::exportAllTracksAudio:
+        case Cmd::recordToggle: case Cmd::toggleReplace: case Cmd::captureRecording:
+        case Cmd::toggleGroups: case Cmd::groupsWindow: case Cmd::createGroup: case Cmd::hideGroup1: case Cmd::hideGroup2: case Cmd::hideGroup3: case Cmd::hideGroup4: case Cmd::hideGroup5: case Cmd::hideGroup6: case Cmd::hideGroup7: case Cmd::hideGroup8: case Cmd::hideGroup9: case Cmd::newVca:
+        case Cmd::createFolderStack: case Cmd::createSummingStack: case Cmd::flattenStack: case Cmd::toggleStack: case Cmd::followStacks:
+        case Cmd::screenset1: case Cmd::screenset2: case Cmd::screenset3: case Cmd::screenset4: case Cmd::screenset5: case Cmd::screenset6: case Cmd::screenset7: case Cmd::screenset8: case Cmd::screenset9:
+        case Cmd::screensetTens1: case Cmd::screensetTens2: case Cmd::screensetTens3: case Cmd::screensetTens4: case Cmd::screensetTens5: case Cmd::screensetTens6: case Cmd::screensetTens7: case Cmd::screensetTens8: case Cmd::screensetTens9:
+        case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow: case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow:
+        case Cmd::cycleWindows: case Cmd::cycleWindowsBack: case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject: case Cmd::cycleWindowViews: case Cmd::cycleWindowViewsBack:
+        case Cmd::toggleNotes: case Cmd::mixerNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList:
+        case Cmd::openTempoList: case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::toggleAudioFileEditor:
+        case Cmd::keyCommands: case Cmd::toggleSmartControls: case Cmd::smartControlsWindow:
+        case Cmd::toggleLibrary: case Cmd::loopBrowser: case Cmd::searchLibrary:
             break;
     }
     return std::nullopt;
@@ -975,6 +2070,15 @@ std::optional<bool> Studio::performNotes (Cmd command)
 
 bool Studio::perform (Cmd command)
 {
+    const juce::ScopedValueSetter<bool> asCommand (inCommand, true);
+    // After Recall Screenset Nx, the next number key picks screenset N1 to N9 (D-UI-46).
+    if (screensetTens > 0)
+    {
+        const int tens = std::exchange (screensetTens, 0);
+        const int n = static_cast<int> (command) - static_cast<int> (Cmd::marker1) + 1;
+        if (n >= 1 && n <= 9)
+            return recallScreenset (tens * 10 + n);
+    }
     endPluginGesture();
     if (previewing() && changesDocument (command))
     {
@@ -984,17 +2088,35 @@ bool Studio::perform (Cmd command)
     if (notesFocused())
         if (const auto handled = performNotes (command))
             return *handled;
+    // Commands that edit a protected global track do nothing (D-UI-44).
+    {
+        std::optional<GlobalLane> lane;
+        if (command == Cmd::addMarker || command == Cmd::renameMarker || command == Cmd::deleteMarker || command == Cmd::markerForSelection)
+            lane = laneMarkers;
+        else if (command == Cmd::tapTempo)
+            lane = laneTempo;
+        else if (command == Cmd::createSignatureChange)
+            lane = laneSignature;
+        else if (command == Cmd::createKeyChange)
+            lane = laneKey;
+        else if (command == Cmd::addSection)
+            lane = laneArrangement;
+        if (lane && laneProtected (*lane))
+            return false;
+    }
     auto& s = *sess;
     const auto& m = model();
     const auto ids = selection.ids();
-    const auto grid = activeSnap().kind == arrange::Snap::Kind::off ? arrange::Snap::ticks (240) : activeSnap();
     switch (command)
     {
         case Cmd::playStop:
             if (playing())
                 eng->stop();
             else
-                eng->play (m.info.cycle.enabled ? m.info.cycle.start : playhead()); // D-UI-17: the cycle plays from its start
+            {
+                lastLocate = m.info.cycle.enabled ? m.info.cycle.start : playhead();
+                eng->play (lastLocate); // D-UI-17: the cycle plays from its start
+            }
             locatedAt.reset();
             break;
         case Cmd::stop:
@@ -1011,12 +2133,12 @@ bool Studio::perform (Cmd command)
         {
             // Off and back to the length last used (1 bar until one is chosen in Navigate > Count-in).
             auto settings = eng->settings();
-            if (settings.countInBars > 0)
+            if (settings.countInBars != 0)
                 countInWhenOn = std::exchange (settings.countInBars, 0);
             else
                 settings.countInBars = countInWhenOn;
             eng->setSettings (settings);
-            setStatus (settings.countInBars == 0 ? juce::String ("Count-in off.") : "Count-in: " + juce::String (settings.countInBars) + (settings.countInBars == 1 ? " bar." : " bars."));
+            setStatus (settings.countInBars == 0 ? juce::String ("Count-in off.") : "Count-in: " + juce::String (model::countInName (settings.countInBars)) + ".");
             break;
         }
         case Cmd::deselectAll:
@@ -1065,6 +2187,8 @@ bool Studio::perform (Cmd command)
             edited();
             return ! made.empty();
         }
+        case Cmd::newTrackNextInput:
+            return newTrackNextInput().has_value();
         case Cmd::pause:
             // Stops where it is (F-TRN-3, D-INV-6); pressed again, plays on from there.
             if (playing())
@@ -1083,6 +2207,38 @@ bool Studio::perform (Cmd command)
             discardRecordingFrom = recordPressedAt;
             eng->stop();
             break;
+        case Cmd::recordToggle:
+        {
+            if (! recording() && ! audioOk)
+            {
+                setStatus ("Recording needs an audio device: choose one in Audio & MIDI Settings.");
+                return false;
+            }
+            if (! recording())
+                recordPressedAt = playhead();
+            const auto result = eng->recordToggle();
+            if (! result.message.empty())
+                setStatus (juce::String (result.message));
+            break;
+        }
+        case Cmd::toggleReplace:
+        {
+            auto ts = eng->settings();
+            ts.replace = ! ts.replace;
+            eng->setSettings (ts);
+            setStatus (ts.replace ? "Replace on: recording replaces what's under it." : "Replace off.");
+            sendChangeMessage();
+            break;
+        }
+        case Cmd::captureRecording:
+        {
+            const auto outcome = eng->captureRecording (*sess, selectedTrack());
+            setStatus (juce::String (outcome.message));
+            if (! outcome.committed)
+                return false;
+            edited();
+            break;
+        }
         case Cmd::record:
         {
             if (recording())
@@ -1125,7 +2281,115 @@ bool Studio::perform (Cmd command)
                 setStatus (settings.metronomeOn ? "Click on." : "Click off.");
             break;
         }
+        case Cmd::toggleVarispeed:
+            setVarispeed (! varispeedEnabled, varispeedValue);
+            break;
         case Cmd::goToStart: locate (0); break;
+        case Cmd::goToCycleStart:
+        case Cmd::goToCycleEnd:
+        case Cmd::goToSelectionStart:
+        case Cmd::goToSelectionEnd:
+        case Cmd::goToLastLocate:
+        case Cmd::playFromStart:
+        case Cmd::playFromCycleStart:
+        case Cmd::playFromSelection:
+        case Cmd::playFromWindowEdge:
+        case Cmd::playFromPreviousBar:
+        case Cmd::playFromLastLocate:
+        case Cmd::stopGoToStart:
+        case Cmd::stopGoToCycleStart:
+        case Cmd::stopGoToLastLocate:
+        {
+            // D-UI-35: where each command goes; the play commands start playback there, the stop ones stop first.
+            std::optional<Ticks> to;
+            const auto& cycle = m.info.cycle;
+            const bool hasCycle = cycle.end > cycle.start;
+            const auto is = [command] (std::initializer_list<Cmd> cmds) { return std::find (cmds.begin(), cmds.end(), command) != cmds.end(); };
+            if (is ({ Cmd::goToCycleStart, Cmd::playFromCycleStart, Cmd::stopGoToCycleStart }))
+            {
+                if (hasCycle)
+                    to = cycle.start;
+            }
+            else if (command == Cmd::goToCycleEnd)
+            {
+                if (hasCycle)
+                    to = cycle.end;
+            }
+            else if (is ({ Cmd::goToSelectionStart, Cmd::goToSelectionEnd, Cmd::playFromSelection }))
+                to = selectionEdge (command == Cmd::goToSelectionEnd);
+            else if (is ({ Cmd::goToLastLocate, Cmd::playFromLastLocate, Cmd::stopGoToLastLocate }))
+                to = lastLocate;
+            else if (is ({ Cmd::playFromStart, Cmd::stopGoToStart }))
+                to = 0;
+            else if (command == Cmd::playFromWindowEdge)
+                to = std::max<Ticks> (0, static_cast<Ticks> (std::ceil (view.originTick)));
+            else if (command == Cmd::playFromPreviousBar)
+            {
+                const auto pos = m.signatures.barAt (playhead());
+                to = m.signatures.barStart (std::max (pos.bar - 1, 0));
+            }
+            if (! to)
+            {
+                setStatus (command == Cmd::goToSelectionStart || command == Cmd::goToSelectionEnd || command == Cmd::playFromSelection
+                               ? "Select regions or notes first."
+                               : "Set a cycle first.");
+                return false;
+            }
+            const bool startPlaying = command == Cmd::playFromStart || command == Cmd::playFromCycleStart || command == Cmd::playFromSelection
+                                      || command == Cmd::playFromWindowEdge || command == Cmd::playFromPreviousBar || command == Cmd::playFromLastLocate;
+            if (startPlaying)
+            {
+                lastLocate = *to;
+                eng->play (*to);
+                locatedAt.reset();
+            }
+            else
+            {
+                if (playing())
+                {
+                    if (command == Cmd::stopGoToStart || command == Cmd::stopGoToCycleStart || command == Cmd::stopGoToLastLocate)
+                        eng->pause(); // stops where it is; the locate below puts it in place
+                }
+                const auto keep = lastLocate;
+                locate (*to);
+                if (command == Cmd::goToLastLocate || command == Cmd::stopGoToLastLocate)
+                    lastLocate = keep;
+            }
+            break;
+        }
+        case Cmd::cycleForward:
+        case Cmd::cycleBack:
+        case Cmd::doubleCycle:
+        case Cmd::halveCycle:
+        {
+            const auto& cycle = m.info.cycle;
+            const auto length = cycle.end - cycle.start;
+            if (length <= 0)
+            {
+                setStatus ("Set a cycle first.");
+                return false;
+            }
+            Ticks start = cycle.start, end = cycle.end;
+            if (command == Cmd::cycleForward)
+                start += length, end += length;
+            else if (command == Cmd::cycleBack)
+            {
+                const auto by = std::min (length, cycle.start);
+                if (by == 0)
+                {
+                    setStatus ("The cycle is at the start already.");
+                    return false;
+                }
+                start -= by, end -= by;
+            }
+            else if (command == Cmd::doubleCycle)
+                end = start + 2 * length;
+            else if (length < 2)
+                return false;
+            else
+                end = start + length / 2;
+            return check (s.setCycle (cycle.enabled, start, end));
+        }
         case Cmd::goToEnd: locate (commands::projectEndTick (m)); break;
         case Cmd::previousBar:
         case Cmd::nextBar:
@@ -1202,8 +2466,7 @@ bool Studio::perform (Cmd command)
                 return false;
             const auto anchor = selection.span (m)->first;
             const auto from = static_cast<Ticks> (anchor);
-            const auto delta = arrange::gridStep (from, command == Cmd::nudgeRight ? 1 : -1, grid, m.signatures, view.pixelsPerTick) - from;
-            return check (s.nudgeRegions (ids, delta));
+            return check (s.nudgeRegions (ids, nudgeDelta (from, command == Cmd::nudgeRight ? 1 : -1)));
         }
         case Cmd::repeat:
         {
@@ -1239,11 +2502,138 @@ bool Studio::perform (Cmd command)
                 }
             break;
         case Cmd::setCycleToSelection: return check (s.setCycleToRegions (ids));
-        case Cmd::zoomToFit: zoomToFit(); break;
-        case Cmd::zoomIn: view.zoomAround (1.5, view.tickToX (static_cast<double> (playhead()))); break;
-        case Cmd::zoomOut: view.zoomAround (1.0 / 1.5, view.tickToX (static_cast<double> (playhead()))); break;
+        case Cmd::zoomToFit: rememberView(); zoomToFit(); break;
+        case Cmd::zoomIn: rememberView(); view.zoomAround (1.5, view.tickToX (static_cast<double> (playhead()))); break;
+        case Cmd::zoomOut: rememberView(); view.zoomAround (1.0 / 1.5, view.tickToX (static_cast<double> (playhead()))); break;
+        case Cmd::zoomVerticalIn:
+        case Cmd::zoomVerticalOut:
+            rememberView();
+            scaleTrackHeights (command == Cmd::zoomVerticalIn ? 1.25 : 0.8);
+            break;
+        case Cmd::saveZoom1:
+        case Cmd::saveZoom2:
+        case Cmd::saveZoom3:
+        {
+            const auto slot = static_cast<std::size_t> (static_cast<int> (command) - static_cast<int> (Cmd::saveZoom1));
+            savedZooms[slot] = viewSnapshot();
+            setStatus ("Saved as Zoom " + juce::String (static_cast<int> (slot) + 1) + ".");
+            return true;
+        }
+        case Cmd::recallZoom1:
+        case Cmd::recallZoom2:
+        case Cmd::recallZoom3:
+        {
+            const auto slot = static_cast<std::size_t> (static_cast<int> (command) - static_cast<int> (Cmd::recallZoom1));
+            if (! savedZooms[slot])
+            {
+                setStatus ("Zoom " + juce::String (static_cast<int> (slot) + 1) + " isn't saved yet.");
+                return false;
+            }
+            rememberView();
+            restoreView (*savedZooms[slot]);
+            break;
+        }
+        case Cmd::navigateBack:
+        case Cmd::navigateForward:
+        {
+            auto& from = command == Cmd::navigateBack ? backViews : forwardViews;
+            auto& to = command == Cmd::navigateBack ? forwardViews : backViews;
+            if (from.empty())
+                return false;
+            to.push_back (viewSnapshot());
+            const auto v = from.back();
+            from.pop_back();
+            restoreView (v);
+            break;
+        }
+        case Cmd::pageLeft:
+        case Cmd::pageRight:
+            view.originTick = std::max (0.0, view.originTick + (command == Cmd::pageRight ? 1.0 : -1.0) * timelineWidth / view.pixelsPerTick);
+            break;
+        case Cmd::pageUp:
+        case Cmd::pageDown:
+            if (verticalScroll && setVerticalScroll)
+                setVerticalScroll (std::max (0, verticalScroll() + juce::roundToInt ((command == Cmd::pageDown ? 1.0 : -1.0) * timelineHeight)));
+            break;
+        case Cmd::zoomTrack:
+        {
+            // D-UI-38: the selected track grows to fill most of the view; again, back to its height.
+            const auto id = local.selectedTrack;
+            if (model().track (id) == nullptr)
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            if (const auto it = zoomedFrom.find (id); it != zoomedFrom.end())
+            {
+                heights[id] = it->second;
+                zoomedFrom.erase (it);
+            }
+            else
+            {
+                zoomedFrom[id] = trackHeight (id);
+                heights[id] = std::clamp (juce::roundToInt (timelineHeight * 0.75), std::max (trackHeight (id), minTrackHeight), maxTrackHeight);
+            }
+            break;
+        }
         case Cmd::escape: tool = Tool::pointer; break;
+        case Cmd::nextTool:
+        case Cmd::previousTool:
+        {
+            // D-UI-36: through the Tool menu's order, wrapping.
+            const int n = static_cast<int> (lastTool) + 1;
+            tool = static_cast<Tool> ((static_cast<int> (tool) + (command == Cmd::nextTool ? 1 : n - 1)) % n);
+            setStatus (toolName (tool) + " tool.");
+            break;
+        }
         case Cmd::toggleInspector: layout.inspector = ! layout.inspector; break;
+        case Cmd::toggleControlBar: layout.controlBar = ! layout.controlBar; break;
+        case Cmd::showSingleGlobalTrack:
+            layout.singleGlobalLane = ! layout.singleGlobalLane;
+            layout.globalTracks = true;
+            if (layout.singleGlobalLane && (layout.globalLanes & layout.singleLane) == 0)
+                layout.globalLanes |= layout.singleLane;
+            break;
+        case Cmd::toggleArrangementTrack: case Cmd::toggleMarkerTrack: case Cmd::toggleTempoTrack: case Cmd::toggleSignatureTrack: case Cmd::toggleKeyTrack:
+        {
+            const auto lane = command == Cmd::toggleArrangementTrack ? laneArrangement : command == Cmd::toggleMarkerTrack ? laneMarkers
+                              : command == Cmd::toggleTempoTrack     ? laneTempo
+                              : command == Cmd::toggleSignatureTrack ? laneSignature
+                                                                     : laneKey;
+            setLaneShown (lane, ! laneShown (lane));
+            break;
+        }
+        case Cmd::markerTrackOnly:
+            // Only the marker track, or back to what showed before.
+            if (layout.globalTracks && layout.globalLanes == laneMarkers && ! layout.singleGlobalLane)
+                layout.globalLanes = lanesBeforeMarkerOnly;
+            else
+            {
+                lanesBeforeMarkerOnly = layout.globalLanes;
+                layout.globalLanes = laneMarkers;
+                layout.singleGlobalLane = false;
+                layout.globalTracks = true;
+            }
+            break;
+        case Cmd::addSection:
+        {
+            // At the playhead's bar when that's free, else right after the last section; 8 bars of the meter there.
+            const auto here = m.signatures.barStart (m.signatures.barAt (playhead()).bar);
+            const auto lengthAt = [&m] (Ticks t) { return 8 * m.signatures.barLength (m.signatures.barAt (t).bar); };
+            auto start = here;
+            for (const auto* x : m.sectionsInOrder())
+                if (x->start < here + lengthAt (here) && here < x->end())
+                    start = m.sectionsInOrder().back()->end();
+            const auto added = s.addSection (start, lengthAt (start));
+            if (! added)
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            setStatus ("Added section \"" + juce::String (model().sections.at (*added)->name) + "\".");
+            break;
+        }
+        case Cmd::toggleToolbar: layout.toolbar = ! layout.toolbar; break;
         case Cmd::toggleSidePanel: layout.sidePanel = ! layout.sidePanel; break;
         case Cmd::toggleGlobalTracks: layout.globalTracks = ! layout.globalTracks; break;
         case Cmd::toggleAutomation:
@@ -1252,6 +2642,27 @@ bool Studio::perform (Cmd command)
             break;
         case Cmd::toggleMixer: toggleBottom (layout, BottomTab::mixer); break;
         case Cmd::togglePianoRoll: toggleBottom (layout, BottomTab::pianoRoll); break;
+        case Cmd::toggleSmartControls: toggleBottom (layout, BottomTab::smartControls); break;
+        case Cmd::toggleAudioFileEditor:
+        {
+            // D-UI-49: the audio editor as the Audio File Editor, on the selected audio region when none is open.
+            if (layout.bottom == BottomTab::audioEditor && audioFileMode)
+            {
+                layout.bottom = BottomTab::none;
+                break;
+            }
+            const auto* open = m.region (editorRegion);
+            if (open == nullptr || open->isMidi)
+                for (const auto& id : selection.regions())
+                    if (const auto* r = m.region (id); r != nullptr && ! r->isMidi)
+                    {
+                        editorRegion = id;
+                        break;
+                    }
+            layout.bottom = BottomTab::audioEditor;
+            audioFileMode = true;
+            break;
+        }
         case Cmd::toggleAudioEditor:
             toggleBottom (layout, BottomTab::audioEditor);
             if (editorRegion.empty() && ! ids.empty())
@@ -1326,6 +2737,59 @@ bool Studio::perform (Cmd command)
             locate (*to);
             break;
         }
+        case Cmd::markerForSelection:
+        {
+            // D-UI-39: a marker at the selected regions' start, named after the first of them.
+            const auto span = selection.span (m);
+            if (! span)
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            std::string name;
+            Ticks first = 0;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && (name.empty() || r->start < first))
+                    name = r->name, first = r->start;
+            const auto id = s.addMarker (static_cast<Ticks> (span->first), name);
+            edited();
+            return id.has_value();
+        }
+        case Cmd::cycleToMarker:
+        case Cmd::cycleToPreviousMarker:
+        case Cmd::cycleToNextMarker:
+        case Cmd::previousMarkerSetLocators:
+        case Cmd::nextMarkerSetLocators:
+        {
+            // D-UI-39: a marker's range runs to the next marker (the project end after the last).
+            const auto markers = arrange::markersInOrder (m);
+            if (markers.empty())
+            {
+                setStatus ("There are no markers.");
+                return false;
+            }
+            const auto now = playhead();
+            int at = -1; // the marker at or before the playhead
+            for (std::size_t i = 0; i < markers.size(); ++i)
+                if (markers[i]->pos <= now)
+                    at = static_cast<int> (i);
+            int pick = at;
+            if (command == Cmd::cycleToPreviousMarker || command == Cmd::previousMarkerSetLocators)
+                pick = at < 0 ? -1 : (markers[static_cast<std::size_t> (at)]->pos == now || command == Cmd::cycleToPreviousMarker ? at - 1 : at);
+            else if (command == Cmd::cycleToNextMarker || command == Cmd::nextMarkerSetLocators)
+                pick = at + 1;
+            if (pick < 0 || pick >= static_cast<int> (markers.size()))
+                return false;
+            const auto start = markers[static_cast<std::size_t> (pick)]->pos;
+            const auto end = static_cast<std::size_t> (pick) + 1 < markers.size() ? markers[static_cast<std::size_t> (pick) + 1]->pos
+                                                                                  : std::max (commands::projectEndTick (m), start + 3840);
+            const bool enable = command == Cmd::cycleToMarker || command == Cmd::cycleToPreviousMarker || command == Cmd::cycleToNextMarker || m.info.cycle.enabled;
+            if (! check (s.setCycle (enable, start, end)))
+                return false;
+            if (command != Cmd::cycleToMarker)
+                locate (start);
+            break;
+        }
         case Cmd::snapToggle: snapEnabled = ! snapEnabled; break;
         case Cmd::tapTempo: return tapTempo (juce::Time::getMillisecondCounterHiRes());
         case Cmd::showHiddenTracks:
@@ -1346,13 +2810,23 @@ bool Studio::perform (Cmd command)
             break;
         }
         case Cmd::toggleTheme:
-            layout.darkTheme = ! layout.darkTheme;
-            Theme::get().setDark (layout.darkTheme);
+        {
+            // An explicit choice: it stops following the system (D-UI-41).
+            auto p = prefs;
+            p.appearance = layout.darkTheme ? Preferences::Appearance::light : Preferences::Appearance::dark;
+            setPreferences (p);
             break;
+        }
         case Cmd::newTrack:
         case Cmd::toolMenu:
         case Cmd::about:
         case Cmd::searchPlugins:
+        case Cmd::searchTracks:
+        case Cmd::configureTrackHeader:
+        case Cmd::togglePluginWindows:
+        case Cmd::scrollToSelection:
+        case Cmd::goToMarkerNumber:
+        case Cmd::goToPosition:
         case Cmd::pluginManager:
         case Cmd::deleteTrack:
         case Cmd::bounce:
@@ -1361,6 +2835,14 @@ bool Studio::perform (Cmd command)
         case Cmd::saveAs:
         case Cmd::projectSettings:
         case Cmd::audioSettings:
+        case Cmd::settings:
+        case Cmd::customizeControlBar:
+        case Cmd::configureGlobalTracks:
+        case Cmd::createSignatureChange:
+        case Cmd::createKeyChange:
+        case Cmd::bigBeatsDisplay:
+        case Cmd::bigTimeDisplay:
+        case Cmd::performanceMeter:
         case Cmd::shareProject:
         case Cmd::shareFolder:
         case Cmd::joinProject:
@@ -1369,6 +2851,31 @@ bool Studio::perform (Cmd command)
         case Cmd::saveVersion:
         case Cmd::importAudio:
         case Cmd::quit:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::exportSelectionMidi:
+        {
+            bool any = false;
+            for (const auto& id : selection.ids())
+                if (const auto* r = model().region (id); r != nullptr && r->isMidi)
+                    any = true;
+            if (! any)
+            {
+                setStatus ("Select MIDI regions to export.");
+                return false;
+            }
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        }
+        case Cmd::exportTrackAudio:
+        case Cmd::exportAllTracksAudio:
+            if (exportableTracks (command == Cmd::exportAllTracksAudio).empty())
+            {
+                setStatus (command == Cmd::exportTrackAudio ? "Select an audio or instrument track to export." : "There are no tracks to export.");
+                return false;
+            }
             if (uiCommand)
                 uiCommand (command);
             break;
@@ -1444,17 +2951,550 @@ bool Studio::perform (Cmd command)
             edited();
             return bus.has_value();
         }
+        case Cmd::selectAllFollowing:
+        {
+            // D-W3-12: in the arrange view, every region starting at or after the earliest selected one, or the playhead.
+            Ticks from = playhead();
+            bool any = false;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && (! any || r->start < from))
+                    from = r->start, any = true;
+            std::vector<Id> picked;
+            for (const auto& [rid, r] : m.regions)
+                if (r->start >= from)
+                    picked.push_back (rid);
+            selection.set (picked);
+            sendChangeMessage();
+            return ! picked.empty();
+        }
+        case Cmd::selectInsideCycle:
+        case Cmd::selectMutedRegions:
+        case Cmd::selectSameColor:
+        {
+            std::set<std::pair<int, std::string>> colours;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id))
+                {
+                    const auto* t = m.track (m.effectiveTrackId (*r));
+                    const auto c = r->color ? *r->color : t != nullptr ? t->color : model::Color {};
+                    colours.insert ({ c.palette, c.rgb });
+                }
+            if (command == Cmd::selectSameColor && colours.empty())
+            {
+                setStatus ("Select a region first.");
+                return false;
+            }
+            const auto& cyc = m.info.cycle;
+            std::vector<Id> picked;
+            for (const auto& [rid, r] : m.regions)
+            {
+                bool take = false;
+                if (command == Cmd::selectInsideCycle)
+                    take = cyc.end > cyc.start && r->start >= cyc.start && m.regionEndTick (*r) <= static_cast<double> (cyc.end);
+                else if (command == Cmd::selectMutedRegions)
+                    take = r->muted;
+                else
+                {
+                    const auto* t = m.track (m.effectiveTrackId (*r));
+                    const auto c = r->color ? *r->color : t != nullptr ? t->color : model::Color {};
+                    take = colours.contains ({ c.palette, c.rgb });
+                }
+                if (take)
+                    picked.push_back (rid);
+            }
+            selection.set (picked);
+            sendChangeMessage();
+            return ! picked.empty();
+        }
+        case Cmd::selectFirst:
+        case Cmd::selectLast:
+        {
+            // On the selected track, or across every track when none is selected.
+            const model::Region* pick = nullptr;
+            for (const auto& [rid, r] : m.regions)
+                if (local.selectedTrack.empty() || m.effectiveTrackId (*r) == local.selectedTrack)
+                    if (pick == nullptr || (command == Cmd::selectFirst ? r->start < pick->start : r->start > pick->start))
+                        pick = &*r;
+            if (pick == nullptr)
+                return false;
+            selection.set ({ pick->id });
+            sendChangeMessage();
+            return true;
+        }
+        case Cmd::togglePreviousRegion:
+        case Cmd::toggleNextRegion: return stepRegion (command == Cmd::toggleNextRegion ? 1 : -1, true);
+        case Cmd::moveToPlayhead:
+        case Cmd::moveToPlayheadSelectNext:
+        {
+            Ticks earliest = 0;
+            bool any = false;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && (! any || r->start < earliest))
+                    earliest = r->start, any = true;
+            if (! any)
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            if (playhead() != earliest && ! check (s.moveRegions (ids, playhead() - earliest, 0)))
+                return false;
+            if (command == Cmd::moveToPlayheadSelectNext)
+                stepRegion (1);
+            return true;
+        }
+        case Cmd::regionStartToPlayhead:
+        case Cmd::regionEndToPlayhead:
+        {
+            // D-W3-12: each selected region the playhead is inside is trimmed to it, as one undo step.
+            const auto now = playhead();
+            std::vector<Id> inside;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && r->start < now && static_cast<double> (now) < m.regionEndTick (*r))
+                    inside.push_back (id);
+            if (inside.empty())
+            {
+                setStatus ("The playhead isn't inside a selected region.");
+                return false;
+            }
+            s.beginGesture (command == Cmd::regionStartToPlayhead ? "Set Region Start" : "Set Region End");
+            for (const auto& id : inside)
+            {
+                if (command == Cmd::regionStartToPlayhead)
+                    s.trimRegionStart (id, now);
+                else if (const auto* r = s.model().region (id))
+                    s.trimRegionLength (id, now - r->start);
+            }
+            s.endGesture();
+            edited();
+            return true;
+        }
+        case Cmd::splitAtCycle:
+        {
+            const auto& cyc = m.info.cycle;
+            if (cyc.end <= cyc.start || ids.empty())
+            {
+                setStatus (ids.empty() ? "Select regions first." : "Set a cycle range first.");
+                return false;
+            }
+            const auto start = cyc.start, end = cyc.end;
+            s.beginGesture ("Split at Cycle");
+            auto pieces = s.splitRegionsAt (ids, start);
+            std::vector<Id> all = ids;
+            all.insert (all.end(), pieces.begin(), pieces.end());
+            const auto more = s.splitRegionsAt (all, end);
+            if (pieces.empty() && more.empty())
+            {
+                s.cancelGesture();
+                setStatus ("The cycle doesn't cross a selected region.");
+                return false;
+            }
+            s.endGesture();
+            edited();
+            return true;
+        }
         case Cmd::muteNotes:
         case Cmd::quantize:
+        case Cmd::legato:
+        case Cmd::removeOverlaps:
+        case Cmd::noteStartToPlayhead:
+        case Cmd::noteEndToPlayhead:
+        case Cmd::scaleQuantize:
             setStatus ("Click in the piano roll to edit notes.");
             return false;
-        case Cmd::transposeUp:
-        case Cmd::transposeDown:
+        case Cmd::nudgeByGrid: nudgeValue = NudgeValue::grid; break;
+        case Cmd::nudgeByBar: nudgeValue = NudgeValue::bar; break;
+        case Cmd::nudgeByBeat: nudgeValue = NudgeValue::beat; break;
+        case Cmd::nudgeByDivision: nudgeValue = NudgeValue::division; break;
+        case Cmd::nudgeByTick: nudgeValue = NudgeValue::tick; break;
+        case Cmd::gridLines: gridLines = ! gridLines; break;
+        case Cmd::toggleAllTracksOff: return toggleAllTracksOff();
+        case Cmd::unmuteAll:
+        {
+            std::vector<Id> muted; // by value: each edit rebuilds the model
+            for (const auto& id : m.trackOrder)
+                if (const auto* t = m.track (id); t != nullptr && t->mute)
+                    muted.push_back (id);
+            if (muted.empty())
+            {
+                setStatus ("No track is muted.");
+                return false;
+            }
+            s.beginGesture ("Mute Off for All");
+            for (const auto& id : muted)
+                s.setTrackMute (id, false);
+            s.endGesture();
+            edited();
+            return true;
+        }
+        case Cmd::clearRecallSolo:
+            // D-W6-13: with anything soloed the solos are kept aside and cleared; with none, the kept ones come back.
+            if (! local.soloed.empty())
+            {
+                keptSolo = local.soloed;
+                local.soloed.clear();
+            }
+            else if (! keptSolo.empty())
+            {
+                for (const auto& id : keptSolo)
+                    if (m.track (id) != nullptr)
+                        local.setSolo (id, true);
+                keptSolo.clear();
+            }
+            else
+            {
+                setStatus ("Nothing is soloed.");
+                return false;
+            }
+            edited();
+            return true;
+        case Cmd::soloSelectedRegions:
+        {
+            std::set<Id> tracks;
+            for (const auto& id : selection.ids())
+                if (const auto* r = m.region (id))
+                    tracks.insert (m.effectiveTrackId (*r));
+            if (tracks.empty())
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            local.soloed = tracks;
+            edited();
+            return true;
+        }
+        case Cmd::monitorTrack:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr || t->kind != model::TrackKind::audio)
+            {
+                setStatus ("Select an audio track first.");
+                return false;
+            }
+            setTrackSwitch (TrackSwitch::monitor, t->id, t->monitor != "on");
+            return true;
+        }
+        case Cmd::cycleMixerMode:
+            mixerMode = mixerMode == MixerMode::single ? MixerMode::tracks : mixerMode == MixerMode::tracks ? MixerMode::all : MixerMode::single;
+            break;
+        case Cmd::toggleGroups:
+            if (! check (s.setGroupsActive (! model().info.groupsActive)))
+                return false;
+            setStatus (model().info.groupsActive ? "Groups on." : "Groups off: no group links its tracks.");
+            break;
+        case Cmd::groupsWindow:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::createFolderStack:
+        case Cmd::createSummingStack:
+        {
+            const auto made = s.createStack (selectedTracksAndRegionTracks(), command == Cmd::createSummingStack);
+            if (! made)
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            local.selectedTrack = *made;
+            break;
+        }
+        case Cmd::flattenStack:
+        {
+            const auto* main = model().track (local.selectedTrack);
+            if (main == nullptr || ! main->isStackMain())
+                main = model().stackMain (local.selectedTrack);
+            if (main == nullptr)
+            {
+                setStatus ("Select a track stack first.");
+                return false;
+            }
+            return check (s.flattenStack (Id (main->id)));
+        }
+        case Cmd::toggleStack:
+            if (! toggleStack (local.selectedTrack))
+            {
+                setStatus ("Select a track stack first.");
+                return false;
+            }
+            return true;
+        case Cmd::followStacks:
+            mixerFollowStacks = ! mixerFollowStacks;
+            break;
+        case Cmd::screenset1: case Cmd::screenset2: case Cmd::screenset3: case Cmd::screenset4: case Cmd::screenset5:
+        case Cmd::screenset6: case Cmd::screenset7: case Cmd::screenset8: case Cmd::screenset9:
+            return recallScreenset (static_cast<int> (command) - static_cast<int> (Cmd::screenset1) + 1);
+        case Cmd::screensetTens1: case Cmd::screensetTens2: case Cmd::screensetTens3: case Cmd::screensetTens4: case Cmd::screensetTens5:
+        case Cmd::screensetTens6: case Cmd::screensetTens7: case Cmd::screensetTens8: case Cmd::screensetTens9:
+            // The next number key gives the second digit (D-UI-46).
+            screensetTens = static_cast<int> (command) - static_cast<int> (Cmd::screensetTens1) + 1;
+            setStatus ("Screenset " + juce::String (screensetTens) + "x: press 1 to 9.");
+            return true;
+        case Cmd::cycleWindowViews:
+        case Cmd::cycleWindowViewsBack:
+        {
+            // The bottom area's views in turn: none, Mixer, Piano Roll, Audio Editor, Smart Controls (D-UI-46).
+            const int step = command == Cmd::cycleWindowViews ? 1 : 4;
+            layout.bottom = static_cast<BottomTab> ((static_cast<int> (layout.bottom) + step) % 5);
+            break;
+        }
+        case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow:
+        case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow: case Cmd::cycleWindows: case Cmd::cycleWindowsBack:
+        case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject:
+        case Cmd::toggleNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList: case Cmd::openTempoList:
+        case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::keyCommands: case Cmd::smartControlsWindow:
+        case Cmd::toggleLibrary: case Cmd::loopBrowser: case Cmd::searchLibrary:
+            if (uiCommand)
+                uiCommand (command);
+            break;
+        case Cmd::mixerNotes:
+            mixerNotes = ! mixerNotes;
+            break;
+        case Cmd::createGroup:
+        {
+            // D-W6-15: the selected track and the tracks of the selected regions.
+            std::vector<Id> members;
+            const auto add = [&] (const Id& id) {
+                if (const auto* t = model().track (id); t != nullptr && t->kind != model::TrackKind::master
+                                                       && std::find (members.begin(), members.end(), id) == members.end())
+                    members.push_back (id);
+            };
+            add (local.selectedTrack);
+            for (const auto& id : selection.ids())
+                if (const auto* r = model().region (id))
+                    add (model().effectiveTrackId (*r));
+            if (members.empty())
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            const auto made = s.createGroup (members);
+            if (! made)
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            lastGroup = *made;
+            setStatus ("Made " + juce::String (model().groups.at (*made)->name) + ".");
+            break;
+        }
+        case Cmd::hideGroup1: case Cmd::hideGroup2: case Cmd::hideGroup3: case Cmd::hideGroup4: case Cmd::hideGroup5: case Cmd::hideGroup6:
+        case Cmd::hideGroup7: case Cmd::hideGroup8: case Cmd::hideGroup9:
+        {
+            const int number = static_cast<int> (command) - static_cast<int> (Cmd::hideGroup1) + 1;
+            const model::Group* found = nullptr;
+            for (const auto* g : model().groupsInOrder())
+                if (g->number == number)
+                    found = g;
+            if (found == nullptr)
+            {
+                setStatus ("There's no group " + juce::String (number) + ".");
+                return false;
+            }
+            auto g = *found;
+            g.hidden = ! g.hidden;
+            return check (s.setGroup (g));
+        }
+        case Cmd::newVca:
+            if (! s.createVca())
+            {
+                setStatus (juce::String (s.lastError()));
+                return false;
+            }
+            break;
+        case Cmd::copyChannelStrip: return copyChannelStrip (local.selectedTrack);
+        case Cmd::pasteChannelStrip: return pasteChannelStrip (local.selectedTrack);
+        case Cmd::lengthenNotes:
+        case Cmd::shortenNotes:
+        case Cmd::slipLeft:
+        case Cmd::slipRight:
+        {
+            // D-W3-11: the selected regions' length, or what plays inside them, by the nudge value.
+            if (ids.empty())
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            const int dir = command == Cmd::lengthenNotes || command == Cmd::slipRight ? 1 : -1;
+            const bool slip = command == Cmd::slipLeft || command == Cmd::slipRight;
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture (slip ? "Slip Region" : "Region Length");
+            bool ok = true;
+            for (const auto& id : ids)
+            {
+                const auto* r = m.region (id);
+                if (r == nullptr)
+                    continue;
+                const auto end = static_cast<Ticks> (std::llround (m.regionEndTick (*r)));
+                const auto stepFrom = slip ? r->start : end;
+                const auto delta = nudgeDelta (stepFrom, dir);
+                // Ticks to samples at the region (audio lengths and offsets are samples).
+                const auto samples = [&] (Ticks from, Ticks by) {
+                    return static_cast<std::int64_t> (std::llround (m.tempo.tickToSample (static_cast<double> (from + by)) - m.tempo.tickToSample (static_cast<double> (from))));
+                };
+                commands::EditResult result;
+                if (slip)
+                    // Slip right: the content moves later, so it starts earlier in the source.
+                    result = r->isMidi ? s.slipRegion (id, r->midi.sequenceOffset - delta)
+                                       : s.slipRegion (id, r->audio.sourceOffset - r->audio.sourceLength (samples (r->start, delta)));
+                else if (r->isMidi)
+                    result = s.trimRegionLength (id, std::max<Ticks> (1, r->length + delta));
+                else
+                    result = s.trimRegionLength (id, std::max<std::int64_t> (model::minAudioRegionLength, r->length + samples (end, delta)));
+                if (! result)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (own)
+            {
+                if (ok)
+                    s.endGesture();
+                else
+                    s.cancelGesture();
+            }
+            if (! ok)
+                setStatus (juce::String (s.lastError()));
+            edited();
+            return ok;
+        }
+        case Cmd::shuffleLeft:
+        case Cmd::shuffleRight:
+        {
+            // D-W3-11: each selected region moves until it meets the region before it on its track (left; the project
+            // start with none) or after it (right; with none it stays). One undo step "Shuffle".
+            if (ids.empty())
+            {
+                setStatus ("Select regions first.");
+                return false;
+            }
+            std::vector<const model::Region*> chosen;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id))
+                    chosen.push_back (r);
+            const bool left = command == Cmd::shuffleLeft;
+            std::sort (chosen.begin(), chosen.end(), [left] (const auto* a, const auto* b) { return left ? a->start < b->start : a->start > b->start; });
+            std::vector<std::pair<Id, Ticks>> moves;
+            for (const auto* r : chosen)
+                moves.emplace_back (r->id, 0);
+            const bool own = ! s.inGesture();
+            if (own)
+                s.beginGesture ("Shuffle");
+            bool any = false, ok = true;
+            for (auto& [id, unused] : moves)
+            {
+                const auto& now = model();
+                const auto* r = now.region (id);
+                if (r == nullptr)
+                    continue;
+                const auto trackId = now.effectiveTrackId (*r);
+                const auto lengthOf = [&] (const model::Region& x) { return static_cast<Ticks> (std::llround (now.regionEndTick (x))) - x.start; };
+                const auto end = r->start + lengthOf (*r);
+                std::optional<Ticks> to;
+                for (const auto& other : now.regionsOnTrack (trackId))
+                {
+                    if (other->id == id)
+                        continue;
+                    const auto oEnd = other->start + lengthOf (*other);
+                    if (left && oEnd <= r->start && (! to || oEnd > *to))
+                        to = oEnd;
+                    if (! left && other->start >= end && (! to || other->start - lengthOf (*r) < *to))
+                        to = other->start - lengthOf (*r);
+                }
+                if (left && ! to)
+                    to = 0;
+                if (! to || *to == r->start)
+                    continue;
+                if (! s.moveRegion (id, *to))
+                {
+                    ok = false;
+                    break;
+                }
+                any = true;
+            }
+            if (own)
+            {
+                if (ok && any)
+                    s.endGesture();
+                else
+                    s.cancelGesture();
+            }
+            if (! ok)
+                setStatus (juce::String (s.lastError()));
+            else if (! any)
+                setStatus ("Nothing to shuffle.");
+            edited();
+            return ok && any;
+        }
+        case Cmd::automationAllOff:
+        case Cmd::automationAllRead:
+        case Cmd::automationAllTouch:
+        case Cmd::automationAllLatch:
+        {
+            const auto mode = command == Cmd::automationAllOff ? "off" : command == Cmd::automationAllRead ? "read" : command == Cmd::automationAllTouch ? "touch" : "latch";
+            return setAllAutomationModes (mode);
+        }
+        case Cmd::automationOffRead:
+        case Cmd::automationLatchRead:
+        {
+            const auto* t = m.track (local.selectedTrack);
+            if (t == nullptr)
+            {
+                setStatus ("Select a track first.");
+                return false;
+            }
+            const std::string other = command == Cmd::automationOffRead ? "off" : "latch";
+            return check (s.setTrackAutomationMode (t->id, t->automationMode == "read" ? other : "read"));
+        }
+        case Cmd::cycleAutomationParameter: return cycleAutomationParameter (local.selectedTrack);
         case Cmd::octaveUp:
         case Cmd::octaveDown:
+            if (! pointSelection.points.empty())
+                return nudgeAutomationPoints (command == Cmd::octaveUp ? 0.1 : -0.1);
+            return false;
+        case Cmd::transposeUp: // Up and Down step through the tracks in the arrange view (D-W3-12)
+        case Cmd::selectPreviousTrack:
+        case Cmd::transposeDown:
+        case Cmd::selectNextTrack:
+        {
+            // With automation points selected, Up/Down nudge their value by 1% instead (Shift: 10%, D-W8-7).
+            if ((command == Cmd::transposeUp || command == Cmd::transposeDown) && ! pointSelection.points.empty())
+                return nudgeAutomationPoints (command == Cmd::transposeUp ? 0.01 : -0.01);
+            const auto& rows = m.rows;
+            if (rows.empty())
+                return false;
+            const bool up = command == Cmd::transposeUp || command == Cmd::selectPreviousTrack;
+            const auto at = std::find (rows.begin(), rows.end(), local.selectedTrack);
+            std::size_t next = 0;
+            if (at == rows.end())
+                next = up ? rows.size() - 1 : 0;
+            else
+            {
+                const auto i = static_cast<std::size_t> (at - rows.begin());
+                if (up ? i == 0 : i + 1 >= rows.size())
+                    return false;
+                next = up ? i - 1 : i + 1;
+            }
+            selectTrack (rows[next]);
+            return true;
+        }
         case Cmd::notesLeft:
         case Cmd::notesRight:
-            return false; // arrows do nothing in the arrange view
+            return false; // these arrows do nothing in the arrange view
+        case Cmd::applyRegionParameters:
+        case Cmd::applyRegionParametersExceptDelay:
+        {
+            std::vector<Id> midi;
+            for (const auto& id : ids)
+                if (const auto* r = m.region (id); r != nullptr && r->isMidi)
+                    midi.push_back (id);
+            if (midi.empty())
+            {
+                setStatus ("Select MIDI regions.");
+                return false;
+            }
+            return check (s.applyRegionParameters (midi, command == Cmd::applyRegionParameters));
+        }
         case Cmd::applyQuantize:
         {
             bool any = false;
@@ -1502,6 +3542,19 @@ bool Studio::perform (Cmd command)
     return true;
 }
 
+bool Studio::goToMarkerNumber (int number)
+{
+    const auto to = number > 0 ? arrange::markerNumber (model(), number) : std::nullopt;
+    if (! to)
+    {
+        setStatus ("There's no marker " + juce::String (number) + ".");
+        return false;
+    }
+    locate (*to);
+    sendChangeMessage();
+    return true;
+}
+
 bool Studio::keyboardMidiKey (const juce::KeyPress& key, bool down)
 {
     if (! keys.enabled() || key.getModifiers().isCommandDown() || key.getModifiers().isAltDown())
@@ -1535,6 +3588,16 @@ engine::ImportOutcome Studio::importAtPlayhead (const std::vector<fs::path>& fil
     return importFiles (files, target);
 }
 
+bool Studio::editAudioFile (const std::string& hash, engine::FileEdit edit, std::int64_t from, std::int64_t to, double gainDb)
+{
+    if (previewing())
+    {
+        setStatus (readOnlyReason());
+        return false;
+    }
+    return check (engine::editAudioFile (*sess, hash, edit, from, to, pool, mediaDir(), gainDb, audioClipboard.get()));
+}
+
 bool Studio::previewFile (const fs::path& file)
 {
     std::string error;
@@ -1546,6 +3609,140 @@ bool Studio::previewFile (const fs::path& file)
     }
     eng->preview (std::make_shared<const media::AudioData> (std::move (*audio)));
     return true;
+}
+
+bool Studio::laneShown (GlobalLane lane) const noexcept
+{
+    if (! layout.globalTracks || (layout.globalLanes & lane) == 0)
+        return false;
+    return ! layout.singleGlobalLane || layout.singleLane == lane;
+}
+
+bool Studio::laneProtected (GlobalLane lane)
+{
+    if ((protectedLanes & lane) == 0)
+        return false;
+    setStatus ("The " + globalLaneName (lane) + " track is protected. Click its lock to edit it.");
+    return true;
+}
+
+void Studio::toggleLaneProtect (GlobalLane lane)
+{
+    protectedLanes ^= lane;
+    setStatus (globalLaneName (lane) + " track " + ((protectedLanes & lane) != 0 ? "protected." : "unprotected."));
+    sendChangeMessage();
+}
+
+void Studio::setLaneShown (GlobalLane lane, bool shown)
+{
+    if (shown)
+    {
+        layout.globalTracks = true;
+        layout.globalLanes |= lane;
+        layout.singleLane = lane;
+    }
+    else
+        layout.globalLanes &= ~lane;
+    sendChangeMessage();
+}
+
+Ticks Studio::nudgeDelta (Ticks from, int direction) const
+{
+    // D-W3-11: the nudge value at `from`; Grid is the arrange grid as before (a sixteenth with snap off).
+    const auto& m = model();
+    const auto& sig = m.signatures.signatureAtBar (m.signatures.barAt (from).bar);
+    const Ticks beat = 4 * ticksPerQuarter / sig.denominator;
+    switch (nudgeValue)
+    {
+        case NudgeValue::bar: return direction * sig.barLength();
+        case NudgeValue::beat: return direction * beat;
+        case NudgeValue::division: return direction * std::max<Ticks> (1, beat / 4);
+        case NudgeValue::tick: return direction;
+        case NudgeValue::grid: break;
+    }
+    const auto grid = activeSnap().kind == arrange::Snap::Kind::off ? arrange::Snap::ticks (240) : activeSnap();
+    return arrange::gridStep (from, direction, grid, m.signatures, view.pixelsPerTick) - from;
+}
+
+std::optional<Ticks> Studio::selectionEdge (bool end) const
+{
+    const auto& m = model();
+    std::optional<Ticks> edge;
+    const auto take = [&] (Ticks from, Ticks to) {
+        const auto t = end ? to : from;
+        if (! edge || (end ? t > *edge : t < *edge))
+            edge = t;
+    };
+    if (notesFocused())
+        for (const auto& ref : piano.selection)
+            if (const auto* n = commands::findNote (m, ref))
+                if (const auto* r = m.region (ref.regionId))
+                {
+                    const auto at = commands::noteTimelineTick (*r, n->pos);
+                    take (at, at + n->length);
+                }
+    if (! edge)
+        for (const auto& id : selection.ids())
+            if (const auto* r = m.region (id))
+                take (r->start, r->start + r->length);
+    return edge;
+}
+
+std::optional<Id> Studio::newTrackNextInput()
+{
+    // D-UI-34: the selected track's kind, channels and output, one track below it, on the input after its own.
+    const auto* t = model().track (local.selectedTrack);
+    if (t == nullptr || (t->kind != model::TrackKind::audio && t->kind != model::TrackKind::instrument))
+    {
+        setStatus ("Select an audio or instrument track first.");
+        return std::nullopt;
+    }
+    const auto kind = t->kind;
+    const auto channels = t->channels;
+    const auto input = t->input;
+    const auto output = t->output.busId;
+    const auto monitor = t->monitor;
+    // The same instrument, fresh: its kind, not its settings.
+    std::optional<model::PluginInstance> instrument;
+    if (t->strip.instrument)
+    {
+        instrument.emplace();
+        instrument->format = t->strip.instrument->format;
+        instrument->pluginUid = t->strip.instrument->pluginUid;
+        instrument->name = t->strip.instrument->name;
+        instrument->vendor = t->strip.instrument->vendor;
+        instrument->version = t->strip.instrument->version;
+    }
+    auto& s = *sess;
+    s.beginGesture ("New Track");
+    const auto made = s.createTracks (kind, 1, channels, local.selectedTrack);
+    if (made.empty())
+    {
+        s.cancelGesture();
+        setStatus (juce::String (s.lastError()));
+        edited();
+        return std::nullopt;
+    }
+    const auto id = made.front();
+    if (kind == model::TrackKind::audio)
+    {
+        model::InputAssignment next;
+        if (input.kind == model::InputAssignment::Kind::audio && input.firstChannel + 2 * channels <= device().config().numInputChannels)
+        {
+            next.kind = model::InputAssignment::Kind::audio;
+            next.firstChannel = input.firstChannel + channels;
+        }
+        s.setTrackInput (id, next);
+        s.setTrackMonitor (id, monitor);
+    }
+    if (kind == model::TrackKind::instrument && instrument)
+        s.setInstrument (id, *instrument);
+    if (! output.empty())
+        s.setTrackOutput (id, output);
+    s.endGesture();
+    selectTrack (id);
+    edited();
+    return id;
 }
 
 // Projects ------------------------------------------------------------------------------
@@ -1828,6 +4025,8 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     releaseProject();
     folder = std::move (projectFolder);
     sess = std::move (session);
+    // P-GRP-20: Shift held while changing a control changes that track only (not from key commands).
+    sess->setGroupOverrideCheck ([this] { return ! inCommand && juce::ModifierKeys::currentModifiers.isShiftDown(); });
     scratch = isScratch;
     everEdited = false;
     unsaved = false;
@@ -1848,8 +4047,14 @@ void Studio::adopt (std::unique_ptr<project::ProjectFolder> projectFolder, std::
     settings.returnToStartOnStop = before.returnToStartOnStop;
     settings.midiMergeLinear = before.midiMergeLinear;
     settings.midiMergeCycle = before.midiMergeCycle;
-    settings.midiReplace = before.midiReplace;
+    settings.replace = before.replace;
+    settings.clickBars = before.clickBars;
+    settings.clickBeats = before.clickBeats;
+    settings.clickDivisions = before.clickDivisions;
+    settings.clickOnlyCountIn = before.clickOnlyCountIn;
+    settings.clickTone = before.clickTone;
     eng->setSettings (settings);
+    varispeedEnabled = false; // Varispeed is off in a project just opened (D-ARCH-55)
     loadProjectMedia();
     syncEngine();
     loadViewState();
@@ -2158,7 +4363,7 @@ std::vector<Studio::PluginChoice> Studio::pluginChoices (bool instruments) const
 std::optional<Id> Studio::addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index)
 {
     endPluginGesture();
-    const auto id = sess->addInsert (trackId, choice.plugin, index);
+    const auto id = sess->addInsert (trackId, withDefaultSetting (choice.plugin), index);
     if (! id)
         setStatus (juce::String (sess->lastError()));
     edited();
@@ -2170,7 +4375,7 @@ std::optional<Id> Studio::addPlugin (const Id& trackId, const PluginChoice& choi
 bool Studio::replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice)
 {
     endPluginGesture();
-    const auto id = sess->replaceInsert (trackId, pluginId, choice.plugin);
+    const auto id = sess->replaceInsert (trackId, pluginId, withDefaultSetting (choice.plugin));
     if (! id)
         setStatus (juce::String (sess->lastError()));
     edited();
@@ -2271,6 +4476,104 @@ void Studio::writePluginState (const Id& pluginId)
     endPluginGesture();
     eng->adoptPluginState (pluginId, bytes); // no need to load the state back into the plug-in
     check (sess->setPluginState (trackId, pluginId, *value));
+}
+
+model::PluginInstance Studio::withDefaultSetting (model::PluginInstance plugin) const
+{
+    const auto setting = plugin_settings::loadDefault (pluginSettingsRoot(), plugin);
+    if (! setting)
+        return plugin;
+    for (const auto& [id, v] : setting->params)
+        plugin.params[id] = v;
+    if (! setting->state.empty())
+        if (const auto value = media::pluginStateValue (setting->state, projectRoot() / "Blobs"))
+            plugin.state = *value;
+    return plugin;
+}
+
+std::optional<PluginSetting> Studio::currentSetting (const Id& pluginId)
+{
+    writePluginState (pluginId); // the editor's last changes first
+    const auto* plugin = pluginInstance (pluginId);
+    if (plugin == nullptr)
+        return std::nullopt;
+    PluginSetting s;
+    s.params = plugin->params;
+    const auto p = eng->processor (pluginId);
+    if (p != nullptr && ! p->isPlaceholder())
+    {
+        const auto infos = p->parameters();
+        for (std::size_t i = 0; i < infos.size(); ++i)
+            s.params[infos[i].id] = p->parameter (static_cast<int> (i));
+        s.state = p->state();
+    }
+    else if (const auto bytes = media::pluginStateBytes (plugin->state, projectRoot() / "Blobs"))
+        s.state = *bytes;
+    return s;
+}
+
+bool Studio::applySetting (const Id& pluginId, const PluginSetting& setting, const juce::String& undoName)
+{
+    Id trackId;
+    if (pluginInstance (pluginId, &trackId) == nullptr || previewing())
+        return false;
+    endPluginGesture();
+    pendingState.erase (pluginId);
+    std::optional<doc::Value> state;
+    if (! setting.state.empty())
+    {
+        std::string error;
+        state = media::pluginStateValue (setting.state, projectRoot() / "Blobs", &error);
+        if (! state)
+        {
+            setStatus ("Couldn't load the setting: " + juce::String (error));
+            return false;
+        }
+    }
+    sess->beginGesture (undoName.toStdString());
+    if (state)
+        sess->setPluginState (trackId, pluginId, *state); // the chunk first: parameters then land on top of it
+    for (const auto& [id, v] : setting.params)
+        sess->setPluginParam (trackId, pluginId, id, v);
+    sess->endGesture();
+    edited();
+    return true;
+}
+
+bool Studio::resetPluginSetting (const Id& pluginId)
+{
+    const auto p = eng->processor (pluginId);
+    if (p == nullptr || p->isPlaceholder())
+        return false;
+    PluginSetting s;
+    for (const auto& info : p->parameters())
+        s.params[info.id] = info.defaultValue;
+    return applySetting (pluginId, s, "Reset Setting");
+}
+
+bool Studio::copyPluginSetting (const Id& pluginId)
+{
+    auto s = currentSetting (pluginId);
+    const auto* plugin = pluginInstance (pluginId);
+    if (! s || plugin == nullptr)
+        return false;
+    settingClipboard = std::move (s);
+    settingClipboardPlugin = plugin->format + ":" + plugin->pluginUid;
+    return true;
+}
+
+bool Studio::canPastePluginSetting (const Id& pluginId) const
+{
+    const auto* plugin = pluginInstance (pluginId);
+    return settingClipboard.has_value() && plugin != nullptr && settingClipboardPlugin == plugin->format + ":" + plugin->pluginUid;
+}
+
+bool Studio::pastePluginSetting (const Id& pluginId)
+{
+    if (! canPastePluginSetting (pluginId))
+        return false;
+    const auto s = *settingClipboard; // a copy: applying rebuilds the model
+    return applySetting (pluginId, s, "Paste Setting");
 }
 
 void Studio::flushPluginStates (bool all)
@@ -2511,6 +4814,7 @@ void Studio::updatePresence()
         case BottomTab::pianoRoll: p.view = collab::Presence::View::pianoRoll; break;
         case BottomTab::audioEditor: p.view = collab::Presence::View::audioEditor; break;
         case BottomTab::mixer: p.view = collab::Presence::View::mixer; break;
+        case BottomTab::smartControls: p.view = collab::Presence::View::mixer; break;
         case BottomTab::none: p.view = collab::Presence::View::arrange; break;
     }
     p.focusTrack = local.selectedTrack;
@@ -2754,6 +5058,23 @@ void Studio::setOnline (bool online)
     sendChangeMessage();
 }
 
+void Studio::setVarispeed (bool on, double rate)
+{
+    // D-ARCH-55: this user's only; the project and other collaborators' playback don't change.
+    varispeedEnabled = on;
+    varispeedValue = engine::varispeed::clampRate (rate);
+    auto settings = eng->settings();
+    settings.varispeed = on ? varispeedValue : 1.0;
+    eng->setSettings (settings);
+    setStatus (on ? "Varispeed " + varispeedText() + "." : juce::String ("Varispeed off."));
+    sendChangeMessage();
+}
+
+juce::String Studio::varispeedText() const
+{
+    return juce::String (engine::varispeed::text (varispeedValue, layout.bar.varispeedUnit, model().tempo.bpmAt (playhead())));
+}
+
 bool Studio::tapTempo (double nowMs)
 {
     // L-TMP-9, D-W11-4: taps more than 2 s apart start again; the tempo in effect at the playhead
@@ -2799,7 +5120,14 @@ bool Studio::changesDocument (Cmd command)
         Cmd::addComment, Cmd::saveVersion, Cmd::lockTrack, Cmd::importAudio, Cmd::duplicateTrack,
         Cmd::duplicateTrackWithRegions, Cmd::moveTrackUp, Cmd::moveTrackDown, Cmd::discardRecording,
         Cmd::reverseRegions, Cmd::tapTempo, Cmd::showHiddenTracks, Cmd::muteTrack, Cmd::newAudioTrack, Cmd::newInstrumentTrack,
-        Cmd::renameMarker, Cmd::deleteMarker, Cmd::searchPlugins, Cmd::deleteUnusedTracks,
+        Cmd::renameMarker, Cmd::deleteMarker, Cmd::addSection, Cmd::createSignatureChange, Cmd::createKeyChange, Cmd::searchPlugins, Cmd::deleteUnusedTracks, Cmd::newTrackNextInput,
+        Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead, Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::scaleQuantize,
+        Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight,
+        Cmd::toggleAllTracksOff, Cmd::unmuteAll, Cmd::monitorTrack, Cmd::pasteChannelStrip, Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext,
+        Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle, Cmd::automationAllOff, Cmd::automationAllRead,
+        Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead, Cmd::automationLatchRead, Cmd::markerForSelection,
+        Cmd::cycleToMarker, Cmd::cycleToPreviousMarker, Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators,
+        Cmd::applyRegionParameters, Cmd::applyRegionParametersExceptDelay,
     };
     return std::find (std::begin (editing), std::end (editing), command) != std::end (editing);
 }

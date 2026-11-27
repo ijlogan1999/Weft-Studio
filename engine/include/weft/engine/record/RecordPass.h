@@ -56,6 +56,7 @@ struct RecordPass
         Id trackId;
         std::string trackName;
         int midiChannel = 0; // filter, 0 = all
+        std::uint32_t midiSource = 0; // device filter, 0 = all
         std::vector<CapturedMidi> events; // reserved up front; the audio thread never grows it
         std::atomic<std::size_t> count { 0 };
         std::atomic<std::int64_t> dropped { 0 };

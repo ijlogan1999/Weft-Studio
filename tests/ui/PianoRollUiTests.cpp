@@ -615,3 +615,109 @@ TEST_CASE ("AT-PRL-19 Left/Right select the previous or next note; Alt+Left/Righ
     ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::altModifier);
     CHECK (ui.tickOf (low) == 480);
 }
+
+TEST_CASE ("AT-PRL-20 note functions: legato, overlaps, playhead edges, length, select all following", "[UI][AT-PRL-20]")
+{
+    RollUi ui;
+    const auto a = ui.note (0, 60), b = ui.note (480, 60), c = ui.note (1200, 60), other = ui.note (480, 64);
+    ui.open (ui.midi);
+    ui.press (ui.at (100, 60));
+    auto& s = ui.studio.session();
+
+    // Select All Following from the note at 480: every note starting there or later.
+    ui.studio.piano.selection = { b };
+    REQUIRE (ui.key ('F', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.piano.selection == std::set<NoteRef> { b, c, other });
+
+    ui.studio.piano.selection = { a, b, c };
+    REQUIRE (ui.key ('L', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.get (a).length == 480);
+    CHECK (ui.get (b).length == 720);
+    CHECK (ui.get (c).length == 240);
+    CHECK (ui.get (other).length == 240);
+    CHECK (s.undoName() == "Legato");
+
+    // Remove Overlaps: a stays clear of b (same pitch), b of c.
+    ui.studio.piano.selection = { a, b };
+    REQUIRE (s.setNoteSpan (a, 0, 960));
+    ui.studio.edited();
+    REQUIRE (ui.studio.perform (Cmd::removeOverlaps));
+    CHECK (ui.get (a).length == 480);
+    CHECK (ui.get (b).length == 720);
+    CHECK (s.undoName() == "Remove Overlaps");
+
+    // Playhead edges.
+    ui.studio.locate (120);
+    ui.studio.piano.selection = { a, b };
+    REQUIRE (ui.studio.perform (Cmd::noteEndToPlayhead));
+    CHECK (ui.get (a).length == 120);
+    CHECK (ui.get (b).length == 720);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    REQUIRE (ui.studio.perform (Cmd::noteStartToPlayhead));
+    CHECK (ui.tickOf (a) == 120);
+    CHECK (ui.get (a).length == 360);
+    CHECK (ui.tickOf (b) == 480);
+    CHECK (s.undoName() == "Note Start to Playhead");
+
+    // Lengthen and shorten by the snap value; never below one tick.
+    ui.studio.piano.grid = 240;
+    ui.studio.piano.selection = { c };
+    REQUIRE (ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::altModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.get (c).length == 480);
+    for (int i = 0; i < 3; ++i)
+        ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::altModifier | juce::ModifierKeys::shiftModifier);
+    CHECK (ui.get (c).length == 1);
+
+    // In the Edit menu's Note Functions.
+    const auto menu = ui.main->getMenuForIndex (1, "Edit");
+    juce::StringArray names;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().text == "Note Functions")
+            for (juce::PopupMenu::MenuItemIterator sub (*it.getItem().subMenu); sub.next();)
+                names.add (sub.getItem().text);
+    for (auto name : { "Select All Following", "Legato", "Remove Overlaps", "Note Start to Playhead", "Note End to Playhead", "Scale Quantize" })
+        CHECK (names.contains (name));
+}
+
+TEST_CASE ("AT-PRL-21 scale quantize, the velocity slider, title and info line", "[UI][AT-PRL-21]")
+{
+    RollUi ui;
+    REQUIRE (ui.studio.session().setRegionName (ui.midi, "Chorus keys"));
+    const auto sharp = ui.note (0, 61, 90), e = ui.note (480, 64, 50);
+    ui.open (ui.midi);
+    auto& roll = ui.roll();
+    ui.press (ui.at (100, 61));
+    CHECK (roll.title.getText() == "Chorus keys");
+    CHECK (roll.velocitySlider.isEnabled());
+    CHECK (roll.velocitySlider.getValue() == 90);
+
+    // C Major: C#3 goes to C3, E3 stays.
+    ui.studio.piano.selection = { sharp, e };
+    roll.scaleRootBox.setSelectedId (1, juce::sendNotificationSync);
+    roll.scaleBox.setSelectedId (1, juce::sendNotificationSync);
+    REQUIRE (ui.studio.piano.scale == 0);
+    roll.scaleButton.onClick();
+    ui.settle();
+    CHECK (ui.get (sharp).pitch == 60);
+    CHECK (ui.get (e).pitch == 64);
+    CHECK (ui.studio.session().undoName() == "Scale Quantize");
+    CHECK_FALSE (ui.studio.perform (Cmd::scaleQuantize)); // already in the scale
+
+    // The velocity slider sets every selected note, as one undo step.
+    roll.velocitySlider.onDragStart();
+    roll.velocitySlider.setValue (110, juce::sendNotificationSync);
+    roll.velocitySlider.setValue (120, juce::sendNotificationSync);
+    roll.velocitySlider.onDragEnd();
+    ui.settle();
+    CHECK (ui.get (sharp).velocity == 120);
+    CHECK (ui.get (e).velocity == 120);
+    CHECK (ui.studio.session().undoName() == "Note Velocity");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.get (e).velocity == 50);
+
+    // The info line names the pitch and position under the pointer.
+    const auto info = roll.infoAt (ui.at (bar + 10, 67));
+    CHECK (info.startsWith ("G3"));
+    CHECK (info.contains ("2.1"));
+    CHECK (roll.infoAt ({ 1.0f, 1.0f }).isEmpty());
+}

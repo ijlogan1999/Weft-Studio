@@ -157,7 +157,13 @@ EditResult Session::setTrackColor (const Id& trackId, const model::Color& color)
         return reject ("That track no longer exists.");
     if (color.rgb.empty() && (color.palette < 0 || color.palette > 23))
         return reject ("Pick one of the palette colors.");
-    return run ("Track Color", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "color", color.toValue())); });
+    const auto others = linkedTracks (trackId, &model::Group::linkColor);
+    return run ("Track Color", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "color", color.toValue());
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "color", color.toValue());
+        return wrote (good);
+    });
 }
 
 EditResult Session::setRegionColor (const Id& regionId, std::optional<model::Color> color)

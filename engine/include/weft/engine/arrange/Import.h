@@ -18,6 +18,8 @@ struct DropTarget
 {
     Ticks at = 0;
     Id trackId; // the track under the pointer; empty = below the last track
+    /** Project Audio › Add Audio File (D-UI-40): audio files join the project without regions; MIDI files are refused. */
+    bool mediaOnly = false;
 };
 
 struct ImportOutcome

@@ -6,6 +6,7 @@ add_library(weft_engine STATIC
     src/dsp/WeftKeys.cpp
     src/dsp/BuiltinEffects.cpp
     src/dsp/BuiltinProcessor.cpp
+    src/dsp/Stretch.cpp
     src/graph/Instrument.cpp
     src/graph/Mixer.cpp
     src/graph/SnapshotCompiler.cpp
@@ -24,7 +25,11 @@ add_library(weft_engine STATIC
 )
 add_library(weft::engine ALIAS weft_engine)
 target_include_directories(weft_engine PUBLIC include)
-target_link_libraries(weft_engine PUBLIC weft::core PRIVATE weft::codec)
+target_link_libraries(weft_engine PUBLIC weft::core PRIVATE weft::codec signalsmith-stretch)
+if(MSVC)
+    # The stretch library's templates need more sections than MSVC allows by default.
+    set_source_files_properties(src/dsp/Stretch.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
+endif()
 weft_set_warnings(weft_engine)
 
 if(WEFT_WITH_JUCE)

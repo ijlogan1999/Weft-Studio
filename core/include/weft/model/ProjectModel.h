@@ -43,6 +43,10 @@ struct ProjectModel
     std::map<Id, Ref<MidiSequence>> midiSequences;
     std::map<std::string, Ref<MediaRef>> media;
     std::map<Id, Ref<Marker>> markers;
+    std::map<Id, Ref<KeyChange>> keyChanges; // D-UI-44
+    std::map<Id, Ref<Section>> sections;     // the arrangement (D-UI-45)
+    std::map<Id, Ref<Group>> groups;         // D-W6-15
+    std::map<Id, Ref<Vca>> vcas;             // D-W6-16
     std::map<Id, Ref<AutomationLane>> storedLanes;
     std::vector<Id> storedTrackOrder; // raw list, may contain duplicates
     std::vector<TempoPoint> storedTempoPoints;
@@ -80,6 +84,32 @@ struct ProjectModel
     double regionEndTick (const Region& r) const;
     /** The color a region shows: its own, or its track's (F-TRK-9). */
     Color regionColor (const Region& r) const;
+
+    /** The key at a tick: the last key change at or before it, else the project key (D-UI-44). */
+    KeySignature keyAt (Ticks t) const;
+    /** The key change in effect at t, or null before the first. */
+    const KeyChange* keyChangeAt (Ticks t) const;
+    std::vector<const KeyChange*> keyChangesInOrder() const;
+    /** Arrangement sections by start (ties by id). */
+    std::vector<const Section*> sectionsInOrder() const;
+    const Section* sectionAt (Ticks t) const;
+    /** Groups by number. */
+    std::vector<const Group*> groupsInOrder() const;
+    /** The other tracks a change to `trackId` also goes to for the property `link` (D-W6-15): its
+        group's members (in track order) when groups are active, the group is on and links it. */
+    std::vector<Id> linkedTracks (const Id& trackId, bool Group::* link) const;
+    /** The same for send slot `slot` (0 to 7). */
+    std::vector<Id> linkedSendTracks (const Id& trackId, int slot) const;
+    /** The track's group when it links anything: groups are active and the group is on. */
+    const Group* activeGroup (const Id& trackId) const;
+    /** A group's tracks, in track order. */
+    std::vector<Id> groupMembers (const Id& groupId) const;
+    /** A stack's members in track order (D-W6-17); empty unless `mainId` is a stack's main track. */
+    std::vector<Id> stackMembers (const Id& mainId) const;
+    /** The main track of the stack `trackId` is in, or null. */
+    const Track* stackMain (const Id& trackId) const;
+    /** VCAs by name, then id. */
+    std::vector<const Vca*> vcasInOrder() const;
 };
 
 /** Document root keys for entity collections (depth-2 paths are entities). */
@@ -94,6 +124,10 @@ inline constexpr const char* media = "media";
 inline constexpr const char* tempoMap = "tempoMap";
 inline constexpr const char* signatureMap = "signatureMap";
 inline constexpr const char* markers = "markers";
+inline constexpr const char* keyChanges = "keyChanges";
+inline constexpr const char* sections = "sections";
+inline constexpr const char* groups = "groups";
+inline constexpr const char* vcas = "vcas";
 inline constexpr const char* automationLanes = "automationLanes";
 inline constexpr const char* collab = "collab";
 } // namespace keys

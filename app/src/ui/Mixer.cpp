@@ -101,6 +101,7 @@ void MeterView::update (float peak, float rms, bool clip, double now)
 {
     const auto before = std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip(), rmsDb);
     ballistics.update (peak, clip, now);
+    maxPeakDb = std::max (maxPeakDb, engine::gainToDb (peak));
     rmsLinear = rms;
     rmsDb = engine::gainToDb (rms);
     if (std::tuple (ballistics.levelDb(), ballistics.holdDb(), ballistics.clip(), rmsDb) != before)
@@ -152,15 +153,19 @@ void MeterView::paint (juce::Graphics& g)
     }
 }
 
+void MeterView::resetPeak()
+{
+    ballistics.resetClip();
+    maxPeakDb = -144.0f;
+    if (onResetClip)
+        onResetClip();
+    repaint();
+}
+
 void MeterView::mouseDown (const juce::MouseEvent& e)
 {
     if (e.y <= clipHeight + clipGap)
-    {
-        ballistics.resetClip();
-        if (onResetClip)
-            onResetClip();
-        repaint();
-    }
+        resetPeak();
 }
 
 // Insert slot ------------------------------------------------------------------------------
@@ -406,6 +411,25 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
     output.onClick = [this] { showMenu (outputMenu(), [this] (int item) { pickOutput (item); }); };
     addChildComponent (output);
 
+    for (auto* b : { &group, &vca })
+    {
+        small (*b);
+        addChildComponent (b);
+    }
+    group.onClick = [this] { clickGroup (juce::ModifierKeys::currentModifiers); };
+    small (stackToggle);
+    setRole (stackToggle, ButtonRole::flat);
+    describe (stackToggle, "Open or close the stack", "Opens or closes the stack (Alt+click: every stack)");
+    stackToggle.onClick = [this] { studio.toggleStack (id, juce::ModifierKeys::currentModifiers.isAltDown()); };
+    addChildComponent (stackToggle);
+    notes.setJustificationType (juce::Justification::topLeft);
+    notes.setMinimumHorizontalScale (1.0f);
+    notes.setFont (font (Type::caption));
+    notes.setColour (juce::Label::textColourId, colour (Token::textDim));
+    describe (notes, "Track notes", "The track's notes (edit them in the Notes tab)");
+    addChildComponent (notes);
+    vca.onClick = [this] { clickVca (juce::ModifierKeys::currentModifiers); };
+
     automation.addItemList ({ "Off", "Read", "Touch", "Latch", "Write" }, 1);
     describe (automation, "Automation mode");
     automation.onChange = [this] {
@@ -489,6 +513,12 @@ ChannelStrip::ChannelStrip (Studio& s, Id trackId) : studio (s), id (std::move (
 
     describe (meter, "Meter", "Level: RMS bar, peak above it (click the light to reset the clip indicator)");
     meter.onResetClip = [this] { studio.engine().resetClip (isMaster() ? Id() : id); };
+    peak.setJustificationType (juce::Justification::centred);
+    setField (peak);
+    describe (peak, "Peak level", "The highest level since you last clicked here (click to reset it and the clip light)");
+    peak.setText ("-inf", juce::dontSendNotification);
+    peak.addMouseListener (this, false);
+    addAndMakeVisible (peak);
     addAndMakeVisible (meter);
 
     for (auto* b : { &mute, &solo, &arm, &monitor })
@@ -547,7 +577,7 @@ std::vector<const model::Track*> ChannelStrip::buses() const
 {
     std::vector<const model::Track*> out;
     for (const auto& tid : studio.model().trackOrder)
-        if (const auto* t = studio.model().track (tid); t != nullptr && t->kind == model::TrackKind::bus && tid != id)
+        if (const auto* t = studio.model().track (tid); t != nullptr && t->kind == model::TrackKind::bus && ! t->isFolderStack() && tid != id)
             out.push_back (t);
     return out;
 }
@@ -569,9 +599,10 @@ int ChannelStrip::shownSendRows() const
 
 int ChannelStrip::preferredHeight() const
 {
-    // name, input, slots, output, automation, pan, fader (min), readout, buttons
+    // name, input, slots, output, group and VCA, automation, pan, fader (min), readout, buttons
     return space::s1 + rowHeight + gap + rowHeight + gap + (shownInsertRows() + 1 + shownSendRows()) * rowHeight + gap + rowHeight + gap + rowHeight + gap
-           + space::s4 + gap + 120 + gap + rowHeight + gap + rowHeight + space::s1;
+           + rowHeight + gap
+           + space::s4 + gap + 120 + gap + rowHeight + gap + rowHeight + space::s1 + (studio.mixerNotes ? notesHeight + gap : 0);
 }
 
 void ChannelStrip::rebuildSlots()
@@ -597,9 +628,15 @@ void ChannelStrip::rebuildSlots()
             inserts[i]->showBypass (t->strip.inserts[i].bypass);
         return;
     }
+    if (t->isFolderStack())
+        key = "folder";
+    if (key == shownSlots)
+        return;
     shownSlots = key;
     inserts.clear();
     sends.clear();
+    if (t->isFolderStack())
+        return;
     for (std::size_t i = 0; i < t->strip.inserts.size(); ++i)
     {
         const auto& p = t->strip.inserts[i];
@@ -660,9 +697,33 @@ void ChannelStrip::refresh()
 
     rebuildSlots();
 
-    output.setVisible (! master);
+    // A folder stack's main carries no sound (D-W6-17): no output, VCA or slots; its fader and mute act on its members.
+    const bool folder = t->isFolderStack();
+    stackToggle.setVisible (t->isStackMain());
+    if (notes.isVisible() != (studio.mixerNotes && ! master))
+    {
+        notes.setVisible (studio.mixerNotes && ! master);
+        resized();
+    }
+    notes.setText (juce::String::fromUTF8 (t->notes.c_str()), juce::dontSendNotification);
+    stackToggle.setButtonText (juce::String::fromUTF8 (t->stackOpen ? "\xe2\x96\xbe" : "\xe2\x96\xb8"));
+    output.setVisible (! master && ! folder);
+    group.setVisible (! master);
+    vca.setVisible (! master && ! folder);
     if (! master)
     {
+        const auto& m = studio.model();
+        const auto g = m.groups.find (t->groupId);
+        const bool grouped = ! t->groupId.empty() && g != m.groups.end();
+        group.setButtonText (grouped ? juce::String (g->second->number) + " " + juce::String (g->second->name) : juce::String ("Group"));
+        describe (group, "Group", grouped ? "Group " + juce::String (g->second->number) + ": " + juce::String (g->second->name) + (g->second->enabled && m.info.groupsActive ? "" : " (off)")
+                                          : juce::String ("No group (Alt+click: the last group used)"));
+        setRole (group, grouped && g->second->enabled && m.info.groupsActive ? ButtonRole::normal : ButtonRole::flat);
+        const auto v = m.vcas.find (t->vcaId);
+        const bool assigned = ! t->vcaId.empty() && v != m.vcas.end();
+        vca.setButtonText (assigned ? juce::String (v->second->name) : juce::String ("VCA"));
+        describe (vca, "VCA", assigned ? "VCA: " + juce::String (v->second->name) + " (Shift+click: show its strip)" : juce::String ("No VCA"));
+        setRole (vca, assigned ? ButtonRole::normal : ButtonRole::flat);
         const auto disabled = studio.model().disabledEdges.contains (model::RoutingEdge { id, t->output.busId, {} }.key());
         output.setButtonText (busName (t->output.busId));
         describe (output, "Output", disabled ? juce::String ("Disabled: feedback loop") : "Output: " + busName (t->output.busId));
@@ -699,7 +760,7 @@ void ChannelStrip::refresh()
     const bool locked = studio.lockedByOther (id);
     const auto lockTip = studio.lockTooltip (id);
     name.setEditable (false, ! master && ! locked, true);
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &name, &input, &output, &automation, &pan, &volume, &readout, &mute, &monitor })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &name, &input, &output, &group, &vca, &automation, &pan, &volume, &readout, &mute, &monitor })
     {
         if (c != &name)
             c->setEnabled (! locked);
@@ -731,6 +792,12 @@ void ChannelStrip::updateMeter (double now)
 {
     const auto m = studio.takeMeter (isMaster() ? Id() : id, this);
     meter.update (m.output, m.rms, m.clip, now);
+    const auto text = fader::dbText (meter.maxPeakDb);
+    if (peak.getText() != text)
+    {
+        peak.setText (text, juce::dontSendNotification);
+        peak.setColour (juce::Label::textColourId, meter.maxPeakDb > 0.0f ? colour (Token::meterClip) : colour (Token::text));
+    }
 }
 
 void ChannelStrip::followAutomation()
@@ -832,7 +899,12 @@ void ChannelStrip::resized()
     auto r = getLocalBounds().reduced (space::half + 1, 0);
     r.removeFromTop (space::s1);
     r.removeFromBottom (space::s1);
-    name.setBounds (r.removeFromTop (rowHeight));
+    {
+        auto nameRow = r.removeFromTop (rowHeight);
+        if (stackToggle.isVisible())
+            stackToggle.setBounds (nameRow.removeFromLeft (size::icon + space::half));
+        name.setBounds (nameRow);
+    }
     r.removeFromTop (gap);
     input.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
@@ -847,10 +919,21 @@ void ChannelStrip::resized()
     r.removeFromTop (gap);
     output.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
+    {
+        auto slotsRow = r.removeFromTop (rowHeight);
+        group.setBounds (slotsRow.removeFromLeft ((slotsRow.getWidth() - gap) / 2));
+        vca.setBounds (slotsRow.withTrimmedLeft (gap));
+    }
+    r.removeFromTop (gap);
     automation.setBounds (r.removeFromTop (rowHeight));
     r.removeFromTop (gap);
     pan.setBounds (r.removeFromTop (space::s4).withSizeKeepingCentre (space::s4, space::s4));
     r.removeFromTop (gap);
+    if (notes.isVisible())
+    {
+        notes.setBounds (r.removeFromBottom (notesHeight));
+        r.removeFromBottom (gap);
+    }
     buttonRow = r.removeFromBottom (rowHeight);
     auto buttons = buttonRow;
     std::vector<juce::TextButton*> shown;
@@ -868,7 +951,10 @@ void ChannelStrip::resized()
         if (! b->isVisible())
             b->setBounds ({});
     r.removeFromBottom (gap);
-    readout.setBounds (r.removeFromBottom (rowHeight));
+    // Volume readout | peak number (D-W6-13).
+    auto numbers = r.removeFromBottom (rowHeight);
+    peak.setBounds (numbers.removeFromRight (numbers.getWidth() * 2 / 5));
+    readout.setBounds (numbers.withTrimmedRight (space::half));
     r.removeFromBottom (gap);
     // Fader | scale | meter. The meter's clip light sits above the fader's travel.
     auto faderArea = r;
@@ -878,8 +964,15 @@ void ChannelStrip::resized()
     volume.setBounds (faderArea);
 }
 
-void ChannelStrip::mouseDown (const juce::MouseEvent&)
+void ChannelStrip::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.eventComponent == &peak)
+    {
+        meter.resetPeak();
+        peak.setText (fader::dbText (meter.maxPeakDb), juce::dontSendNotification);
+        peak.setColour (juce::Label::textColourId, colour (Token::text));
+        return;
+    }
     if (! isMaster() && selectsOnClick)
         studio.selectTrack (id);
 }
@@ -934,6 +1027,7 @@ juce::PopupMenu ChannelStrip::insertMenu (std::size_t slot) const
     }
     const auto& p = t->strip.inserts[slot];
     menu.addItem (itemOpen, "Open " + juce::String (p.name));
+    menu.addItem (itemPresets, "Show Presets in Library", static_cast<bool> (studio.showPresets));
     menu.addItem (itemBypass, "Bypass", true, p.bypass);
     menu.addItem (itemRemove, "Remove");
     juce::PopupMenu replace;
@@ -977,6 +1071,12 @@ void ChannelStrip::pickInsert (std::size_t slot, int itemId)
     switch (itemId)
     {
         case itemOpen: openEditor (pluginId); break;
+        case itemPresets:
+            // D-UI-53: the Library's presets for this plug-in, ready to load onto this track.
+            studio.selectTrack (id);
+            if (studio.showPresets)
+                studio.showPresets (juce::String (t->strip.inserts[slot].name));
+            break;
         case itemBypass:
             studio.check (studio.session().setInsertBypass (id, pluginId, ! t->strip.inserts[slot].bypass));
             studio.edited();
@@ -1028,6 +1128,7 @@ juce::PopupMenu ChannelStrip::instrumentMenu() const
     if (t->strip.instrument)
     {
         menu.addItem (itemOpen, "Open " + juce::String (t->strip.instrument->name));
+        menu.addItem (itemPresets, "Show Presets in Library", static_cast<bool> (studio.showPresets));
         menu.addSeparator();
     }
     addPluginChoices (menu, studio.pluginChoices (true), itemPlugin);
@@ -1042,6 +1143,13 @@ void ChannelStrip::pickInstrument (int itemId)
     if (itemId == itemOpen && t->strip.instrument)
     {
         openEditor (t->strip.instrument->id);
+        return;
+    }
+    if (itemId == itemPresets && t->strip.instrument)
+    {
+        studio.selectTrack (id);
+        if (studio.showPresets)
+            studio.showPresets (juce::String (t->strip.instrument->name));
         return;
     }
     const auto choices = studio.pluginChoices (true);
@@ -1201,6 +1309,259 @@ void ChannelStrip::pickOutput (int itemId)
     studio.edited();
 }
 
+// Group and VCA slots (D-W6-15, D-W6-16) -----------------------------------------------------
+
+juce::PopupMenu ChannelStrip::groupMenu() const
+{
+    juce::PopupMenu menu;
+    const auto* t = track();
+    const Id current = t != nullptr ? t->groupId : Id();
+    menu.addItem (slotNone, "No Group", true, current.empty());
+    menu.addSeparator();
+    const auto groups = studio.model().groupsInOrder();
+    for (std::size_t i = 0; i < groups.size(); ++i)
+        menu.addItem (slotFirst + static_cast<int> (i), juce::String (groups[i]->number) + ": " + juce::String (groups[i]->name), true, groups[i]->id == current);
+    if (! groups.empty())
+        menu.addSeparator();
+    menu.addItem (slotNew, "New Group");
+    menu.addItem (slotSettings, "Group Settings...");
+    return menu;
+}
+
+void ChannelStrip::pickGroup (int itemId)
+{
+    auto& s = studio.session();
+    if (itemId == slotNone)
+        studio.check (s.setTrackGroup (id, {}));
+    else if (itemId == slotNew)
+    {
+        if (const auto made = s.createGroup ({ id }))
+            studio.lastGroup = *made;
+        else
+            studio.setStatus (juce::String (s.lastError()));
+    }
+    else if (itemId == slotSettings)
+    {
+        studio.perform (Cmd::groupsWindow);
+        return;
+    }
+    else if (itemId >= slotFirst)
+    {
+        const auto groups = studio.model().groupsInOrder();
+        const auto index = static_cast<std::size_t> (itemId - slotFirst);
+        if (index >= groups.size())
+            return;
+        const auto chosen = groups[index]->id;
+        if (studio.check (s.setTrackGroup (id, chosen)))
+            studio.lastGroup = chosen;
+    }
+    studio.edited();
+}
+
+void ChannelStrip::clickGroup (juce::ModifierKeys mods)
+{
+    // M-MIX-21: Alt+click puts the track in the group last used.
+    if (mods.isAltDown() && ! studio.lastGroup.empty() && studio.model().groups.contains (studio.lastGroup))
+    {
+        studio.check (studio.session().setTrackGroup (id, studio.lastGroup));
+        studio.edited();
+        return;
+    }
+    showMenu (groupMenu(), [this] (int item) { pickGroup (item); });
+}
+
+juce::PopupMenu ChannelStrip::vcaMenu() const
+{
+    juce::PopupMenu menu;
+    const auto* t = track();
+    const Id current = t != nullptr ? t->vcaId : Id();
+    menu.addItem (slotNone, "No VCA", true, current.empty());
+    menu.addSeparator();
+    const auto vcas = studio.model().vcasInOrder();
+    for (std::size_t i = 0; i < vcas.size(); ++i)
+        menu.addItem (slotFirst + static_cast<int> (i), juce::String (vcas[i]->name), true, vcas[i]->id == current);
+    if (! vcas.empty())
+        menu.addSeparator();
+    menu.addItem (slotNew, "New VCA");
+    return menu;
+}
+
+void ChannelStrip::pickVca (int itemId)
+{
+    auto& s = studio.session();
+    if (itemId == slotNone)
+        studio.check (s.setTrackVca (id, {}));
+    else if (itemId == slotNew)
+    {
+        // A new VCA and this track on it, as one undo step.
+        s.beginGesture ("New VCA");
+        const auto made = s.createVca();
+        if (made && s.setTrackVca (id, *made))
+            s.endGesture();
+        else
+        {
+            s.cancelGesture();
+            studio.setStatus (juce::String (s.lastError()));
+        }
+    }
+    else if (itemId >= slotFirst)
+    {
+        const auto vcas = studio.model().vcasInOrder();
+        const auto index = static_cast<std::size_t> (itemId - slotFirst);
+        if (index >= vcas.size())
+            return;
+        studio.check (s.setTrackVca (id, vcas[index]->id));
+    }
+    studio.edited();
+}
+
+void ChannelStrip::clickVca (juce::ModifierKeys mods)
+{
+    const auto* t = track();
+    if (mods.isShiftDown() && t != nullptr && ! t->vcaId.empty() && studio.model().vcas.contains (t->vcaId))
+    {
+        if (onShowVca)
+            onShowVca (t->vcaId); // P-INS-8
+        return;
+    }
+    showMenu (vcaMenu(), [this] (int item) { pickVca (item); });
+}
+
+// VCA strip (D-W6-16) ---------------------------------------------------------------------------
+
+VcaStrip::VcaStrip (Studio& s, Id vcaId) : studio (s), id (std::move (vcaId))
+{
+    name.setJustificationType (juce::Justification::centred);
+    name.setFont (font (Type::strong));
+    name.setEditable (false, true);
+    describe (name, "VCA name", "Double-click to rename");
+    name.onTextChange = [this] {
+        const auto text = name.getText().trim();
+        if (text.isNotEmpty())
+            studio.check (studio.session().renameVca (id, text.toStdString()));
+        studio.edited();
+    };
+    addAndMakeVisible (name);
+
+    members.setJustificationType (juce::Justification::centred);
+    members.setColour (juce::Label::textColourId, colour (Token::textDim));
+    addAndMakeVisible (members);
+
+    styleSlider (volume, juce::Slider::LinearVertical, fader::minDb, fader::maxDb, 0.0, *knobs);
+    volume.setNormalisableRange (fader::range());
+    describe (volume, "VCA volume", "VCA volume: scales its tracks (double-click: 0 dB)");
+    volume.textFromValueFunction = [] (double v) { return fader::dbText (v) + " dB"; };
+    volume.onDragStart = [this] { studio.session().beginGesture ("VCA Volume"); };
+    volume.onDragEnd = [this] { studio.session().endGesture(); };
+    volume.onValueChange = [this] {
+        const auto db = isSilent (volume.getValue()) ? fader::silentDb : volume.getValue();
+        studio.check (studio.session().setVcaVolume (id, db));
+        studio.edited();
+    };
+    addAndMakeVisible (volume);
+
+    readout.setJustificationType (juce::Justification::centred);
+    setField (readout);
+    readout.setEditable (false, true);
+    describe (readout, "VCA volume in dB", "Double-click to type a level");
+    readout.onTextChange = [this] {
+        if (const auto db = fader::parseDb (readout.getText()))
+            studio.check (studio.session().setVcaVolume (id, *db));
+        studio.edited();
+        refresh();
+    };
+    addAndMakeVisible (readout);
+
+    small (mute);
+    setRole (mute, ButtonRole::mute);
+    mute.setClickingTogglesState (false);
+    describe (mute, "Mute", "Mutes every track on this VCA");
+    mute.onClick = [this] {
+        if (const auto* v = studio.model().vcas.contains (id) ? studio.model().vcas.at (id).get() : nullptr)
+            studio.check (studio.session().setVcaMute (id, ! v->mute));
+        studio.edited();
+    };
+    addAndMakeVisible (mute);
+    refresh();
+}
+
+VcaStrip::~VcaStrip() { volume.setLookAndFeel (nullptr); }
+
+void VcaStrip::refresh()
+{
+    const auto& m = studio.model();
+    const auto it = m.vcas.find (id);
+    if (it == m.vcas.end())
+        return;
+    const auto& v = *it->second;
+    if (! name.isBeingEdited())
+        name.setText (v.name, juce::dontSendNotification);
+    setDbSlider (volume, v.volumeDb);
+    if (! readout.isBeingEdited())
+        readout.setText (fader::dbText (v.volumeDb), juce::dontSendNotification);
+    mute.setToggleState (v.mute, juce::dontSendNotification);
+    int count = 0;
+    for (const auto& [tid, t] : m.tracks)
+        count += t->vcaId == id ? 1 : 0;
+    members.setText (count == 1 ? juce::String ("1 track") : juce::String (count) + " tracks", juce::dontSendNotification);
+    repaint();
+}
+
+void VcaStrip::paint (juce::Graphics& g)
+{
+    const auto panel = getLocalBounds().toFloat().reduced (1.0f, 0.0f);
+    depth::shadow (g, panel, radius::r1, depth::Level::panel);
+    g.setColour (colour (Token::surface));
+    g.fillRoundedRectangle (panel, radius::r1);
+    depth::highlight (g, panel, radius::r1);
+    g.setColour (colour (Token::textDim));
+    g.fillRect (panel.withHeight (4.0f));
+}
+
+void VcaStrip::resized()
+{
+    auto r = getLocalBounds().reduced (space::half + 1, 0);
+    r.removeFromTop (space::s1);
+    r.removeFromBottom (space::s1);
+    name.setBounds (r.removeFromTop (rowHeight));
+    r.removeFromTop (gap);
+    members.setBounds (r.removeFromTop (rowHeight));
+    r.removeFromTop (gap);
+    mute.setBounds (r.removeFromBottom (rowHeight));
+    r.removeFromBottom (gap);
+    readout.setBounds (r.removeFromBottom (rowHeight));
+    r.removeFromBottom (gap);
+    volume.setBounds (r.withSizeKeepingCentre (std::min (r.getWidth(), space::s4), r.getHeight()));
+}
+
+void VcaStrip::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+        return;
+    juce::Component::SafePointer<VcaStrip> self (this);
+    menu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self] (int item) {
+        if (self != nullptr && item != 0)
+            self->pick (item);
+    });
+}
+
+juce::PopupMenu VcaStrip::menu() const
+{
+    juce::PopupMenu m;
+    m.addItem (itemDelete, "Delete VCA");
+    return m;
+}
+
+void VcaStrip::pick (int item)
+{
+    if (item == itemDelete)
+    {
+        studio.check (studio.session().deleteVca (id));
+        studio.edited();
+    }
+}
+
+
 // Mixer view ---------------------------------------------------------------------------------
 
 MixerView::MixerView (Studio& s) : studio (s)
@@ -1209,9 +1570,57 @@ MixerView::MixerView (Studio& s) : studio (s)
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (true, true);
     addAndMakeVisible (viewport);
+    // View buttons (one group) and filters (D-W6-14).
+    const std::pair<juce::TextButton*, Studio::MixerMode> views[] = { { &singleView, Studio::MixerMode::single },
+                                                                       { &tracksView, Studio::MixerMode::tracks },
+                                                                       { &allView, Studio::MixerMode::all } };
+    describe (singleView, "Single view", "The selected channel and the buses its signal goes to");
+    describe (tracksView, "Tracks view", "The channels of the tracks as the track list shows them");
+    describe (allView, "All view", "Every channel, hidden tracks too");
+    for (const auto& [b, mode] : views)
+    {
+        b->setClickingTogglesState (false);
+        b->onClick = [this, m = mode] {
+            studio.mixerMode = m;
+            refresh();
+        };
+        addAndMakeVisible (*b);
+    }
+    singleView.setConnectedEdges (juce::Button::ConnectedOnRight);
+    tracksView.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    allView.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    describe (showAudio, "Audio channels", "Show audio channels (Alt+click: only these)");
+    describe (showInstrument, "Instrument channels", "Show instrument channels (Alt+click: only these)");
+    describe (showBus, "Bus channels", "Show bus channels (Alt+click: only these)");
+    for (auto* b : { &showAudio, &showInstrument, &showBus })
+    {
+        b->setClickingTogglesState (false);
+        b->onClick = [this, b] { clickFilter (*b, juce::ModifierKeys::currentModifiers); };
+        addAndMakeVisible (*b);
+    }
+    describe (showNotes, "Track notes", "Show each track's notes under its strip");
+    showNotes.setClickingTogglesState (false);
+    showNotes.onClick = [this] { studio.perform (Cmd::mixerNotes); studio.edited(); };
+    addAndMakeVisible (showNotes);
     studio.addChangeListener (this);
     refresh();
     startTimerHz (30);
+}
+
+void MixerView::clickFilter (juce::TextButton& filter, juce::ModifierKeys mods)
+{
+    bool* shown[] = { &studio.mixerAudio, &studio.mixerInstrument, &studio.mixerBus };
+    juce::TextButton* buttons[] = { &showAudio, &showInstrument, &showBus };
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        if (mods.isAltDown())
+            *shown[i] = buttons[i] == &filter;
+        else if (buttons[i] == &filter)
+            *shown[i] = ! *shown[i];
+    }
+    if (studio.mixerMode == Studio::MixerMode::single)
+        studio.mixerMode = Studio::MixerMode::tracks; // the filters apply to the lists, not to one channel
+    refresh();
 }
 
 MixerView::~MixerView() { studio.removeChangeListener (this); }
@@ -1229,15 +1638,9 @@ ChannelStrip* MixerView::stripFor (const Id& trackId)
 void MixerView::refresh()
 {
     const auto& m = studio.model();
-    std::vector<Id> order;
-    // A hidden track's strip goes with its row (D-W3-7) and comes back with Show Hidden Tracks.
-    const auto shown = [&] (const model::Track& t) { return ! t.hidden || m.info.showHiddenTracks; };
-    for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind != model::TrackKind::bus && t->kind != model::TrackKind::master && shown (*t))
-            order.push_back (tid);
-    for (const auto& tid : m.trackOrder)
-        if (const auto* t = m.track (tid); t != nullptr && t->kind == model::TrackKind::bus && shown (*t))
-            order.push_back (tid);
+    // A hidden track's strip goes with its row (D-W3-7) and comes back with Show Hidden Tracks; the view
+    // buttons and filters choose the rest (D-W6-14).
+    const auto order = studio.mixerOrder();
     if (order != shownOrder)
     {
         std::vector<std::unique_ptr<ChannelStrip>> next;
@@ -1263,6 +1666,29 @@ void MixerView::refresh()
     for (auto& s : channelStrips)
         s->refresh();
     master->refresh();
+    // VCA strips after the channels (D-W6-16).
+    std::vector<std::unique_ptr<VcaStrip>> nextVcas;
+    for (const auto* v : m.vcasInOrder())
+    {
+        auto it = std::find_if (vcas.begin(), vcas.end(), [&] (const auto& s) { return s != nullptr && s->vcaId() == v->id; });
+        if (it != vcas.end())
+            nextVcas.push_back (std::move (*it));
+        else
+        {
+            nextVcas.push_back (std::make_unique<VcaStrip> (studio, v->id));
+            content.addAndMakeVisible (*nextVcas.back());
+        }
+        nextVcas.back()->refresh();
+    }
+    vcas = std::move (nextVcas);
+    singleView.setToggleState (studio.mixerMode == Studio::MixerMode::single, juce::dontSendNotification);
+    tracksView.setToggleState (studio.mixerMode == Studio::MixerMode::tracks, juce::dontSendNotification);
+    allView.setToggleState (studio.mixerMode == Studio::MixerMode::all, juce::dontSendNotification);
+    const bool lists = studio.mixerMode != Studio::MixerMode::single;
+    showAudio.setToggleState (lists && studio.mixerAudio, juce::dontSendNotification);
+    showInstrument.setToggleState (lists && studio.mixerInstrument, juce::dontSendNotification);
+    showBus.setToggleState (lists && studio.mixerBus, juce::dontSendNotification);
+    showNotes.setToggleState (studio.mixerNotes, juce::dontSendNotification);
     layoutStrips();
 }
 
@@ -1290,13 +1716,26 @@ void MixerView::layoutStrips()
 void MixerView::resized()
 {
     auto r = getLocalBounds();
+    auto bar = r.removeFromTop (barHeight).reduced (space::s1, (barHeight - size::control) / 2);
+    for (auto* b : { &singleView, &tracksView, &allView })
+        b->setBounds (bar.removeFromLeft (64));
+    bar.removeFromLeft (space::s2);
+    for (auto* b : { &showAudio, &showInstrument, &showBus })
+    {
+        b->setBounds (bar.removeFromLeft (56));
+        bar.removeFromLeft (space::half);
+    }
+    bar.removeFromLeft (space::s2);
+    showNotes.setBounds (bar.removeFromLeft (64));
     if (master != nullptr)
         master->setBounds (r.removeFromRight (ChannelStrip::width + space::s1).withTrimmedLeft (space::s1).withHeight (std::max (r.getHeight(), master->preferredHeight())));
     viewport.setBounds (r);
     const auto innerHeight = std::max (viewport.getMaximumVisibleHeight(), channelStrips.empty() ? 0 : channelStrips.front()->preferredHeight());
-    content.setSize (static_cast<int> (channelStrips.size()) * ChannelStrip::width, innerHeight);
+    content.setSize (static_cast<int> (channelStrips.size() + vcas.size()) * ChannelStrip::width, innerHeight);
     for (std::size_t i = 0; i < channelStrips.size(); ++i)
         channelStrips[i]->setBounds (static_cast<int> (i) * ChannelStrip::width, 0, ChannelStrip::width, innerHeight);
+    for (std::size_t i = 0; i < vcas.size(); ++i)
+        vcas[i]->setBounds (static_cast<int> (channelStrips.size() + i) * ChannelStrip::width, 0, ChannelStrip::width, innerHeight);
 }
 
 void MixerView::paint (juce::Graphics& g) { g.fillAll (colour (Token::background)); }

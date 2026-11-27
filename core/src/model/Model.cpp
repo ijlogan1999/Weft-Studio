@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 
 namespace weft::model
 {
@@ -26,13 +27,20 @@ std::string oneOf (const Value& v, std::initializer_list<std::string_view> allow
     return std::string (fallback);
 }
 
-Value fadeToValue (const Fade& f) { return Value::map().set ("length", f.length).set ("curve", f.curve); }
+Value fadeToValue (const Fade& f)
+{
+    auto v = Value::map().set ("length", f.length).set ("curve", f.curve);
+    if (f.speed)
+        v.set ("speed", true);
+    return v;
+}
 
 Fade fadeFromValue (const Value& v)
 {
     Fade f;
     f.length = std::max<std::int64_t> (0, v["length"].asInt (0));
     f.curve = oneOf (v["curve"], { "linear", "equalPower", "sCurve" }, "equalPower");
+    f.speed = v["speed"].asBool();
     return f;
 }
 
@@ -231,6 +239,54 @@ Value ChannelStrip::toValue() const
         .set ("sends", Value (std::move (sendList)));
 }
 
+// TrackPlayback --------------------------------------------------------------
+
+bool TrackPlayback::isDefault() const noexcept { return *this == TrackPlayback {}; }
+
+std::optional<std::pair<int, int>> TrackPlayback::play (int pitch, int velocity, int regionTranspose) const noexcept
+{
+    const int p = std::clamp (pitch + transpose + (noTranspose ? 0 : regionTranspose), 0, 127);
+    const int vel = std::clamp (velocity + velocityOffset, 1, 127);
+    if (p < keyLow || p > keyHigh || vel < velocityLow || vel > velocityHigh)
+        return std::nullopt;
+    return std::pair { p, vel };
+}
+
+TrackPlayback TrackPlayback::fromValue (const Value& v)
+{
+    TrackPlayback p;
+    if (! v.isMap())
+        return p;
+    p.transpose = clampInt<int> (v["transpose"], 0, -96, 96);
+    p.velocityOffset = clampInt<int> (v["velocityOffset"], 0, -99, 99);
+    p.keyLow = clampInt<int> (v["keyLow"], 0, 0, 127);
+    p.keyHigh = clampInt<int> (v["keyHigh"], 127, 0, 127);
+    p.velocityLow = clampInt<int> (v["velocityLow"], 1, 1, 127);
+    p.velocityHigh = clampInt<int> (v["velocityHigh"], 127, 1, 127);
+    p.delayInTicks = v["delayInTicks"].asBool();
+    p.delay = p.delayInTicks ? clampDouble (v["delay"], 0.0, -maxDelayTicks, maxDelayTicks) : clampDouble (v["delay"], 0.0, -maxDelayMs, maxDelayMs);
+    p.noTranspose = v["noTranspose"].asBool();
+    p.outChannel = clampInt<int> (v["outChannel"], 0, 0, 16);
+    return p;
+}
+
+Value TrackPlayback::toValue() const
+{
+    return Value::map()
+        .set ("transpose", transpose)
+        .set ("velocityOffset", velocityOffset)
+        .set ("keyLow", keyLow)
+        .set ("keyHigh", keyHigh)
+        .set ("velocityLow", velocityLow)
+        .set ("velocityHigh", velocityHigh)
+        .set ("delay", delay)
+        .set ("delayInTicks", delayInTicks)
+        .set ("noTranspose", noTranspose)
+        .set ("outChannel", outChannel);
+}
+
+// Track ----------------------------------------------------------------------
+
 Track Track::fromValue (const Id& id, const Value& v)
 {
     Track t;
@@ -253,6 +309,22 @@ Track Track::fromValue (const Id& id, const Value& v)
     if (t.kind != TrackKind::instrument)
         t.strip.instrument.reset();
     t.automationMode = oneOf (v["automationMode"], { "off", "read", "touch", "latch", "write" }, "read");
+    if (t.kind == TrackKind::instrument)
+        t.playback = TrackPlayback::fromValue (v["playback"]);
+    if (t.kind != TrackKind::master)
+    {
+        t.groupId = v["groupId"].asString();
+        t.vcaId = v["vcaId"].asString();
+        t.stackId = v["stackId"].asString();
+    }
+    t.notes = v["notes"].asString();
+    if (v["smartControls"].isMap())
+        t.smartControls = SmartControls::fromValue (v["smartControls"]);
+    if (t.kind == TrackKind::bus)
+    {
+        t.stack = oneOf (v["stack"], { "", "folder", "summing" }, "");
+        t.stackOpen = v["stackOpen"].isBool() ? v["stackOpen"].asBool() : true;
+    }
     return t;
 }
 
@@ -275,10 +347,23 @@ Value Track::toValue() const
         .set ("monitor", monitor)
         .set ("locked", lock)
         .set ("strip", strip.toValue())
-        .set ("automationMode", automationMode);
+        .set ("automationMode", automationMode)
+        .set ("playback", playback.isDefault() ? Value() : playback.toValue())
+        .set ("groupId", groupId.empty() ? Value() : Value (groupId))
+        .set ("vcaId", vcaId.empty() ? Value() : Value (vcaId))
+        .set ("stackId", stackId.empty() ? Value() : Value (stackId))
+        .set ("stack", stack.empty() ? Value() : Value (stack))
+        .set ("stackOpen", stack.empty() ? Value() : Value (stackOpen))
+        .set ("notes", notes.empty() ? Value() : Value (notes))
+        .set ("smartControls", smartControls ? smartControls->toValue() : Value());
 }
 
 // Region --------------------------------------------------------------------
+
+Value RegionQuantize::toValue() const
+{
+    return Value::map().set ("grid", grid).set ("strength", strength).set ("swing", swing).set ("range", range).set ("flam", flam);
+}
 
 Region Region::fromValue (const Id& id, const Value& v)
 {
@@ -293,6 +378,8 @@ Region Region::fromValue (const Id& id, const Value& v)
         r.color = Color::fromValue (v["color"]);
     r.muted = v["muted"].asBool();
     r.delayMs = clampDouble (v["delayMs"], 0.0, -500.0, 500.0);
+    r.delayInTicks = v["delayInTicks"].asBool();
+    r.delayTicks = clampInt<Ticks> (v["delayTicks"], 0, -maxDelayTicks, maxDelayTicks);
     r.z = v["z"].asInt();
     if (v["loop"].isMap())
         r.loop = RegionLoop { v["loop"]["enabled"].asBool(), v["loop"]["endTicks"].asInt() };
@@ -307,10 +394,15 @@ Region Region::fromValue (const Id& id, const Value& v)
             const auto& q = m["quantize"];
             r.midi.quantize = RegionQuantize { std::max<std::int64_t> (1, q["grid"].asInt (240)),
                                                clampDouble (q["strength"], 1.0, 0.0, 1.0),
-                                               clampDouble (q["swing"], 0.0, 0.0, 1.0) };
+                                               clampDouble (q["swing"], 0.0, 0.0, 1.0),
+                                               clampInt<Ticks> (q["range"], 0, -3840, 3840),
+                                               clampInt<Ticks> (q["flam"], 0, -960, 960) };
         }
         r.midi.transpose = clampInt<int> (m["transpose"], 0, -127, 127);
         r.midi.velocityOffset = clampInt<int> (m["velocityOffset"], 0, -127, 127);
+        r.midi.dynamics = clampInt<int> (m["dynamics"], 100, 0, MidiRegionData::maxDynamics);
+        r.midi.gate = clampInt<int> (m["gate"], 0, MidiRegionData::gateLegato, MidiRegionData::maxGate);
+        r.midi.clipLength = m["clipLength"].asBool (true);
     }
     else
     {
@@ -320,6 +412,11 @@ Region Region::fromValue (const Id& id, const Value& v)
         r.audio.gainDb = clampDouble (a["gainDb"], 0.0, minusInfinityDb, 24.0);
         r.audio.fadeIn = fadeFromValue (a["fadeIn"]);
         r.audio.fadeOut = fadeFromValue (a["fadeOut"]);
+        r.audio.reversed = a["reversed"].asBool();
+        r.audio.transpose = static_cast<int> (std::clamp<std::int64_t> (a["transpose"].asInt (0), -24, 24));
+        r.audio.fineTune = static_cast<int> (std::clamp<std::int64_t> (a["fineTune"].asInt (0), -50, 50));
+        r.audio.speed = clampDouble (a["speed"], 1.0, AudioRegionData::minRate, AudioRegionData::maxRate);
+        r.audio.stretch = clampDouble (a["stretch"], 1.0, AudioRegionData::minRate, AudioRegionData::maxRate);
         // Fades never exceed the region (W-3h step 4); shrink proportionally.
         const auto total = r.audio.fadeIn.length + r.audio.fadeOut.length;
         if (total > r.length)
@@ -335,6 +432,16 @@ Region Region::fromValue (const Id& id, const Value& v)
     return r;
 }
 
+Samples AudioRegionData::sourceLength (Samples timelineLength) const noexcept
+{
+    return static_cast<Samples> (std::llround (static_cast<double> (timelineLength) * sourcePerSample()));
+}
+
+Samples AudioRegionData::timelineLength (Samples sourceSamples) const noexcept
+{
+    return static_cast<Samples> (std::llround (static_cast<double> (sourceSamples) / sourcePerSample()));
+}
+
 Value Region::toValue() const
 {
     Value v = Value::map()
@@ -347,6 +454,8 @@ Value Region::toValue() const
                   .set ("color", color ? color->toValue() : Value())
                   .set ("muted", muted)
                   .set ("delayMs", delayMs)
+                  .set ("delayInTicks", delayInTicks)
+                  .set ("delayTicks", delayTicks)
                   .set ("z", z)
                   .set ("loop", loop ? Value::map().set ("enabled", loop->enabled).set ("endTicks", loop->endTicks) : Value())
                   .set ("takeFolderId", takeFolderId.empty() ? Value() : Value (takeFolderId))
@@ -357,22 +466,36 @@ Value Region::toValue() const
     {
         Value q;
         if (midi.quantize)
-            q = Value::map().set ("grid", midi.quantize->grid).set ("strength", midi.quantize->strength).set ("swing", midi.quantize->swing);
+            q = midi.quantize->toValue();
         v.set ("midi", Value::map()
                            .set ("sequenceId", midi.sequenceId)
                            .set ("sequenceOffset", midi.sequenceOffset)
                            .set ("quantize", q)
                            .set ("transpose", midi.transpose)
-                           .set ("velocityOffset", midi.velocityOffset));
+                           .set ("velocityOffset", midi.velocityOffset)
+                           .set ("dynamics", midi.dynamics)
+                           .set ("gate", midi.gate)
+                           .set ("clipLength", midi.clipLength));
     }
     else
     {
-        v.set ("audio", Value::map()
-                            .set ("media", audio.media)
-                            .set ("sourceOffset", audio.sourceOffset)
-                            .set ("gainDb", audio.gainDb)
-                            .set ("fadeIn", fadeToValue (audio.fadeIn))
-                            .set ("fadeOut", fadeToValue (audio.fadeOut)));
+        auto a = Value::map()
+                     .set ("media", audio.media)
+                     .set ("sourceOffset", audio.sourceOffset)
+                     .set ("gainDb", audio.gainDb)
+                     .set ("fadeIn", fadeToValue (audio.fadeIn))
+                     .set ("fadeOut", fadeToValue (audio.fadeOut))
+                     .set ("reversed", audio.reversed);
+        // Pitch and time only when changed, so older projects read back the same.
+        if (audio.transpose != 0)
+            a.set ("transpose", audio.transpose);
+        if (audio.fineTune != 0)
+            a.set ("fineTune", audio.fineTune);
+        if (std::abs (audio.speed - 1.0) > 1e-9)
+            a.set ("speed", audio.speed);
+        if (std::abs (audio.stretch - 1.0) > 1e-9)
+            a.set ("stretch", audio.stretch);
+        v.set ("audio", std::move (a));
     }
     return v;
 }
@@ -520,12 +643,104 @@ Marker Marker::fromValue (const Id& id, const Value& v)
     if (! v["color"].isNull())
         m.color = Color::fromValue (v["color"]);
     m.createdBy = v["createdBy"].asString();
+    m.text = v["text"].asString();
     return m;
 }
 
 Value Marker::toValue() const
 {
-    return Value::map().set ("id", id).set ("pos", pos).set ("name", name).set ("color", color ? color->toValue() : Value()).set ("createdBy", createdBy);
+    return Value::map().set ("id", id).set ("pos", pos).set ("name", name).set ("color", color ? color->toValue() : Value()).set ("createdBy", createdBy)
+        .set ("text", text.empty() ? Value() : Value (text));
+}
+
+KeyChange KeyChange::fromValue (const Id& id, const Value& v)
+{
+    KeyChange k;
+    k.id = id;
+    k.pos = std::max<std::int64_t> (0, v["pos"].asInt());
+    k.key = KeySignature::fromValue (v["key"]);
+    return k;
+}
+
+Value KeyChange::toValue() const { return Value::map().set ("id", id).set ("pos", pos).set ("key", key.toValue()); }
+
+Group Group::fromValue (const Id& id, const Value& v)
+{
+    Group g;
+    g.id = id;
+    g.number = static_cast<int> (std::clamp<std::int64_t> (v["number"].asInt (1), 1, Group::maxNumber));
+    g.name = v["name"].asString();
+    g.enabled = v["enabled"].isBool() ? v["enabled"].asBool() : true;
+    g.hidden = v["hidden"].asBool();
+    const auto link = v["links"];
+    const auto flag = [&] (const char* key, bool fallback) { return link[key].isBool() ? link[key].asBool() : fallback; };
+    g.linkSelection = flag ("selection", false);
+    g.linkQuantize = flag ("quantize", false);
+    g.linkAutomationMode = flag ("automationMode", false);
+    g.linkVolume = flag ("volume", true);
+    g.linkMute = flag ("mute", true);
+    g.linkInput = flag ("input", false);
+    g.linkPan = flag ("pan", false);
+    g.linkSolo = flag ("solo", true);
+    g.linkRecord = flag ("record", false);
+    g.linkColor = flag ("color", false);
+    g.linkZoom = flag ("zoom", false);
+    g.linkHide = flag ("hide", false);
+    g.linkSends = static_cast<int> (link["sends"].asInt (0)) & 0xff;
+    return g;
+}
+
+Value Group::toValue() const
+{
+    return Value::map()
+        .set ("id", id)
+        .set ("number", number)
+        .set ("name", name)
+        .set ("enabled", enabled)
+        .set ("hidden", hidden)
+        .set ("links", Value::map()
+                           .set ("selection", linkSelection)
+                           .set ("quantize", linkQuantize)
+                           .set ("automationMode", linkAutomationMode)
+                           .set ("volume", linkVolume)
+                           .set ("mute", linkMute)
+                           .set ("input", linkInput)
+                           .set ("pan", linkPan)
+                           .set ("solo", linkSolo)
+                           .set ("record", linkRecord)
+                           .set ("color", linkColor)
+                           .set ("zoom", linkZoom)
+                           .set ("hide", linkHide)
+                           .set ("sends", linkSends));
+}
+
+Vca Vca::fromValue (const Id& id, const Value& v)
+{
+    Vca x;
+    x.id = id;
+    x.name = v["name"].asString();
+    x.volumeDb = v["volumeDb"].isNumber() ? std::min (v["volumeDb"].asDouble(), 6.0) : 0.0;
+    x.mute = v["mute"].asBool();
+    return x;
+}
+
+Value Vca::toValue() const { return Value::map().set ("id", id).set ("name", name).set ("volumeDb", volumeDb).set ("mute", mute); }
+
+Section Section::fromValue (const Id& id, const Value& v)
+{
+    Section s;
+    s.id = id;
+    s.start = std::max<std::int64_t> (0, v["start"].asInt());
+    s.length = std::max<std::int64_t> (1, v["length"].asInt (8 * 3840));
+    s.name = v["name"].asString();
+    if (! v["color"].isNull())
+        s.color = Color::fromValue (v["color"]);
+    return s;
+}
+
+Value Section::toValue() const
+{
+    return Value::map().set ("id", id).set ("start", start).set ("length", length).set ("name", name).set ("color", color ? color->toValue() : Value());
 }
 
 // Collaboration metadata (03 §9) ------------------------------------------------
@@ -695,6 +910,44 @@ Value AutomationTarget::toValue() const
     return v;
 }
 
+SmartControls SmartControls::fromValue (const Value& v)
+{
+    SmartControls out;
+    const auto layout = v["layout"].asInt (8);
+    out.layout = std::find (std::begin (layouts), std::end (layouts), layout) != std::end (layouts) ? static_cast<int> (layout) : 8;
+    for (const auto& cv : v["controls"].asList())
+    {
+        if (static_cast<int> (out.controls.size()) >= out.layout)
+            break;
+        SmartControl c;
+        c.name = cv["name"].asString();
+        c.cc = static_cast<int> (std::clamp<std::int64_t> (cv["cc"].asInt (-1), -1, 127));
+        c.ccChannel = static_cast<int> (std::clamp<std::int64_t> (cv["ccChannel"].asInt (0), 0, 16));
+        for (const auto& mv : cv["mappings"].asList())
+            c.mappings.push_back ({ AutomationTarget::fromValue (mv["target"]), clampDouble (mv["min"], 0.0, 0.0, 1.0), clampDouble (mv["max"], 1.0, 0.0, 1.0) });
+        out.controls.push_back (std::move (c));
+    }
+    out.controls.resize (static_cast<std::size_t> (out.layout));
+    return out;
+}
+
+Value SmartControls::toValue() const
+{
+    auto list = Value::list();
+    for (const auto& c : controls)
+    {
+        auto maps = Value::list();
+        for (const auto& m : c.mappings)
+            maps.listRef().push_back (Value::map().set ("target", m.target.toValue()).set ("min", m.min).set ("max", m.max));
+        list.listRef().push_back (Value::map()
+                                      .set ("name", c.name)
+                                      .set ("mappings", std::move (maps))
+                                      .set ("cc", c.cc)
+                                      .set ("ccChannel", c.ccChannel));
+    }
+    return Value::map().set ("layout", layout).set ("controls", std::move (list));
+}
+
 AutomationLane AutomationLane::fromValue (const Id& id, const Value& v)
 {
     AutomationLane lane;
@@ -738,13 +991,29 @@ MetronomeSettings MetronomeSettings::fromValue (const Value& v)
     m.enabled = v["enabled"].asBool (true);
     m.levelDb = clampDouble (v["levelDb"], 0.0, minusInfinityDb, 6.0);
     m.during = oneOf (v["during"], { "record", "play", "both" }, "both");
-    m.countInBars = clampInt<int> (v["countInBars"], 1, 0, 2);
+    m.countInBars = clampInt<int> (v["countInBars"], 1, minCountIn, maxCountIn);
     return m;
 }
 
 Value MetronomeSettings::toValue() const
 {
     return Value::map().set ("enabled", enabled).set ("levelDb", levelDb).set ("during", during).set ("countInBars", countInBars);
+}
+
+int countInIndex (int countIn) noexcept
+{
+    for (std::size_t i = 0; i < countInChoices.size(); ++i)
+        if (countInChoices[i] == countIn)
+            return static_cast<int> (i);
+    return 0;
+}
+
+std::string countInName (int countIn)
+{
+    if (countIn == 0)
+        return "None";
+    const auto n = std::abs (countIn);
+    return std::to_string (n) + (countIn > 0 ? " bar" : " beat") + (n == 1 ? "" : "s");
 }
 
 namespace
@@ -832,4 +1101,28 @@ Value KeySignature::toValue() const { return Value::map().set ("tonic", tonic).s
 bool isValidSampleRate (int rate) noexcept { return rate == 44100 || rate == 48000 || rate == 88200 || rate == 96000; }
 
 bool isValidBitDepth (int bits) noexcept { return bits == 16 || bits == 24 || bits == 32; }
+
+int panLawIndex (double db) noexcept
+{
+    for (std::size_t i = 0; i < panLaws.size(); ++i)
+        if (std::abs (panLaws[i] - db) < 1e-9)
+            return static_cast<int> (i);
+    return -1;
+}
+
+bool isValidPanLaw (double db) noexcept { return panLawIndex (db) >= 0; }
+
+bool midiFilter::drops (int filter, int status, int data2) noexcept
+{
+    switch (status & 0xf0)
+    {
+        case 0x90: return data2 > 0 && (filter & notes) != 0;
+        case 0xa0: return (filter & polyPressure) != 0;
+        case 0xb0: return (filter & controllers) != 0;
+        case 0xc0: return (filter & programChange) != 0;
+        case 0xd0: return (filter & channelPressure) != 0;
+        case 0xe0: return (filter & pitchBend) != 0;
+        default: return false;
+    }
+}
 } // namespace weft::model

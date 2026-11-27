@@ -25,7 +25,13 @@ bool canHold (const model::Track& t, bool midi) { return midi ? t.kind == TrackK
 
 std::string kindName (TrackKind kind) { return kind == TrackKind::instrument ? "Inst" : "Audio"; }
 
-Value fadeValue (const model::Fade& f) { return Value::map().set ("length", f.length).set ("curve", f.curve); }
+Value fadeValue (const model::Fade& f)
+{
+    auto v = Value::map().set ("length", f.length).set ("curve", f.curve);
+    if (f.speed)
+        v.set ("speed", true);
+    return v;
+}
 
 Ticks regionEnd (const model::ProjectModel& m, const Region& r)
 {
@@ -571,6 +577,83 @@ EditResult Session::joinRegionsAs (const std::vector<Id>& regionIds, const model
     });
 }
 
+EditResult Session::replaceFile (const std::string& oldHash, const model::MediaRef& media, const std::function<Samples (Samples, bool)>& map,
+                                 const std::string& name)
+{
+    const auto& m = projection;
+    if (m.mediaRef (oldHash) == nullptr)
+        return reject ("That audio file isn't in the project.");
+    struct Change
+    {
+        Id id;
+        Samples offset, length;
+        const model::Region* r;
+    };
+    std::vector<Change> changes;
+    for (const auto& [id, r] : m.regions)
+    {
+        if (r->isMidi || r->audio.media != oldHash)
+            continue;
+        const auto start = map (r->audio.sourceOffset, false);
+        const auto end = map (r->audio.sourceOffset + r->audio.sourceLength (r->length), true);
+        // The region keeps its speed and stretch, so its length follows the part of the file it plays.
+        const auto length = r->audio.timelineLength (end - start);
+        if (length < model::minAudioRegionLength)
+            return reject ("The edit would leave " + r->name + " empty.");
+        changes.push_back ({ id, start, length, r.get() });
+    }
+    auto ref = media;
+    ref.addedBy = userId;
+    ref.addedAt = clock();
+    return run (name, [&] (TxnWriter& w) {
+        bool good = true;
+        if (m.mediaRef (ref.hash) == nullptr)
+            good = w.put (doc::path ({ keys::media, ref.hash }), ref.toValue());
+        for (const auto& c : changes)
+        {
+            const auto base = regionPath (c.id) / "audio";
+            good = good && w.put (base / "media", Value (ref.hash));
+            if (c.offset != c.r->audio.sourceOffset)
+                good = good && w.put (base / "sourceOffset", Value (static_cast<std::int64_t> (c.offset)));
+            if (c.length != c.r->length)
+            {
+                good = good && w.put (regionPath (c.id) / "length", Value (static_cast<std::int64_t> (c.length)));
+                // Fades stay inside the shorter region.
+                if (c.r->audio.fadeIn.length + c.r->audio.fadeOut.length > c.length)
+                {
+                    good = good && w.put (base / "fadeIn" / "length", Value (static_cast<std::int64_t> (std::min (c.r->audio.fadeIn.length, c.length / 2))));
+                    good = good && w.put (base / "fadeOut" / "length", Value (static_cast<std::int64_t> (std::min (c.r->audio.fadeOut.length, c.length / 2))));
+                }
+            }
+            stamp (w, c.id);
+        }
+        return wrote (good);
+    });
+}
+
+EditResult Session::replaceMediaFile (const std::string& oldHash, const model::MediaRef& media, Samples from, Samples to, Samples inserted,
+                                      const std::string& name)
+{
+    if (from < 0 || to < from || inserted < 0)
+        return reject ("That part of the file doesn't exist.");
+    const auto map = [=] (Samples x, bool end) -> Samples {
+        if (x <= from)
+            return x;
+        if (x >= to)
+            return x - (to - from) + inserted;
+        return end ? from + inserted : from;
+    };
+    return replaceFile (oldHash, media, map, name);
+}
+
+EditResult Session::trimMediaFile (const std::string& oldHash, const model::MediaRef& media, Samples from, Samples to)
+{
+    if (from < 0 || to <= from)
+        return reject ("Select the part of the file to keep.");
+    const auto map = [=] (Samples x, bool) { return std::clamp<Samples> (x - from, 0, to - from); };
+    return replaceFile (oldHash, media, map, "Trim Audio File");
+}
+
 EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed)
 {
     if (reversed.empty())
@@ -582,7 +665,7 @@ EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::Med
             return reject ("That region no longer exists.");
         if (r->isMidi)
             return reject ("Reverse applies to audio regions.");
-        if (media.lengthSamples < r->length)
+        if (media.lengthSamples < r->audio.sourceLength (r->length))
             return reject ("The reversed audio is shorter than the region.");
     }
     return run ("Reverse", [&] (TxnWriter& w) {
@@ -595,7 +678,8 @@ EditResult Session::reverseRegionsAs (const std::vector<std::pair<Id, model::Med
             if (projection.mediaRef (media.hash) == nullptr)
                 good = good && w.put (doc::path ({ keys::media, media.hash }), media.toValue());
             good = good && w.put (regionPath (id) / "audio" / "media", Value (media.hash))
-                   && w.put (regionPath (id) / "audio" / "sourceOffset", Value (static_cast<std::int64_t> (0)));
+                   && w.put (regionPath (id) / "audio" / "sourceOffset", Value (static_cast<std::int64_t> (0)))
+                   && w.put (regionPath (id) / "audio" / "reversed", Value (! projection.region (id)->audio.reversed));
             stamp (w, id);
         }
         return wrote (good);

@@ -12,6 +12,8 @@ add_library(weft_core STATIC
     src/commands/Notes.cpp
     src/commands/Recording.cpp
     src/commands/Tracks.cpp
+    src/commands/Groups.cpp
+    src/commands/Stacks.cpp
     src/commands/Session.cpp
     src/commands/Txn.cpp
     src/core/Id.cpp

@@ -206,9 +206,9 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     metronomeDuring.addItemList ({ "Recording", "Playback", "Recording and playback" }, 1);
     metronomeDuring.setSelectedId (m.during == "play" ? 2 : m.during == "both" ? 3 : 1, juce::dontSendNotification);
     describe (metronomeDuring, "Metronome plays during");
-    for (int bars = 0; bars <= 4; ++bars)
-        countIn.addItem (bars == 0 ? juce::String ("None") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), bars + 1);
-    countIn.setSelectedId (std::clamp (m.countInBars, 0, 4) + 1, juce::dontSendNotification);
+    for (const auto choice : model::countInChoices)
+        countIn.addItem (model::countInName (choice), countIn.getNumItems() + 1);
+    countIn.setSelectedId (model::countInIndex (m.countInBars) + 1, juce::dontSendNotification);
     describe (countIn, "Count-in");
     metronomeLevel.setRange (-60.0, 6.0, 0.5);
     metronomeLevel.setValue (m.levelDb, juce::dontSendNotification);
@@ -216,6 +216,19 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     metronomeLevel.setSliderStyle (juce::Slider::LinearHorizontal);
     metronomeLevel.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
     describe (metronomeLevel, "Metronome level");
+
+    static const char* const lawNames[] = { "0 dB (centre at full level)", "-3 dB (equal power)", "-4.5 dB", "-6 dB (linear)" };
+    static_assert (std::size (lawNames) == model::panLaws.size());
+    for (std::size_t i = 0; i < model::panLaws.size(); ++i)
+        panLaw.addItem (lawNames[i], static_cast<int> (i) + 1);
+    panLaw.setSelectedId (model::panLawIndex (info.panLawDb) + 1, juce::dontSendNotification);
+    describe (panLaw, "Pan law", "How loud a mono track panned to the centre plays on each side");
+    for (int i = 0; i < 6; ++i)
+    {
+        ignoreMidi[i].setToggleState ((info.midiInputFilter & (1 << i)) != 0, juce::dontSendNotification);
+        describe (ignoreMidi[i], "Ignore " + ignoreMidi[i].getButtonText().toLowerCase(), "Live MIDI input of this kind is neither played nor recorded");
+        addAndMakeVisible (ignoreMidi[i]);
+    }
 
     describe (ok, "OK", "Apply the settings (Enter)");
     describe (cancel, "Cancel", "Close without changes (Esc)");
@@ -231,15 +244,17 @@ ProjectSettingsDialog::ProjectSettingsDialog (Studio& s) : studio (s)
     };
     styleError (error);
     for (auto* c : std::initializer_list<juce::Component*> { &name, &bitDepth, &sampleRate, &rateNote, &key, &metronome, &metronomeDuring, &countIn,
-                                                             &metronomeLevel, &ok, &cancel, &error })
+                                                             &metronomeLevel, &panLaw, &ok, &cancel, &error })
         addAndMakeVisible (c);
-    setSize (500, 344);
+    setSize (500, 344 + 3 * rowHeight);
 }
 
 bool ProjectSettingsDialog::apply()
 {
     auto& session = studio.session();
     const auto& info = studio.model().info;
+    const auto oldPanLaw = model::panLawIndex (info.panLawDb) + 1; // by value: the edits below replace the model
+    const auto oldFilter = info.midiInputFilter;
     std::vector<commands::EditResult> results;
     const auto newName = name.getText().trim().toStdString();
     if (newName != info.name)
@@ -254,11 +269,18 @@ bool ProjectSettingsDialog::apply()
     model::MetronomeSettings m = info.metronomeDefaults;
     m.enabled = metronome.getToggleState();
     m.during = metronomeDuring.getSelectedId() == 2 ? "play" : metronomeDuring.getSelectedId() == 3 ? "both" : "record";
-    m.countInBars = countIn.getSelectedId() - 1;
+    m.countInBars = model::countInChoices[static_cast<std::size_t> (std::max (1, countIn.getSelectedId()) - 1)];
     m.levelDb = metronomeLevel.getValue();
     const auto& old = info.metronomeDefaults;
     if (m.enabled != old.enabled || m.during != old.during || m.countInBars != old.countInBars || std::abs (m.levelDb - old.levelDb) > 1e-9)
         results.push_back (session.setMetronomeDefaults (m));
+    if (panLaw.getSelectedId() > 0 && panLaw.getSelectedId() != oldPanLaw)
+        results.push_back (session.setPanLaw (model::panLaws[static_cast<std::size_t> (panLaw.getSelectedId() - 1)]));
+    int filter = 0;
+    for (int i = 0; i < 6; ++i)
+        filter |= ignoreMidi[i].getToggleState() ? 1 << i : 0;
+    if (filter != oldFilter)
+        results.push_back (session.setMidiInputFilter (filter));
     studio.edited();
     for (const auto& r : results)
         if (! r)
@@ -271,7 +293,7 @@ bool ProjectSettingsDialog::apply()
 
 void ProjectSettingsDialog::paint (juce::Graphics& g)
 {
-    drawLabels (g, { "Name", "Recording", "Sample rate", "Key", "Metronome", "Plays during", "Count-in", "Level" });
+    drawLabels (g, { "Name", "Recording", "Sample rate", "Key", "Metronome", "Plays during", "Count-in", "Level", "Pan law", "Ignore MIDI" });
 }
 
 void ProjectSettingsDialog::resized()
@@ -286,9 +308,119 @@ void ProjectSettingsDialog::resized()
     metronomeDuring.setBounds (controlX, 16 + 5 * rowHeight, 220, 26);
     countIn.setBounds (controlX, 16 + 6 * rowHeight, 120, 26);
     metronomeLevel.setBounds (controlX, 16 + 7 * rowHeight, w, 26);
+    panLaw.setBounds (controlX, 16 + 8 * rowHeight, 240, 26);
+    for (int i = 0; i < 6; ++i)
+        ignoreMidi[i].setBounds (controlX + (i % 3) * (w / 3), 16 + (9 + i / 3) * rowHeight, w / 3, 26);
     error.setBounds (labelX, getHeight() - 42, getWidth() - 240, 28);
     ok.setBounds (getWidth() - 200, getHeight() - 42, 84, 28);
     cancel.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);
+}
+
+// Settings -----------------------------------------------------------------------------------
+
+SettingsDialog::SettingsDialog (Studio& s) : studio (s)
+{
+    const auto& p = studio.preferences();
+    startup.addItem ("Show the Welcome window", 1);
+    startup.addItem ("Open the most recent project", 2);
+    startup.setSelectedId (p.startup == Preferences::Startup::lastProject ? 2 : 1, juce::dontSendNotification);
+    describe (startup, "When Weft Studio starts");
+    startup.onChange = [this] { change ([this] (Preferences& x) { x.startup = startup.getSelectedId() == 2 ? Preferences::Startup::lastProject : Preferences::Startup::welcome; }); };
+    for (int n : { 5, 10, 20, 50 })
+        recentItems.addItem (juce::String (n), n);
+    recentItems.setSelectedId (p.recentItems, juce::dontSendNotification);
+    describe (recentItems, "Recent projects", juce::String::fromUTF8 ("How many projects File › Open Recent lists"));
+    recentItems.onChange = [this] { change ([this] (Preferences& x) { x.recentItems = recentItems.getSelectedId(); }); };
+
+    softwareMonitoring.setToggleState (p.softwareMonitoring, juce::dontSendNotification);
+    describe (softwareMonitoring, "Software monitoring", "Off: no track plays its input through, whatever its monitoring setting (for hardware monitoring)");
+    softwareMonitoring.onClick = [this] { change ([this] (Preferences& x) { x.softwareMonitoring = softwareMonitoring.getToggleState(); }); };
+    monitorSelectedOnly.setToggleState (p.monitorSelectedOnly, juce::dontSendNotification);
+    describe (monitorSelectedOnly, "Monitor only the selected track", "Only the selected track plays its input through");
+    monitorSelectedOnly.onClick = [this] { change ([this] (Preferences& x) { x.monitorSelectedOnly = monitorSelectedOnly.getToggleState(); }); };
+    overloadMessage.setToggleState (p.overloadMessage, juce::dontSendNotification);
+    describe (overloadMessage, "Say when the audio drops out", "A message in the status bar when the audio engine can't keep up");
+    overloadMessage.onClick = [this] { change ([this] (Preferences& x) { x.overloadMessage = overloadMessage.getToggleState(); }); };
+    autoArmMidi.setToggleState (p.autoArmMidi, juce::dontSendNotification);
+    describe (autoArmMidi, "Record-enable the selected instrument track", "MIDI auto record enable: selecting an instrument track arms it for recording");
+    autoArmMidi.onClick = [this] { change ([this] (Preferences& x) { x.autoArmMidi = autoArmMidi.getToggleState(); }); };
+    describe (audioDevice, Cmd::audioSettings);
+    audioDevice.onClick = [this] {
+        if (onAudioSettings)
+            onAudioSettings();
+    };
+
+    appearance.addItem ("Dark", 1);
+    appearance.addItem ("Light", 2);
+    appearance.addItem ("Follow the system", 3);
+    appearance.setSelectedId (p.appearance == Preferences::Appearance::light ? 2 : p.appearance == Preferences::Appearance::system ? 3 : 1, juce::dontSendNotification);
+    describe (appearance, "Appearance");
+    appearance.onChange = [this] {
+        change ([this] (Preferences& x) {
+            x.appearance = appearance.getSelectedId() == 2   ? Preferences::Appearance::light
+                           : appearance.getSelectedId() == 3 ? Preferences::Appearance::system
+                                                             : Preferences::Appearance::dark;
+        });
+    };
+    middleC.addItem ("C3 (Weft, Yamaha)", 3);
+    middleC.addItem ("C4 (scientific)", 4);
+    middleC.setSelectedId (p.middleC, juce::dontSendNotification);
+    describe (middleC, "Middle C", "How note 60 is named in the piano roll and the inspector");
+    middleC.onChange = [this] { change ([this] (Preferences& x) { x.middleC = middleC.getSelectedId(); }); };
+    widePlayhead.setToggleState (p.widePlayhead, juce::dontSendNotification);
+    describe (widePlayhead, "Wide playhead", "A thicker playhead line, easier to see");
+    widePlayhead.onClick = [this] { change ([this] (Preferences& x) { x.widePlayhead = widePlayhead.getToggleState(); }); };
+    helpTags.setToggleState (p.helpTags, juce::dontSendNotification);
+    describe (helpTags, "Show help tags", "Tooltips when the pointer rests on a control");
+    helpTags.onClick = [this] { change ([this] (Preferences& x) { x.helpTags = helpTags.getToggleState(); }); };
+    close.onClick = [this] {
+        if (onClose)
+            onClose();
+    };
+    close.addShortcut (juce::KeyPress (juce::KeyPress::escapeKey));
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &startup, &recentItems, &softwareMonitoring, &monitorSelectedOnly, &overloadMessage, &autoArmMidi,
+                                                                          &audioDevice, &appearance, &middleC, &widePlayhead, &helpTags, &close })
+        addAndMakeVisible (c);
+    setSize (520, 16 + 13 * rowHeight + 50);
+}
+
+void SettingsDialog::change (const std::function<void (Preferences&)>& edit)
+{
+    auto p = studio.preferences();
+    edit (p);
+    if (! (p == studio.preferences()))
+        studio.setPreferences (p);
+}
+
+void SettingsDialog::paint (juce::Graphics& g)
+{
+    // Section captions, then the labels of the rows that have them.
+    g.setFont (font (Type::strong));
+    g.setColour (colour (Token::text));
+    for (const auto& [row, text] : { std::pair { 0, "General" }, { 3, "Audio" }, { 9, "View" } })
+        g.drawText (text, labelX, 16 + row * rowHeight, controlX - labelX, 26, juce::Justification::centredLeft);
+    g.setFont (font (Type::body));
+    g.setColour (colour (Token::textDim));
+    for (const auto& [row, text] : { std::pair { 1, "On start" }, { 2, "Recent" }, { 10, "Appearance" }, { 11, "Middle C" } })
+        g.drawText (text, labelX, 16 + row * rowHeight, controlX - labelX - 8, 26, juce::Justification::centredLeft);
+}
+
+void SettingsDialog::resized()
+{
+    const int w = getWidth() - controlX - 20;
+    const auto at = [&] (int row) { return 16 + row * rowHeight; };
+    startup.setBounds (controlX, at (1), w, 26);
+    recentItems.setBounds (controlX, at (2), 80, 26);
+    softwareMonitoring.setBounds (controlX, at (4), w, 26);
+    monitorSelectedOnly.setBounds (controlX, at (5), w, 26);
+    overloadMessage.setBounds (controlX, at (6), w, 26);
+    autoArmMidi.setBounds (controlX, at (7), w, 26);
+    audioDevice.setBounds (controlX, at (8), 200, 26);
+    appearance.setBounds (controlX, at (10), 200, 26);
+    middleC.setBounds (controlX, at (11), 200, 26);
+    widePlayhead.setBounds (controlX, at (12), w / 2, 26);
+    helpTags.setBounds (controlX + w / 2, at (12), w / 2, 26);
+    close.setBounds (getWidth() - 104, getHeight() - 42, 84, 28);
 }
 
 // Missing Media ----------------------------------------------------------------------------

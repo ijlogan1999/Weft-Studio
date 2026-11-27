@@ -4,13 +4,17 @@
 
 #include "Mixer.h"
 #include "PianoRoll.h"
+#include "SmartControls.h"
 #include "Studio.h"
 #include "Widgets.h"
 
 namespace weft::ui
 {
 /** Shows the region's whole source file with the used part highlighted; its edges trim the region
-    to the sample (D-UI-5). */
+    to the sample (D-UI-5). With File on it is the Audio File Editor (D-UI-49): dragging selects part
+    of the file and the Functions menu rewrites the file (every region playing it follows), one undo
+    step each. Its own bar holds the zoom slider, Waveform Zoom, Snap, Play and the View menu (ruler
+    and amplitude scales); a ruler sits under the bar and the amplitude scale at the left. */
 class AudioEditor final : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -43,20 +47,61 @@ public:
     void pointerUp();
 
     const model::Region* region() const;
-    juce::Rectangle<float> waveArea() const { return getLocalBounds().toFloat().withTrimmedTop (headerHeight).reduced (0, 4); }
     static constexpr int headerHeight = size::panelHeader;
+    static constexpr int rulerHeight = 16;
+    static constexpr int scaleWidth = 36;
+    juce::Rectangle<float> waveArea() const
+    {
+        return getLocalBounds().toFloat().withTrimmedTop (static_cast<float> (headerHeight + rulerHeight)).withTrimmedLeft (scaleWidth).reduced (0, 4);
+    }
+
+    // The Audio File Editor (D-UI-49). The selection is in the file's frames.
+    std::int64_t selectionStart() const noexcept { return std::min (selFrom, selTo); }
+    std::int64_t selectionEnd() const noexcept { return std::max (selFrom, selTo); }
+    void setSelection (std::int64_t from, std::int64_t to);
+    void selectAll();
+    /** A function from the menu on the selection (an empty selection is the whole file where that makes sense). */
+    bool apply (engine::FileEdit edit, double gainDb = 0.0);
+    bool copySelection();
+    bool cutSelection();
+    bool paste();
+    /** Adjust Tempo Using Selection Length: the tempo at the region's start becomes the one that makes the selection
+        a whole number of beats (the nearest). */
+    bool adjustTempoToSelection();
+    /** Plays the selection (or the region's part of the file); again stops. */
+    void playSelection();
+    enum class RulerScale { time, samples };
+    enum class AmplitudeScale { percent, decibels };
+    RulerScale rulerScale = RulerScale::time;
+    AmplitudeScale amplitudeScale = AmplitudeScale::percent;
+    /** The ruler's labels and the amplitude scale's, as drawn (tests read them). */
+    juce::StringArray rulerLabels() const;
+    juce::StringArray amplitudeLabels() const;
+    /** Waveform Zoom: the waveform drawn this many times taller (1 or 4). */
+    float waveZoom = 1.0f;
+
+    juce::TextButton fileButton { "File" }, functions { "Functions" }, play { "Play" }, waveZoomButton { "Wave Zoom" }, snapButton { "Snap" },
+        viewButton { "View" };
+    juce::Slider zoom;
+    /** The Functions menu's items, in order. */
+    juce::PopupMenu functionsMenu();
+    void pickFunction (int item);
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     std::int64_t fileFrames() const;
     /** A source sample snapped to the arrange grid (unless snap is off). */
     std::int64_t snapSource (const model::Region& r, double sourceSample, bool bypass) const;
+    void syncControls();
+    double rulerStep() const;
 
     Studio& studio;
     Id shownRegion;
     Edge dragging = Edge::none;
     bool gestureOpen = false;
     bool needsFit = true;
+    bool selecting = false;
+    std::int64_t selFrom = 0, selTo = 0;
 };
 
 
@@ -70,6 +115,7 @@ public:
     AudioEditor& audioEditor() noexcept { return editor; }
     PianoRoll& pianoRoll() noexcept { return roll; }
     MixerView& mixerView() noexcept { return mixer; }
+    SmartControlsPanel& smartControls() noexcept { return smart; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -77,5 +123,6 @@ private:
     AudioEditor editor;
     MixerView mixer;
     PianoRoll roll;
+    SmartControlsPanel smart;
 };
 } // namespace weft::ui

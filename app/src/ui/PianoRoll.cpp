@@ -140,12 +140,63 @@ PianoRoll::PianoRoll (Studio& s) : studio (s)
         repaint();
     };
 
+    title.setFont (font (Type::strong));
+    title.setMinimumHorizontalScale (1.0f);
+    describe (title, "Regions shown");
+    info.setFont (font (Type::small));
+    info.setColour (juce::Label::textColourId, colour (Token::textDim));
+    info.setJustificationType (juce::Justification::centredRight);
+    describe (info, "Pointer position");
+    velocitySlider.setRange (1.0, 127.0, 1.0);
+    velocitySlider.textFromValueFunction = [] (double v) { return "Velocity " + juce::String (juce::roundToInt (v)); };
+    velocitySlider.valueFromTextFunction = [] (const juce::String& t) { return t.retainCharacters ("0123456789").getDoubleValue(); };
+    velocitySlider.setTextBoxIsEditable (true);
+    describe (velocitySlider, "Note velocity", "Velocity of the selected notes; drag to set them all");
+    velocitySlider.onDragStart = [this] {
+        if (! studio.session().inGesture())
+            studio.session().beginGesture ("Note Velocity");
+    };
+    velocitySlider.onValueChange = [this] {
+        if (refreshing || studio.piano.selection.empty())
+            return;
+        const std::vector<commands::NoteRef> notes (studio.piano.selection.begin(), studio.piano.selection.end());
+        studio.piano.lastVelocity = juce::roundToInt (velocitySlider.getValue());
+        studio.check (studio.session().setNotesVelocity (notes, studio.piano.lastVelocity));
+    };
+    velocitySlider.onDragEnd = [this] {
+        if (studio.session().inGesture())
+            studio.session().endGesture();
+        studio.edited();
+    };
+    for (int k = 0; k < 12; ++k)
+        scaleRootBox.addItem (juce::String (commands::noteName (60 + k)).dropLastCharacters (1), k + 1);
+    describe (scaleRootBox, "Scale root", "The key Scale Quantize uses");
+    scaleRootBox.onChange = [this] {
+        if (! refreshing && scaleRootBox.getSelectedId() > 0)
+            studio.piano.scaleRoot = scaleRootBox.getSelectedId() - 1;
+    };
+    for (const auto& sc : commands::scales())
+        scaleBox.addItem (sc.name, scaleBox.getNumItems() + 1);
+    describe (scaleBox, "Scale", "The scale Scale Quantize moves notes into");
+    scaleBox.onChange = [this] {
+        if (! refreshing && scaleBox.getSelectedId() > 0)
+            studio.piano.scale = scaleBox.getSelectedId() - 1;
+    };
+    describe (scaleButton, Cmd::scaleQuantize);
+    scaleButton.onClick = [this] {
+        studio.piano.focus = true;
+        studio.perform (Cmd::scaleQuantize);
+    };
+
     for (juce::Component* c : std::initializer_list<juce::Component*> { &toolBox, &snapBox, &quantizeBox, &strength, &swing, &quantizeButton,
-                                                                          &auditionToggle, &followToggle, &laneBox })
+                                                                          &auditionToggle, &followToggle, &laneBox, &velocitySlider, &scaleRootBox,
+                                                                          &scaleBox, &scaleButton })
     {
         makeFocusable (*c);
         addAndMakeVisible (c);
     }
+    addAndMakeVisible (title);
+    addAndMakeVisible (info);
     studio.addChangeListener (this);
     refreshToolbar();
 }
@@ -180,6 +231,24 @@ void PianoRoll::refreshToolbar()
         laneBox.setSelectedId (6, juce::dontSendNotification);
     else
         laneBox.setSelectedId (lane.number == 1 ? 2 : lane.number == 64 ? 3 : 10 + lane.number, juce::dontSendNotification);
+    scaleRootBox.setSelectedId (std::clamp (p.scaleRoot, 0, 11) + 1, juce::dontSendNotification);
+    scaleBox.setSelectedId (std::clamp (p.scale, 0, static_cast<int> (commands::scales().size()) - 1) + 1, juce::dontSendNotification);
+
+    // The regions' names, and the first selected note's velocity (D-W4-15).
+    const auto& m = studio.model();
+    juce::StringArray names;
+    for (const auto& id : regions)
+        if (const auto* r = m.region (id))
+            names.addIfNotAlreadyThere (juce::String (r->name.empty() ? std::string ("MIDI Region") : r->name));
+    title.setText (names.joinIntoString (", "), juce::dontSendNotification);
+    title.setTooltip (title.getText());
+    const model::Note* first = nullptr;
+    for (const auto& ref : p.selection)
+        if ((first = commands::findNote (m, ref)) != nullptr)
+            break;
+    velocitySlider.setEnabled (first != nullptr);
+    if (first != nullptr && ! velocitySlider.isMouseButtonDown())
+        velocitySlider.setValue (first->velocity, juce::dontSendNotification);
 }
 
 void PianoRoll::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -282,7 +351,7 @@ float PianoRoll::laneY (int value) const
 
 void PianoRoll::resized()
 {
-    auto bar = getLocalBounds().removeFromTop (toolbarHeight).reduced (space::s1, space::half);
+    auto bar = getLocalBounds().removeFromTop (size::panelHeader).reduced (space::s1, space::half);
     const auto place = [&bar] (juce::Component& c, int w) {
         c.setBounds (bar.removeFromLeft (w));
         bar.removeFromLeft (space::s1);
@@ -296,6 +365,17 @@ void PianoRoll::resized()
     place (auditionToggle, 88);
     place (followToggle, 72);
     place (laneBox, std::max (88, std::min (152, bar.getWidth())));
+    auto row = getLocalBounds().withTrimmedTop (size::panelHeader).removeFromTop (size::panelHeader).reduced (space::s1, space::half);
+    const auto put = [&row] (juce::Component& c, int w) {
+        c.setBounds (row.removeFromLeft (w));
+        row.removeFromLeft (space::s1);
+    };
+    put (title, std::clamp (row.getWidth() / 4, 80, 200));
+    put (velocitySlider, 120);
+    put (scaleRootBox, 64);
+    put (scaleBox, 140);
+    put (scaleButton, 64);
+    info.setBounds (row);
     if (needsFit && getWidth() > 0 && isVisible())
         fitRegions();
 }
@@ -423,6 +503,7 @@ void PianoRoll::mouseMove (const juce::MouseEvent& e)
                                                        shownTrack(), yToPitch (e.position.y) });
     else
         studio.setPointer (std::nullopt);
+    info.setText (infoAt (e.position), juce::dontSendNotification);
     if (gridArea().toFloat().contains (e.position))
     {
         if (tool == NoteTool::pencil)
@@ -959,7 +1040,23 @@ void PianoRoll::paintCollaborators (juce::Graphics& g)
     }
 }
 
-void PianoRoll::mouseExit (const juce::MouseEvent&) { studio.setPointer (std::nullopt); }
+void PianoRoll::mouseExit (const juce::MouseEvent&)
+{
+    studio.setPointer (std::nullopt);
+    info.setText ({}, juce::dontSendNotification);
+}
+
+juce::String PianoRoll::infoAt (juce::Point<float> p) const
+{
+    if (regions.empty() || ! gridArea().toFloat().contains (p))
+        return {};
+    const auto tick = static_cast<Ticks> (std::floor (xToTick (p.x)));
+    const auto pitch = yToPitch (p.y);
+    auto text = juce::String (commands::noteName (pitch)) + "  " + juce::String (formatBarsBeats (tick, studio.model().signatures));
+    if (const auto n = noteAt (p))
+        text << "  ·  " << commands::noteName (n->pitch) << " velocity " << n->velocity;
+    return text;
+}
 
 juce::Colour PianoRoll::trackColour() const
 {
@@ -1001,7 +1098,7 @@ void PianoRoll::paint (juce::Graphics& g)
     if (x >= static_cast<float> (keyboardWidth))
     {
         g.setColour (colour (Token::playhead));
-        g.drawLine (x, static_cast<float> (toolbarHeight), x, static_cast<float> (getHeight()), 1.5f);
+        g.drawLine (x, static_cast<float> (toolbarHeight), x, static_cast<float> (getHeight()), Theme::get().widePlayhead ? 3.0f : 1.5f);
     }
 }
 
@@ -1167,6 +1264,13 @@ void PianoRoll::paintNotes (juce::Graphics& g)
         {
             g.setColour (fill);
             g.fillRect (b);
+        }
+        if (! n.muted && b.getWidth() > 6.0f)
+        {
+            // The velocity as a line through the note, as long as the velocity is high (D-W4-15).
+            const auto lineY = b.getBottom() - std::max (1.5f, b.getHeight() * 0.18f);
+            g.setColour (colour (Token::regionText).withAlpha (0.55f));
+            g.drawLine (b.getX() + 1.0f, lineY, b.getX() + 1.0f + (b.getWidth() - 2.0f) * static_cast<float> (std::clamp (velocity, 1, 127)) / 127.0f, lineY, 1.5f);
         }
         if (selected)
         {

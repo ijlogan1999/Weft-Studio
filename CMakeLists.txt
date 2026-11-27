@@ -45,6 +45,10 @@ if(WEFT_WITH_JUCE)
     weft_fetch(JUCE)
 endif()
 
+# Pitch shifting and time stretching of audio regions (header-only; linear first so stretch doesn't fetch its own).
+weft_fetch(SignalsmithLinear SYSTEM)
+weft_fetch(SignalsmithStretch SYSTEM)
+
 add_subdirectory(core)
 add_subdirectory(engine)
 add_subdirectory(collab)

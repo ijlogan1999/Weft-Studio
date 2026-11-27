@@ -5,6 +5,7 @@
 // and call perform(); it broadcasts a change after every edit. Message thread only.
 
 #include "Commands.h"
+#include "PluginSettings.h"
 #include "Waveform.h"
 
 #include "weft/arrange/Grid.h"
@@ -32,6 +33,7 @@
 
 #include <juce_events/juce_events.h>
 
+#include <array>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -46,19 +48,30 @@ enum class Tool
     scissors,
     glue,
     eraser,
-    mute
+    mute,
+    // D-UI-36
+    text,
+    zoom,
+    fade,
+    gain,
+    quantize
 };
+inline constexpr Tool lastTool = Tool::quantize;
 juce::String toolName (Tool t);
-/** The one-key picks inside the Tool menu (D-UI-29): T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute. */
+/** The one-key picks inside the Tool menu (D-UI-29, D-UI-36): T Pointer, P Pencil, I Scissors, J Glue, E Eraser, M Mute,
+    N Text, Z Zoom, A Fade, G Gain, Q Quantize. */
 std::optional<Tool> toolForKey (juce::juce_wchar key);
 juce::String toolKey (Tool t);
 
-/** A track's Mute, Solo and Record buttons (header and mixer strip). */
+/** A track's Mute, Solo and Record buttons (header and mixer strip), and the header's optional
+    On/Off and Input Monitoring buttons (D-UI-37). */
 enum class TrackSwitch
 {
     mute,
     solo,
-    arm
+    arm,
+    on,     // the track is on (not off, L-TRH-7)
+    monitor // input monitoring forced on, rather than auto
 };
 
 enum class BottomTab
@@ -66,8 +79,58 @@ enum class BottomTab
     none,
     mixer,
     pianoRoll,
-    audioEditor
+    audioEditor,
+    smartControls // D-UI-52
 };
+
+/** Customize Control Bar (D-UI-43): which controls the control bar shows, the master
+    control beside the modes, and how the display writes time and tempo. */
+struct ControlBarLayout
+{
+    /** Bits of `items`: each one shows a control or a group of controls. */
+    enum Item : int
+    {
+        panelButtons = 1, toolbarButton = 2, transportMoves = 4, // Go to Start, Previous and Next Bar
+        timeDisplay = 8, tempoDisplay = 16, signatureDisplay = 32, keyDisplay = 64,
+        clickAndPunch = 128, countInMenu = 256, snapControls = 512, followButton = 1024, keysButton = 2048, cpuMeter = 4096,
+        varispeedControl = 8192 // not shown until chosen (D-ARCH-55)
+    };
+    static constexpr int allItems = 8191, knownItems = 16383;
+    enum class Master { none, volume, meter };
+    enum class TimeFormat { milliseconds, samples, timecode24, timecode25, timecode30 };
+
+    int items = allItems;
+    Master master = Master::volume;
+    TimeFormat timeFormat = TimeFormat::milliseconds;
+    int tempoDecimals = 2; // 0, 2 or 4
+    engine::varispeed::Unit varispeedUnit = engine::varispeed::Unit::percent;
+
+    bool shows (Item i) const noexcept { return (items & i) != 0; }
+    juce::var toVar() const;
+    static ControlBarLayout fromVar (const juce::var& v);
+    friend bool operator== (const ControlBarLayout&, const ControlBarLayout&) = default;
+};
+
+/** The display's time text in a ControlBarLayout format (D-UI-43): 1:02.345, 2,976,000 samples or 00:01:02:08. */
+juce::String formatDisplayTime (double seconds, double sampleRate, ControlBarLayout::TimeFormat format);
+
+/** The toolbar's buttons until it is customized (D-UI-43). */
+std::vector<Cmd> defaultToolbarCommands();
+/** Every command the toolbar can hold, in its menu's order. */
+std::vector<Cmd> toolbarChoices();
+
+/** The global tracks (D-UI-44), top to bottom: bits of PanelLayout::globalLanes and Studio::protectedLanes. */
+enum GlobalLane : int
+{
+    laneArrangement = 1,
+    laneMarkers = 2,
+    laneTempo = 4,
+    laneSignature = 8,
+    laneKey = 16
+};
+inline constexpr int defaultGlobalLanes = laneMarkers | laneTempo | laneSignature, allGlobalLanes = 31;
+inline constexpr GlobalLane globalLaneOrder[] = { laneArrangement, laneMarkers, laneTempo, laneSignature, laneKey };
+juce::String globalLaneName (GlobalLane lane);
 
 /** Panel visibility and sizes, kept per user across restarts (F-UI-1). */
 struct PanelLayout
@@ -80,10 +143,40 @@ struct PanelLayout
     int sidePanelWidth = 304;
     int bottomHeight = 288;
     bool darkTheme = true;
+    /** View › Control Bar and View › Toolbar, and their customized contents (D-UI-43). */
+    bool controlBar = true;
+    bool toolbar = false;
+    /** Which global tracks show (Configure Global Tracks, D-UI-44); with singleGlobalLane only `singleLane` does. */
+    int globalLanes = defaultGlobalLanes;
+    bool singleGlobalLane = false;
+    GlobalLane singleLane = laneMarkers;
+    ControlBarLayout bar, barDefault;
+    std::vector<Cmd> toolbarCommands = defaultToolbarCommands(), toolbarDefault = defaultToolbarCommands();
 
     juce::String toString() const;
     static PanelLayout fromString (const juce::String& text);
     friend bool operator== (const PanelLayout&, const PanelLayout&) = default;
+};
+
+/** This computer's settings (Settings window, D-UI-41); saved with the app, never in a project. */
+struct Preferences
+{
+    enum class Startup { welcome, lastProject };
+    enum class Appearance { dark, light, system };
+    Startup startup = Startup::welcome;
+    int recentItems = 10;            // 5, 10, 20 or 50
+    bool softwareMonitoring = true;  // off: no track monitors its input
+    bool monitorSelectedOnly = false;
+    bool overloadMessage = true;     // a status message when the audio engine drops out
+    Appearance appearance = Appearance::dark;
+    bool widePlayhead = false;
+    int middleC = 3;                 // note 60 is C3 or C4
+    bool helpTags = true;            // tooltips
+    bool autoArmMidi = false;        // selecting an instrument track record-enables it (D-W1-14)
+
+    juce::String toString() const;
+    static Preferences fromString (const juce::String& text);
+    friend bool operator== (const Preferences&, const Preferences&) = default;
 };
 
 /** The piano roll's view state (local, F-PRL): its selection, clipboard, grid and quantize settings. */
@@ -101,6 +194,8 @@ struct PianoRollState
     bool follow = true;
     Ticks lastLength = 240;    // the pencil draws notes like the last one made or resized
     int lastVelocity = 100;
+    int scaleRoot = 0;         // Scale Quantize (D-W4-15): 0 = C .. 11 = B
+    int scale = 0;             // index into commands::scales()
 };
 
 /** Track lane heights: local view state (F-TRK-12). */
@@ -139,6 +234,12 @@ public:
     PanelLayout layout;
     bool follow = true;
     Id editorRegion; // the region the audio editor shows
+    /** The audio editor is the Audio File Editor (D-UI-49): drags select part of the file for its functions. */
+    bool audioFileMode = false;
+    /** What the Audio File Editor's Copy or Cut kept. */
+    std::shared_ptr<const media::AudioData> audioClipboard;
+    /** A destructive edit to the audio file `hash` (D-UI-49), as one undo step; the status line says why when it can't. */
+    bool editAudioFile (const std::string& hash, engine::FileEdit edit, std::int64_t from, std::int64_t to, double gainDb = 0.0);
     commands::RegionClipboard clipboard;
     juce::String status;
     PianoRollState piano;
@@ -155,11 +256,90 @@ public:
 
     const Id& selectedTrack() const noexcept { return local.selectedTrack; }
     void selectTrack (const Id& trackId);
+    /** New Track with Next Input (D-UI-34): one track like the selected one below it, on the next input; selected. */
+    std::optional<Id> newTrackNextInput();
+    /** The start (or end) of the selected notes while the piano roll has the keys, else of the selected regions (D-UI-35). */
+    std::optional<Ticks> selectionEdge (bool end) const;
+    /** Edit › Nudge Value (D-W3-11): what Nudge, Lengthen/Shorten and Slip move regions by. Local, not saved. */
+    enum class NudgeValue { grid, bar, beat, division, tick };
+    NudgeValue nudgeValue = NudgeValue::grid;
+    /** One nudge step from `from`, signed by direction. */
+    Ticks nudgeDelta (Ticks from, int direction) const;
+    /** View › Grid Lines (D-W3-11): the arrange grid shows. */
+    bool gridLines = true;
+    /** Whether a global track shows now (D-UI-44). */
+    bool laneShown (GlobalLane lane) const noexcept;
+    /** Protected global tracks (D-UI-44): their contents can't be edited. Local, not saved. */
+    int protectedLanes = 0;
+    int lanesBeforeMarkerOnly = defaultGlobalLanes;
+    /** True, after saying so in the status bar, when `lane` is protected. */
+    bool laneProtected (GlobalLane lane);
+    void toggleLaneProtect (GlobalLane lane);
+    /** Shows or hides one global track; showing one while Single is on makes it the one shown. */
+    void setLaneShown (GlobalLane lane, bool shown);
+    /** Mixer views (D-W6-14): Single (the selected channel and where its signal goes), Tracks (as the track
+        list shows them) or All (hidden tracks too), and which kinds of strip show. Local, not saved. */
+    enum class MixerMode { single, tracks, all };
+    MixerMode mixerMode = MixerMode::tracks;
+    bool mixerAudio = true, mixerInstrument = true, mixerBus = true;
+    /** View › Follow Track Stacks (P-MX-10): the mixer hides a closed stack's members as the tracks area does. */
+    bool mixerFollowStacks = true;
+    /** Track notes under each mixer strip (P-MX-22, D-UI-47); this machine's. */
+    bool mixerNotes = false;
+    /** Screensets (D-UI-46): numbered panel layouts, 1 to 99, this machine's. The current one follows the layout as
+        it changes; recalling another keeps this one as it was left. */
+    std::map<int, PanelLayout> screensets;
+    int screenset = 1;
+    int screensetTens = 0; // after Recall Screenset Nx: the next number key picks N1 to N9
+    bool recallScreenset (int number);
+    juce::String screensetsToString() const;
+    void screensetsFromString (const juce::String& text);
+    std::function<void()> onScreensetsChanged;
+    /** Close Project: an empty untitled project replaces this one (ask about unsaved changes first). */
+    bool closeProject();
+    /** Opens or closes a stack (the main track's, or a member's stack); with `all`, every stack takes that state (M-MIX-31). */
+    bool toggleStack (const Id& trackId, bool all = false);
+    /** The channels the mixer shows, left to right (the master is pinned apart and not listed). */
+    std::vector<Id> mixerOrder() const;
+    /** Configure Track Header (D-UI-37): which parts the track headers show, and the column's width. Local, not saved. */
+    struct HeaderOptions
+    {
+        bool monitor = false, onOff = false, hide = false; // optional buttons
+        bool volume = true, pan = true, numbers = true, colorBars = true, icons = false;
+        int width = 208;
+    };
+    static constexpr int defaultHeaderWidth = 208, minHeaderWidth = 160, maxHeaderWidth = 480;
+    HeaderOptions header;
+    enum HeaderOption { headerMonitor = 1, headerOnOff, headerHide, headerVolume, headerPan, headerNumbers, headerColorBars, headerIcons };
+    /** The Configure Track Header menu: item ids are `base` + HeaderOption. */
+    juce::PopupMenu headerOptionsMenu (int base) const;
+    void toggleHeaderOption (int option);
+    void setHeaderWidth (int width);
+    /** Turn All Tracks On/Off (D-UI-37): with any audio or instrument track off, all go on; otherwise all go off.
+        One undo step; a track someone else has locked stays as it is. */
+    bool toggleAllTracksOff();
+    /** Sets every audio and instrument track on or off, as one undo step (Alt+click on an On/Off button). */
+    bool setAllTracksOff (bool off);
+    /** Copy / Paste Channel Strip Setting (D-W6-13): volume, pan and inserts, kept while the app runs. */
+    bool copyChannelStrip (const Id& trackId);
+    bool pasteChannelStrip (const Id& trackId);
+    bool hasChannelStripCopy() const noexcept { return stripClipboard.has_value(); }
+    Ticks lastLocatePosition() const noexcept { return lastLocate; }
     /** Moves a track to `index` among the tracks as shown (header drag, Move Track Up/Down; F-TRK-7). */
     bool moveTrackTo (const Id& trackId, std::size_t index);
     const commands::LocalView& localView() const noexcept { return local; }
     void toggleArm (const Id& trackId);
+    /** The instrument track that MIDI auto record enable armed (D-W1-14). */
+    Id autoArmed;
     void toggleSolo (const Id& trackId, bool exclusive = false);
+    /** Gives the track's group members (that link solo or record) the state its button has now. */
+    void linkSwitch (TrackSwitch which, const Id& trackId);
+    /** Adds the regions a selection-linking group picks with the selected ones (P-GRP-6). */
+    void linkSelection();
+    /** What Create Group and Create Stack act on: the selected track, then the tracks of the selected regions. */
+    std::vector<Id> selectedTracksAndRegionTracks() const;
+    /** The group a track was last put in (Alt+click on a Group slot assigns it, M-MIX-21). */
+    Id lastGroup;
     /** Mute or unmute; with mute automation in a live mode the click is a touch, as in the mixer. */
     void toggleMute (const Id& trackId);
     /** Whether a track's button is on. */
@@ -171,11 +351,15 @@ public:
     void clickTrackSwitch (TrackSwitch which, const Id& trackId, juce::ModifierKeys mods);
     /** Around a swipe down a column of buttons (D-UI-25): the mutes it sets are one undo step. */
     void beginSwitchSwipe (TrackSwitch which);
+    /** Mute, On/Off and Input Monitoring are saved in the project; Solo and Record are this machine's. */
+    static bool documentSwitch (TrackSwitch which) noexcept;
     void endSwitchSwipe();
     /** True when a solo elsewhere silences the track (it isn't soloed, and isn't fed by or feeding a soloed one). */
     bool silencedBySolo (const Id& trackId) const;
     /** The last marker at or before the playhead: what Rename Marker and Delete Marker act on (D-UI-26). */
     const model::Marker* markerAtPlayhead() const;
+    /** Go to Marker Number (D-UI-39): the n-th marker from the start, 1-based. */
+    bool goToMarkerNumber (int number);
 
     int trackHeight (const Id& trackId) const;
     void setTrackHeight (const Id& trackId, int height);
@@ -192,6 +376,12 @@ public:
     bool perform (Cmd command);
     /** Tap Tempo (L-TMP-9): one tap at `nowMs` (a millisecond clock). */
     bool tapTempo (double nowMs);
+    /** Varispeed (D-ARCH-55): this user's playback rate, 0.5 to 2, kept while it's off; never in the project. */
+    bool varispeedOn() const noexcept { return varispeedEnabled; }
+    double varispeedRate() const noexcept { return varispeedValue; }
+    void setVarispeed (bool on, double rate);
+    /** The rate in the control bar's unit: "-15.0%", "102.00 bpm", "-2.81 st", "374.0 Hz". */
+    juce::String varispeedText() const;
     /** Keyboard MIDI mode gets the key first (AT-REC-20). True when it used the key. */
     bool keyboardMidiKey (const juce::KeyPress& key, bool down);
     bool keyboardMidiOn() const noexcept { return keys.enabled(); }
@@ -210,6 +400,13 @@ public:
     void setStatus (const juce::String& message);
     /** Applies a command result: on failure shows the session's message. */
     bool check (const commands::EditResult& result);
+
+    /** Settings (D-UI-41): applies them at once and tells onPreferencesChanged, which saves them. */
+    const Preferences& preferences() const noexcept { return prefs; }
+    void setPreferences (const Preferences& p);
+    std::function<void (const Preferences&)> onPreferencesChanged;
+    /** Whether the theme is dark now: the Appearance setting, or the system's when it follows it. */
+    bool wantsDarkTheme() const;
 
     // Projects (M9, W-10) -------------------------------------------------------------
     /** Ctrl+S: writes the document atomically, then the media index and this user's view. */
@@ -289,6 +486,24 @@ public:
     std::function<void (Cmd)> uiCommand;
     /** Width of the visible timeline in pixels, for zoom to fit. */
     double timelineWidth = 800.0;
+    /** The tracks area's visible lane height and vertical scroll, through the tracks area (Page Up/Down, zooms). */
+    double timelineHeight = 400.0;
+    std::function<int()> verticalScroll;
+    std::function<void (int)> setVerticalScroll;
+    /** Zoom and scroll as a whole (D-UI-38): Save/Recall Zoom 1-3 and Navigation Back/Forward. */
+    struct ViewSnapshot
+    {
+        double originTick = 0, pixelsPerTick = 0;
+        std::map<Id, int> heights;
+        int scrollY = 0;
+    };
+    ViewSnapshot viewSnapshot() const;
+    void restoreView (const ViewSnapshot&);
+    /** Keeps the view for Navigation: Back before a zoom command changes it. */
+    void rememberView();
+    std::array<std::optional<ViewSnapshot>, 3> savedZooms;
+    /** Every track's height times `factor` (Zoom Vertical In/Out, the vertical zoom slider). */
+    void scaleTrackHeights (double factor);
 
     /** Polls the engine (recordings, garbage) and the playhead; the window calls it on a timer. */
     void tick();
@@ -296,6 +511,8 @@ public:
     // Plug-ins (M6) --------------------------------------------------------------------
     /** The per-user settings folder (the plug-in list lives here). Set before making a Studio to move it. */
     static std::filesystem::path& settingsFolder();
+    /** A plug-in about to be inserted takes its saved default setting, when there is one (D-W6-12). */
+    model::PluginInstance withDefaultSetting (model::PluginInstance plugin) const;
     engine::PluginCatalog& plugins() noexcept { return *catalog; }
     /** The out-of-process scanner (F-PLG-2); next to the app by default. */
     std::filesystem::path scannerPath;
@@ -310,6 +527,8 @@ public:
         juce::String label, group;
     };
     std::vector<PluginChoice> pluginChoices (bool instruments) const;
+    /** Shows the Library's presets for a plug-in (D-UI-53); the main window sets it. */
+    std::function<void (const juce::String& pluginName)> showPresets;
     /** Adds an insert and opens its editor (W-6 step 2). */
     std::optional<Id> addPlugin (const Id& trackId, const PluginChoice& choice, std::optional<std::size_t> index = {});
     bool replacePlugin (const Id& trackId, const Id& pluginId, const PluginChoice& choice);
@@ -333,6 +552,18 @@ public:
     void flushPluginStates (bool all = false);
     bool pluginStatePending (const Id& pluginId) const { return pendingState.contains (pluginId); }
     std::function<void (const Id& pluginId)> openPluginEditor;
+    // Plug-in settings (D-W6-12) -----------------------------------------------------------
+    static std::filesystem::path pluginSettingsRoot() { return settingsFolder() / "Plug-in Settings"; }
+    /** What the plug-in is set to now: every parameter and its state chunk (unsaved editor changes included). */
+    std::optional<PluginSetting> currentSetting (const Id& pluginId);
+    /** Loads a setting into the plug-in as one undo step named `undoName`. */
+    bool applySetting (const Id& pluginId, const PluginSetting& setting, const juce::String& undoName);
+    /** Reset Setting: every parameter to its default, one undo step ("Reset Setting"). */
+    bool resetPluginSetting (const Id& pluginId);
+    /** Copy Setting / Paste Setting: one setting kept while the app runs, for the same plug-in. */
+    bool copyPluginSetting (const Id& pluginId);
+    bool canPastePluginSetting (const Id& pluginId) const;
+    bool pastePluginSetting (const Id& pluginId);
 
     // Automation (M7) --------------------------------------------------------------------
     /** Automation view (A): lanes under each track (local view state, F-AUT-1). */
@@ -344,6 +575,14 @@ public:
     void setShownLane (const Id& trackId, std::size_t index, const model::AutomationTarget& target);
     /** "+": another lane, showing the next parameter not yet shown. */
     void addShownLane (const Id& trackId);
+    /** "×" (D-W8-7): closes a lane; with none left the track shows Volume. Its automation stays. */
+    void removeShownLane (const Id& trackId, std::size_t index);
+    /** Cycle Through Used Automation Parameters (D-W8-7): the first lane shows the next parameter with automation. */
+    bool cycleAutomationParameter (const Id& trackId);
+    /** Every track's automation mode, as one undo step ("Automation Mode"). */
+    bool setAllAutomationModes (const std::string& mode);
+    /** Up/Down with points selected: their values by `by` (normalized), one undo step. */
+    bool nudgeAutomationPoints (double by);
     /** A track row: the track lane plus its automation lanes in automation view. */
     int rowHeight (const Id& trackId) const;
     /** What a track can automate (AT-AUT-2); plug-in parameters come from the engine's processors. */
@@ -364,6 +603,30 @@ public:
     /** What the engine plays for a target while automation drives it (controls follow it). */
     std::optional<double> automationValue (const Id& trackId, const model::AutomationTarget& target) const;
     engine::LiveAutomation& liveAutomation() noexcept { return *live; }
+    /** A target's value now, normalized: what automation plays, else its static value. */
+    double targetValue (const Id& trackId, const model::AutomationTarget& target) const;
+    /** A normalized value of a target as the user reads it ("-6.0 dB", "L 30", "On", the plug-in's own text). */
+    juce::String targetValueText (const Id& trackId, const model::AutomationTarget& target, double normalized) const;
+
+    // Smart Controls (D-UI-52) ---------------------------------------------------------------
+    /** The track's Smart Controls: its own, or mapped automatically (its plug-ins' parameters and its sends on the
+        first knobs, Volume and Pan on the last two). `layout` 0 keeps the track's own knob count. */
+    model::SmartControls smartControls (const Id& trackId, int knobs = 0) const;
+    /** A knob's position 0..1, from its first mapping that still exists; nothing when nothing it maps is there. */
+    std::optional<double> smartControlPosition (const Id& trackId, const model::SmartControl& control) const;
+    juce::String smartControlName (const Id& trackId, const model::SmartControl& control) const;
+    juce::String smartControlText (const Id& trackId, const model::SmartControl& control) const;
+    /** Turns knob `index` to `position`: each mapping moves to its place in its range, through touchControl. */
+    void turnSmartControl (const Id& trackId, int index, double position);
+    void releaseSmartControl (const Id& trackId, int index);
+    /**
+        A controller message from a MIDI input (message thread). While Learn waits on a knob of the selected track,
+        the controller is assigned to it ("Smart Controls"); otherwise it turns the selected track's knobs assigned
+        to it, one undo step per burst. True when it was used.
+    */
+    bool smartControlMidi (std::uint8_t kind, std::uint8_t data1, std::uint8_t data2);
+    /** The selected track's knob waiting for a controller (Learn), if any. */
+    std::optional<int> smartLearn;
 
     // Bounce (M8) ------------------------------------------------------------------------
     /** The Bounce dialog's starting values (W-9 step 2): default range, 24-bit WAV at the project
@@ -373,9 +636,15 @@ public:
     engine::Mp3Format defaultMp3Format() const;
     /** Stops the transport and starts a bounce; tick() renders it. False when one is running. */
     bool startBounce (const engine::BounceSettings& settings);
+    /** Several bounces one after the other (Export All Tracks); one result with every file. */
+    bool startBounces (std::vector<engine::BounceSettings> settings);
     void cancelBounce();
     bool bouncing() const noexcept { return bounceJob != nullptr; }
-    double bounceProgress() const noexcept { return bounceJob != nullptr ? bounceJob->progress() : 0.0; }
+    double bounceProgress() const noexcept;
+    /** Export Track (D-W9-9): the selected track, or every audio and instrument track that isn't muted. */
+    std::vector<Id> exportableTracks (bool all) const;
+    /** Export Selection as MIDI File (D-W9-10). */
+    bool exportSelectionAsMidi (const std::filesystem::path& file);
     /** Why the running bounce plays in real time, or empty. */
     juce::String bounceNotice() const { return bounceJob != nullptr ? juce::String (bounceJob->notice()) : juce::String(); }
     /** The last finished (or cancelled) bounce. */
@@ -552,6 +821,8 @@ private:
     std::optional<Ticks> discardRecordingFrom;
     Ticks recordPressedAt = 0; // the playhead when Record was pressed
     std::vector<double> taps;  // Tap Tempo: the last taps, in ms
+    bool varispeedEnabled = false;
+    double varispeedValue = 1.0;
     bool tapCommitted = false; // this run of taps has its undo step
     double lastMediaRefresh = 0;
     std::string deviceIdText;
@@ -588,7 +859,7 @@ private:
     std::optional<bool> performNotes (Cmd command);
     void zoomToFit();
     /** Left/Right in the tracks area (D-UI-28): the previous or next region on the same track. */
-    bool stepRegion (int direction);
+    bool stepRegion (int direction, bool add = false);
     /** Z fitted the selection to this view; Z again with nothing changed fits the whole project (D-UI-27). */
     struct FittedSelection
     {
@@ -606,22 +877,40 @@ private:
     std::unique_ptr<engine::PluginCatalog> catalog;
     std::unique_ptr<engine::Vst3Host> host;
     std::map<Id, double> pendingState; // plug-in id -> when its parameters last changed (ms)
+    std::optional<PluginSetting> settingClipboard;
+    std::optional<model::ChannelStrip> stripClipboard;
+    std::set<Id> keptSolo; // Clear/Recall Solo
+    std::string settingClipboardPlugin; // format + uid of the plug-in it came from
     double lastParamChange = 0;
     void endPluginGesture();
     std::unique_ptr<project::ProjectFolder> folder;
     std::unique_ptr<commands::Session> sess;
+    bool inCommand = false; // perform() is running: Shift is part of a key command, not the group override
     commands::LocalView local;
+    Preferences prefs;
+    std::int64_t dropoutsSeen = 0;
     engine::KeyboardMidi keys;
     std::map<Id, int> heights;
+    std::vector<ViewSnapshot> backViews, forwardViews; // Navigation: Back / Forward
+    std::map<Id, int> zoomedFrom; // Zoom Selected Track: the height to go back to
     std::map<Id, std::vector<model::AutomationTarget>> lanesShown;
     std::unique_ptr<engine::LiveAutomation> live;
     std::unique_ptr<engine::MidiInputRouter> midiRouter;
+    /** Smart Controls turned from hardware: the open gesture and when the last message came (ms). */
+    bool hardwareGesture = false;
+    double hardwareTurnMs = 0;
+    std::shared_ptr<bool> alive = std::make_shared<bool> (true);
     std::unique_ptr<engine::BounceJob> bounceJob;
+    std::vector<engine::BounceSettings> bounceQueue; // still to run after this one
+    std::vector<std::filesystem::path> bouncedSoFar;
+    std::size_t bounceCount = 0, bouncesDone = 0;
+    bool beginJob (const engine::BounceSettings& settings);
     Ticks bounceFrom = 0;
     void stepBounce();
     std::map<std::string, std::vector<float>> peakCache;
     std::map<std::string, WaveSummary> waveCache;
     std::optional<Ticks> locatedAt; // shown until the audio thread has taken the locate
+    Ticks lastLocate = 0;           // Go to / Play from Last Locate Position (D-UI-35): the last place located to or played from
     std::int64_t locatedFrame = -1;
     bool audioOk = false;
     engine::DeviceConfig deviceConfig; // what the current device was opened with

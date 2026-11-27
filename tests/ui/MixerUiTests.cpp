@@ -2,6 +2,7 @@
 
 #include "UiFixture.h"
 
+#include "ui/GroupsPanel.h"
 #include "ui/PluginSearch.h"
 
 using namespace weft;
@@ -763,4 +764,532 @@ TEST_CASE ("AT-PLG-13 Search and Add Plug-in", "[UI][AT-PLG-13]")
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         items.add (it.getItem().text);
     CHECK (items.contains ("Search and Add Plug-in..."));
+}
+
+TEST_CASE ("AT-PLG-14 plug-in settings: save, load, next/previous, compare, copy/paste, reset, default; hide all windows", "[UI][AT-PLG-14]")
+{
+    Ui ui;
+    const auto first = ui.m().trackOrder.front();
+    const auto second = ui.studio.session().createTrack (model::TrackKind::audio, "Second").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    const auto addEq = [&] (const Id& trackId) {
+        auto* strip = mixer.stripFor (trackId);
+        const auto slot = ui.m().track (trackId)->strip.inserts.size();
+        const auto eq = entry (strip->insertMenu (slot), "Weft EQ");
+        REQUIRE (eq);
+        strip->pickInsert (slot, eq->id);
+        ui.settle();
+        return ui.m().track (trackId)->strip.inserts.back().id;
+    };
+    const auto a = addEq (first);
+    const auto b = addEq (second);
+    auto* window = ui.main->pluginWindows().find (a);
+    REQUIRE (window != nullptr);
+    auto* frame = window->frame();
+    auto* editor = window->generic();
+    REQUIRE ((frame != nullptr && editor != nullptr));
+    const auto proc = ui.studio.processor (a);
+    REQUIRE (proc != nullptr);
+    REQUIRE_FALSE (editor->rows.empty());
+    std::size_t g = 0; // the first continuous parameter
+    while (g < editor->rows.size() && proc->parameters()[g].steps > 1)
+        ++g;
+    REQUIRE (g < editor->rows.size());
+    const auto set = [&] (double v) {
+        window->pollParameters(); // the window's timer has seen the last session edit
+        editor->rows[g].slider->setValue (v, juce::sendNotificationSync);
+        window->pollParameters();
+        ui.settle();
+        frame->refresh();
+    };
+    const auto value = [&] { return proc->parameter (static_cast<int> (g)); };
+    const auto& names = [&] { return plugin_settings::names (Studio::pluginSettingsRoot(), *ui.studio.pluginInstance (a)); };
+
+    // Nothing saved yet: the button says Settings; Compare and Paste are off.
+    CHECK (frame->settings.getButtonText() == "Settings");
+    CHECK_FALSE (frame->compare.isEnabled());
+    CHECK_FALSE (frame->paste.isEnabled());
+    CHECK (window->isResizable()); // the slider list can be widened
+    CHECK (frame->getWidth() >= PluginFrame::minWidth);
+
+    // Save Setting As (asks for the name), then a second one.
+    set (0.8);
+    frame->promptForText = [] (const juce::String&, const juce::String&, std::function<void (juce::String)> done) { done ("Bright"); };
+    frame->pickSettings (PluginFrame::itemSaveAs);
+    CHECK (frame->settingName() == "Bright");
+    CHECK (frame->settings.getButtonText() == "Bright");
+    set (0.5);
+    CHECK (frame->modified());
+    CHECK (frame->settings.getButtonText() == "Bright *");
+    CHECK (frame->compare.isEnabled());
+
+    // Compare: the saved setting, then the edits again.
+    REQUIRE (frame->toggleCompare());
+    ui.settle();
+    CHECK (frame->comparing());
+    CHECK (value() == Catch::Approx (0.8).margin (1e-4));
+    REQUIRE (frame->toggleCompare());
+    ui.settle();
+    CHECK_FALSE (frame->comparing());
+    CHECK (value() == Catch::Approx (0.5).margin (1e-4));
+
+    REQUIRE (frame->saveSettingAs ("Air"));
+    CHECK (names() == std::vector<std::string> { "Air", "Bright" });
+
+    // Next and Previous go through the saved settings in name order, and wrap; loading is one undo step.
+    set (0.1);
+    REQUIRE (frame->stepSetting (1));
+    ui.settle();
+    CHECK (frame->settingName() == "Bright");
+    CHECK (value() == Catch::Approx (0.8).margin (1e-4));
+    CHECK (ui.studio.session().undoName() == "Load Setting");
+    frame->next.onClick();
+    ui.settle();
+    CHECK (frame->settingName() == "Air");
+    CHECK (value() == Catch::Approx (0.5).margin (1e-4));
+    frame->pickSettings (PluginFrame::itemPrevious);
+    ui.settle();
+    CHECK (frame->settingName() == "Bright");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (value() == Catch::Approx (0.5).margin (1e-4));
+
+    // The Settings menu lists the saved settings, ticking the current one.
+    {
+        const auto menu = frame->settingsMenu();
+        juce::StringArray items, ticked;
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            if (it.getItem().itemID != 0)
+            {
+                items.add (it.getItem().text);
+                if (it.getItem().isTicked)
+                    ticked.add (it.getItem().text);
+            }
+        CHECK (items.joinIntoString ("|")
+               == "Next Setting|Previous Setting|Copy Setting|Paste Setting|Reset Setting|Save Setting|Save Setting As...|Save Setting as Default|"
+                  "Recall Default Setting|Delete \"Bright\"|Air|Bright");
+        CHECK (ticked == juce::StringArray { "Bright" });
+    }
+
+    // Copy on one EQ, Paste on the other.
+    set (0.3);
+    frame->copy.onClick();
+    auto* other = ui.main->pluginWindows().find (b);
+    REQUIRE (other != nullptr);
+    other->frame()->refresh();
+    CHECK (other->frame()->paste.isEnabled());
+    other->frame()->paste.onClick();
+    ui.settle();
+    CHECK (ui.studio.processor (b)->parameter (static_cast<int> (g)) == Catch::Approx (0.3).margin (1e-4));
+    CHECK (ui.studio.session().undoName() == "Paste Setting");
+
+    // Reset Setting: every parameter to its default.
+    frame->pickSettings (PluginFrame::itemReset);
+    ui.settle();
+    CHECK (value() == Catch::Approx (proc->parameters()[g].defaultValue).margin (1e-4));
+    CHECK (ui.studio.session().undoName() == "Reset Setting");
+    CHECK (frame->settingName().empty());
+
+    // Save as Default: a new Weft EQ starts from it; Recall Default Setting loads it back.
+    set (0.7);
+    frame->pickSettings (PluginFrame::itemSaveDefault);
+    const auto c = addEq (second);
+    const auto paramId = proc->parameters()[g].id;
+    REQUIRE (ui.studio.pluginInstance (c)->params.contains (paramId));
+    CHECK (ui.studio.pluginInstance (c)->params.at (paramId) == Catch::Approx (0.7).margin (1e-4));
+    CHECK (ui.studio.processor (c)->parameter (static_cast<int> (g)) == Catch::Approx (0.7).margin (1e-4));
+    set (0.2);
+    frame->pickSettings (PluginFrame::itemRecallDefault);
+    ui.settle();
+    CHECK (value() == Catch::Approx (0.7).margin (1e-4));
+
+    // Delete the current setting.
+    REQUIRE (frame->loadSetting ("Bright"));
+    frame->pickSettings (PluginFrame::itemDelete);
+    CHECK (names() == std::vector<std::string> { "Air" });
+    CHECK (frame->settingName().empty());
+
+    // V hides every plug-in window and shows them again; with none open it only says so.
+    auto& windows = ui.main->pluginWindows();
+    CHECK (commandInfo (Cmd::togglePluginWindows).shortcut == "V");
+    ui.main->run (Cmd::togglePluginWindows);
+    CHECK (windows.allWindowsHidden());
+    ui.main->run (Cmd::togglePluginWindows);
+    CHECK_FALSE (windows.allWindowsHidden());
+    windows.closeAll();
+    ui.settle();
+    CHECK_FALSE (windows.toggleAll());
+    CHECK_FALSE (windows.allWindowsHidden());
+}
+
+TEST_CASE ("AT-MIX-18 peak number, Mute Off for All, Clear/Recall Solo, solo by regions, monitoring key, copy and paste a strip", "[UI][AT-MIX-18]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto first = ui.m().trackOrder.front();
+    const auto second = s.createTrack (model::TrackKind::instrument, "Second").value();
+    const auto third = s.createTrack (model::TrackKind::instrument, "Third").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    auto* strip = mixer.stripFor (first);
+    REQUIRE (strip != nullptr);
+
+    // The peak number holds the highest level, red over 0 dB; a click resets it and the clip light.
+    CHECK (strip->peak.getText() == "-inf");
+    strip->meter.update (2.0f, 0.5f, true, 0.0);
+    strip->updateMeter (0.1);
+    CHECK (strip->peak.getText() == "+6.0");
+    CHECK (strip->peak.findColour (juce::Label::textColourId) == colour (Token::meterClip));
+    strip->meter.update (0.5f, 0.1f, false, 0.2);
+    strip->updateMeter (0.3);
+    CHECK (strip->peak.getText() == "+6.0"); // held
+    strip->mouseDown (mouse (strip->peak, strip->peak.getLocalBounds().getCentre().toFloat()));
+    CHECK (strip->peak.getText() == "-inf");
+    CHECK_FALSE (strip->meter.ballistics.clip());
+    CHECK (strip->peak.getRight() <= strip->getWidth());
+    CHECK (strip->readout.getRight() <= strip->peak.getX());
+
+    // Mute Off for All: one undo step.
+    REQUIRE (s.setTrackMute (first, true));
+    REQUIRE (s.setTrackMute (third, true));
+    ui.studio.edited();
+    REQUIRE (ui.studio.perform (Cmd::unmuteAll));
+    ui.settle();
+    CHECK_FALSE ((ui.m().track (first)->mute || ui.m().track (third)->mute));
+    CHECK (s.undoName() == "Mute Off for All");
+    CHECK_FALSE (ui.studio.perform (Cmd::unmuteAll));
+
+    // Clear/Recall Solo.
+    ui.studio.toggleSolo (first);
+    ui.studio.toggleSolo (second);
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    CHECK (ui.studio.localView().soloed.empty());
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    CHECK (ui.studio.localView().soloed == std::set<Id> { first, second });
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    ui.studio.toggleSolo (third); // a new solo replaces what was kept
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    REQUIRE (ui.studio.perform (Cmd::clearRecallSolo));
+    CHECK (ui.studio.localView().soloed == std::set<Id> { third });
+
+    // Solo Tracks of Selected Regions: exactly those tracks.
+    const auto r1 = s.createMidiRegion (second, 0, 3840).value();
+    const auto r2 = s.createMidiRegion (third, 3840, 3840).value();
+    ui.studio.edited();
+    ui.studio.selection.set ({ r1, r2 });
+    REQUIRE (ui.studio.perform (Cmd::soloSelectedRegions));
+    CHECK (ui.studio.localView().soloed == std::set<Id> { second, third });
+    ui.studio.selection.set (std::vector<Id> {});
+    CHECK_FALSE (ui.studio.perform (Cmd::soloSelectedRegions));
+
+    // Shift+I: the selected track's input monitoring On, then Auto.
+    ui.studio.selectTrack (first);
+    REQUIRE (ui.key ('I', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.m().track (first)->monitor == "on");
+    REQUIRE (ui.studio.perform (Cmd::monitorTrack));
+    CHECK (ui.m().track (first)->monitor == "auto");
+
+    // Copy Channel Strip Setting from one track, paste onto another: volume, pan and inserts, one undo step.
+    REQUIRE (s.setTrackVolume (first, -6.0));
+    REQUIRE (s.setTrackPan (first, 0.3));
+    ui.studio.edited();
+    strip = mixer.stripFor (first);
+    const auto eq = entry (strip->insertMenu (0), "Weft EQ");
+    REQUIRE (eq);
+    strip->pickInsert (0, eq->id);
+    ui.settle();
+    const auto sourceInsert = ui.m().track (first)->strip.inserts.at (0);
+    REQUIRE (s.setPluginParam (first, sourceInsert.id, "hpOn", 1.0));
+    ui.studio.edited();
+    CHECK_FALSE (ui.studio.hasChannelStripCopy());
+    REQUIRE (ui.studio.perform (Cmd::copyChannelStrip));
+    CHECK (ui.studio.hasChannelStripCopy());
+    ui.studio.selectTrack (third);
+    REQUIRE (ui.studio.perform (Cmd::pasteChannelStrip));
+    ui.settle();
+    const auto& pasted = ui.m().track (third)->strip;
+    CHECK (pasted.volumeDb == Catch::Approx (-6.0));
+    CHECK (pasted.pan == Catch::Approx (0.3));
+    REQUIRE (pasted.inserts.size() == 1);
+    CHECK (pasted.inserts[0].pluginUid == sourceInsert.pluginUid);
+    CHECK (pasted.inserts[0].id != sourceInsert.id);
+    CHECK (pasted.inserts[0].params.at ("hpOn") == Catch::Approx (1.0));
+    CHECK (s.undoName() == "Paste Channel Strip Setting");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().track (third)->strip.inserts.empty());
+    CHECK (ui.m().track (third)->strip.volumeDb == Catch::Approx (0.0));
+}
+
+TEST_CASE ("AT-MIX-19 mixer views Single, Tracks and All, and the strip filters", "[UI][AT-MIX-19]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto audio = ui.m().trackOrder.front();
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto verb = s.createTrack (model::TrackKind::bus, "Verb").value();
+    const auto drums = s.createTrack (model::TrackKind::bus, "Drums").value();
+    const auto hidden = s.createTrack (model::TrackKind::audio, "Hidden").value();
+    REQUIRE (s.setTrackOutput (keys, drums));
+    REQUIRE (s.addSend (drums, verb));
+    REQUIRE (s.setTrackHidden (hidden, true));
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    const auto shown = [&] {
+        std::vector<Id> ids;
+        for (const auto& strip : mixer.strips())
+            ids.push_back (strip->trackId());
+        return ids;
+    };
+
+    // Tracks (the default): as the track list shows them, buses last; the hidden track isn't there.
+    CHECK (mixer.tracksView.getToggleState());
+    CHECK (shown() == std::vector<Id> { audio, keys, verb, drums });
+
+    // All: hidden tracks too.
+    mixer.allView.onClick();
+    CHECK (shown() == std::vector<Id> { audio, keys, hidden, verb, drums });
+
+    // Filters: Bus off hides the buses; Alt+click on Inst shows only instruments; clicking the others brings them back.
+    mixer.clickFilter (mixer.showBus, {});
+    CHECK (shown() == std::vector<Id> { audio, keys, hidden });
+    CHECK_FALSE (mixer.showBus.getToggleState());
+    mixer.clickFilter (mixer.showInstrument, juce::ModifierKeys (juce::ModifierKeys::altModifier));
+    CHECK (shown() == std::vector<Id> { keys });
+    mixer.clickFilter (mixer.showAudio, {});
+    mixer.clickFilter (mixer.showBus, {});
+    CHECK (shown() == std::vector<Id> { audio, keys, hidden, verb, drums });
+
+    // Single: the selected channel and every bus its signal reaches (Keys -> Drums -> send to Verb).
+    ui.studio.selectTrack (keys);
+    mixer.singleView.onClick();
+    CHECK (shown() == std::vector<Id> { keys, verb, drums });
+    CHECK (mixer.singleView.getToggleState());
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    CHECK (shown() == std::vector<Id> { audio });
+    CHECK (mixer.masterStrip().isVisible());
+
+    // Cycle Through Mixer Views (Mix menu): Single -> Tracks -> All -> Single.
+    REQUIRE (ui.studio.perform (Cmd::cycleMixerMode));
+    ui.settle();
+    CHECK (ui.studio.mixerMode == Studio::MixerMode::tracks);
+    REQUIRE (ui.studio.perform (Cmd::cycleMixerMode));
+    REQUIRE (ui.studio.perform (Cmd::cycleMixerMode));
+    ui.settle();
+    CHECK (ui.studio.mixerMode == Studio::MixerMode::single);
+    // The buttons sit above the strips.
+    CHECK (mixer.singleView.getBottom() <= MixerView::barHeight);
+    CHECK (mixer.masterStrip().getY() >= MixerView::barHeight);
+}
+
+TEST_CASE ("AT-MIX-22 Group and VCA slots, VCA strips, the Groups window and the group commands", "[UI][AT-MIX-22]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto a = ui.m().trackOrder.front();
+    const auto b = s.createTrack (model::TrackKind::audio, "B").value();
+    ui.studio.edited();
+    auto& mixer = showMixer (ui);
+    auto* stripA = mixer.stripFor (a);
+    auto* stripB = mixer.stripFor (b);
+    REQUIRE (stripA != nullptr);
+    REQUIRE (stripB != nullptr);
+    CHECK (stripA->group.getButtonText() == "Group");
+    CHECK_FALSE (mixer.masterStrip().group.isVisible());
+
+    // The Group slot: New Group puts the track in "Group 1"; Alt+click on another strip uses the last group.
+    REQUIRE (entry (stripA->groupMenu(), "New Group"));
+    stripA->pickGroup (ChannelStrip::slotNew);
+    ui.settle();
+    REQUIRE (ui.m().groups.size() == 1);
+    const auto g = ui.m().groups.begin()->first;
+    CHECK (ui.m().track (a)->groupId == g);
+    CHECK (mixer.stripFor (a)->group.getButtonText() == "1 Group 1");
+    mixer.stripFor (b)->clickGroup (alt());
+    ui.settle();
+    CHECK (ui.m().track (b)->groupId == g);
+    CHECK (entry (mixer.stripFor (b)->groupMenu(), "1: Group 1")->ticked);
+
+    // Linked volume: moving A's fader moves B's by the same amount; Shift (the override) moves only A.
+    mixer.stripFor (a)->volume.setValue (-6.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (b)->strip.volumeDb == Catch::Approx (-6.0));
+    s.setGroupOverride (true);
+    mixer.stripFor (a)->volume.setValue (-12.0, juce::sendNotificationSync);
+    s.setGroupOverride (false);
+    ui.settle();
+    CHECK (ui.m().track (b)->strip.volumeDb == Catch::Approx (-6.0));
+    // Solo links by default: soloing A solos B too.
+    ui.studio.toggleSolo (a);
+    CHECK (ui.studio.localView().soloed.contains (b));
+    ui.studio.toggleSolo (a);
+    CHECK_FALSE (ui.studio.localView().soloed.contains (b));
+
+    // The Groups window: On, name, H, Groups active, and the links.
+    REQUIRE (ui.studio.perform (Cmd::groupsWindow));
+    REQUIRE (ui.main->groupsWindow() != nullptr);
+    auto* panel = dynamic_cast<GroupsPanel*> (ui.main->groupsWindow()->getContentComponent());
+    REQUIRE (panel != nullptr);
+    REQUIRE (panel->rows().size() == 1);
+    CHECK (panel->chosen() == g);
+    CHECK (panel->volume.getToggleState());
+    CHECK_FALSE (panel->pan.getToggleState());
+    panel->pan.setToggleState (true, juce::dontSendNotification);
+    panel->pan.onClick();
+    CHECK (ui.m().groups.at (g)->linkPan);
+    panel->sends[1].setToggleState (true, juce::dontSendNotification);
+    panel->sends[1].onClick();
+    CHECK (ui.m().groups.at (g)->linkSends == 2);
+    panel->rows()[0]->name.setText ("Drums", juce::sendNotificationSync);
+    CHECK (ui.m().groups.at (g)->name == "Drums");
+    panel->rows()[0]->hide.setToggleState (true, juce::dontSendNotification);
+    panel->rows()[0]->hide.onClick();
+    CHECK (ui.m().rows.size() == 0);
+    // Ctrl+Shift+1 toggles group 1's H back.
+    REQUIRE (ui.studio.perform (Cmd::hideGroup1));
+    CHECK (ui.m().rows.size() == 2);
+    CHECK_FALSE (ui.studio.perform (Cmd::hideGroup2)); // there's no group 2
+    // Shift+G turns groups off: nothing links.
+    REQUIRE (ui.studio.perform (Cmd::toggleGroups));
+    ui.settle();
+    CHECK_FALSE (panel->active.getToggleState());
+    REQUIRE (s.setTrackMute (a, true));
+    CHECK_FALSE (ui.m().track (b)->mute);
+    REQUIRE (ui.studio.perform (Cmd::toggleGroups));
+    // Alt+click on a group selects its tracks' regions and its first track.
+    ui.studio.selectTrack (b);
+    panel->selectMembers (g);
+    CHECK (ui.studio.selectedTrack() == a);
+    REQUIRE (ui.studio.perform (Cmd::groupsWindow)); // closes it
+    CHECK (ui.main->groupsWindow() == nullptr);
+
+    // Create Group for Selected Tracks: the selected track goes into a new group 2.
+    ui.studio.selectTrack (b);
+    REQUIRE (ui.studio.perform (Cmd::createGroup));
+    CHECK (ui.m().groups.size() == 2);
+    CHECK (ui.m().groups.at (ui.m().track (b)->groupId)->number == 2);
+
+    // The VCA slot: New VCA makes "VCA 1" with this track on it (one undo step) and a VCA strip after the channels.
+    mixer.stripFor (a)->pickVca (ChannelStrip::slotNew);
+    ui.settle();
+    REQUIRE (ui.m().vcas.size() == 1);
+    const auto v = ui.m().vcas.begin()->first;
+    CHECK (ui.m().track (a)->vcaId == v);
+    CHECK (s.undoName() == "New VCA");
+    CHECK (mixer.stripFor (a)->vca.getButtonText() == "VCA 1");
+    REQUIRE (mixer.vcaStrips().size() == 1);
+    auto& vcaStrip = *mixer.vcaStrips().front();
+    CHECK (vcaStrip.members.getText() == "1 track");
+    vcaStrip.volume.setValue (-10.0, juce::sendNotificationSync);
+    CHECK (ui.m().vcas.at (v)->volumeDb == Catch::Approx (-10.0));
+    vcaStrip.mute.onClick();
+    CHECK (ui.m().vcas.at (v)->mute);
+    vcaStrip.name.setText ("Band", juce::sendNotificationSync);
+    CHECK (ui.m().vcas.at (v)->name == "Band");
+
+    // Shift+click on the inspector's VCA slot shows the VCA's strip in place of the output's (P-INS-8).
+    ui.studio.selectTrack (a);
+    ui.settle();
+    auto& inspector = ui.main->inspector();
+    REQUIRE (inspector.trackStrip != nullptr);
+    inspector.trackStrip->clickVca (juce::ModifierKeys (juce::ModifierKeys::shiftModifier));
+    REQUIRE (inspector.vcaStrip != nullptr);
+    CHECK (inspector.vcaStrip->vcaId() == v);
+    CHECK (inspector.outputStrip == nullptr);
+
+    // Delete VCA frees its tracks and removes the strip.
+    vcaStrip.pick (VcaStrip::itemDelete);
+    ui.settle();
+    CHECK (ui.m().vcas.empty());
+    CHECK (ui.m().track (a)->vcaId.empty());
+    CHECK (mixer.vcaStrips().empty());
+}
+
+TEST_CASE ("AT-MIX-24 track stacks: disclosure in the header and the mixer, Follow Track Stacks, the stack commands", "[UI][AT-MIX-24]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto a = ui.m().trackOrder.front();
+    const auto b = s.createTrack (model::TrackKind::audio, "B").value();
+    const auto c = s.createTrack (model::TrackKind::audio, "C").value();
+    ui.studio.edited();
+    ui.settle();
+    const auto headerFor = [&] (const Id& id) -> TrackHeader* {
+        for (const auto& h : ui.main->tracks().headers())
+            if (h->trackId == id)
+                return h.get();
+        return nullptr;
+    };
+
+    // Create Folder Stack (Ctrl+Shift+F) from the selected track: the main above it, selected.
+    ui.studio.selectTrack (b);
+    REQUIRE (ui.studio.perform (Cmd::createFolderStack));
+    ui.settle();
+    const auto folder = ui.studio.selectedTrack();
+    REQUIRE (ui.m().track (folder)->isFolderStack());
+    CHECK (ui.m().stackMembers (folder) == std::vector<Id> { b });
+    REQUIRE (headerFor (folder) != nullptr);
+    CHECK_FALSE (headerFor (folder)->disclosureArea().isEmpty());
+    CHECK (headerFor (b)->disclosureArea().isEmpty());
+
+    // The header's triangle closes it: B's row goes; the mixer follows; its strip has no output and no VCA slot.
+    auto& header = *headerFor (folder);
+    header.mouseDown (mouse (header, header.disclosureArea().getCentre().toFloat(), juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    ui.settle();
+    CHECK_FALSE (ui.m().track (folder)->stackOpen);
+    CHECK (headerFor (b) == nullptr);
+    auto& mixer = showMixer (ui);
+    CHECK (mixer.stripFor (b) == nullptr);
+    REQUIRE (mixer.stripFor (folder) != nullptr);
+    CHECK (mixer.stripFor (folder)->stackToggle.isVisible());
+    CHECK_FALSE (mixer.stripFor (folder)->output.isVisible());
+    CHECK_FALSE (mixer.stripFor (folder)->vca.isVisible());
+    // Not following, the mixer shows B anyway; the main sits with the tracks, not with the buses.
+    REQUIRE (ui.studio.perform (Cmd::followStacks));
+    ui.settle();
+    REQUIRE (mixer.stripFor (b) != nullptr);
+    CHECK (ui.studio.mixerOrder() == std::vector<Id> { a, folder, b, c });
+    REQUIRE (ui.studio.perform (Cmd::followStacks));
+
+    // A summing stack for C; Alt+click on a strip's disclosure opens every stack.
+    ui.studio.selectTrack (c);
+    REQUIRE (ui.studio.perform (Cmd::createSummingStack));
+    ui.settle();
+    const auto sum = ui.studio.selectedTrack();
+    CHECK (ui.m().track (c)->output.busId == sum);
+    REQUIRE (ui.studio.toggleStack (sum)); // close it
+    ui.settle();
+    CHECK_FALSE (ui.m().track (sum)->stackOpen);
+    ui.studio.toggleStack (folder, true); // Alt: both open
+    ui.settle();
+    CHECK (ui.m().track (folder)->stackOpen);
+    CHECK (ui.m().track (sum)->stackOpen);
+    // Open/Close Track Stack works from a member too.
+    ui.studio.selectTrack (b);
+    REQUIRE (ui.studio.perform (Cmd::toggleStack));
+    CHECK_FALSE (ui.m().track (folder)->stackOpen);
+    CHECK (ui.studio.selectedTrack() == folder); // B has no row now
+    REQUIRE (ui.studio.perform (Cmd::toggleStack));
+
+    // The inspector shows a member's stack main on the right (P-INS-5).
+    ui.studio.selectTrack (b);
+    ui.settle();
+    REQUIRE (ui.main->inspector().outputStrip != nullptr);
+    CHECK (ui.main->inspector().outputStrip->trackId() == folder);
+
+    // Soloing the folder main solos its members.
+    ui.studio.toggleSolo (folder);
+    CHECK (ui.studio.localView().soloed.contains (b));
+    ui.studio.toggleSolo (folder);
+
+    // Flatten Stack takes the main away and leaves the members.
+    ui.studio.selectTrack (sum);
+    REQUIRE (ui.studio.perform (Cmd::flattenStack));
+    ui.settle();
+    CHECK (ui.m().track (sum) == nullptr);
+    CHECK (ui.m().track (c)->output.toMaster());
+    ui.studio.selectTrack (a);
+    CHECK_FALSE (ui.studio.perform (Cmd::flattenStack)); // A isn't in a stack
 }

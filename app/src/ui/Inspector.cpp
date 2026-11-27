@@ -3,6 +3,7 @@
 #include "PianoRoll.h"
 
 #include "weft/engine/dsp/BuiltinEffects.h"
+#include "weft/engine/midi/JuceMidiInputs.h"
 #include "weft/time/Position.h"
 
 namespace weft::ui
@@ -234,8 +235,35 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
         studio.edited();
     };
     regionDelay.onValueChange = [this] {
-        if (! refreshing)
-            forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) { return studio.session().setRegionDelay (r.id, regionDelay.getValue()); });
+        if (refreshing)
+            return;
+        const bool ticks = regionDelayUnit.getSelectedId() == 2;
+        const auto v = regionDelay.getValue();
+        forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) {
+            return ticks ? studio.session().setRegionDelayTicks (r.id, static_cast<Ticks> (std::llround (v))) : studio.session().setRegionDelay (r.id, v);
+        });
+    };
+    regionDelay.textFromValueFunction = [this] (double v) {
+        if (mixed.contains (&regionDelay))
+            return dash();
+        return regionDelayUnit.getSelectedId() == 2 ? juce::String (juce::roundToInt (v)) : juce::String (v, 1);
+    };
+    regionDelayUnit.addItem ("ms", 1);
+    regionDelayUnit.addItem ("ticks", 2);
+    describe (regionDelayUnit, "Region delay unit", "Delay in milliseconds or in ticks (960 to a quarter note)");
+    regionDelayUnit.onChange = [this] {
+        if (refreshing || regionDelayUnit.getSelectedId() == 0)
+            return;
+        const bool ticks = regionDelayUnit.getSelectedId() == 2;
+        // Switching the unit starts the delay at zero.
+        forRegions ("Region Delay", Kind::any, [&] (const model::Region& r) {
+            return ticks ? studio.session().setRegionDelayTicks (r.id, 0) : studio.session().setRegionDelay (r.id, 0.0);
+        });
+    };
+    describe (regionReverse, Cmd::reverseRegions);
+    regionReverse.onClick = [this] {
+        studio.perform (Cmd::reverseRegions);
+        refresh();
     };
     setupSlider (fadeIn, 0.0, 10000.0, 1.0, " ms");
     setupSlider (fadeOut, 0.0, 10000.0, 1.0, " ms");
@@ -251,9 +279,9 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             forRegions (f == &fadeIn ? "Fade In" : "Fade Out", Kind::audio, [&] (const model::Region& r) {
                 if (f == &fadeIn)
                     return studio.session().setRegionFades (
-                        r.id, model::Fade { std::min (samples, r.length - r.audio.fadeOut.length), r.audio.fadeIn.curve }, std::nullopt);
+                        r.id, model::Fade { std::min (samples, r.length - r.audio.fadeOut.length), r.audio.fadeIn.curve, r.audio.fadeIn.speed }, std::nullopt);
                 return studio.session().setRegionFades (
-                    r.id, std::nullopt, model::Fade { std::min (samples, r.length - r.audio.fadeIn.length), r.audio.fadeOut.curve });
+                    r.id, std::nullopt, model::Fade { std::min (samples, r.length - r.audio.fadeIn.length), r.audio.fadeOut.curve, r.audio.fadeOut.speed });
             });
         };
     }
@@ -266,14 +294,59 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             const std::string curve = curveIds[c->getSelectedItemIndex()];
             forRegions ("Fade Curve", Kind::audio, [&] (const model::Region& r) {
                 if (c == &fadeInCurve)
-                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, curve }, std::nullopt);
-                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, curve });
+                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, curve, r.audio.fadeIn.speed }, std::nullopt);
+                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, curve, r.audio.fadeOut.speed });
             });
         };
         c->setTextWhenNothingSelected (dash());
     }
     describe (fadeInCurve, "Fade-in curve");
     describe (fadeOutCurve, "Fade-out curve");
+    // Speed fades (D-UI-51): the fade in becomes Speed Up, the fade out Slow Down.
+    describe (speedUp, "Speed Up", "The fade in speeds the audio up from a standstill instead of fading its level");
+    describe (slowDown, "Slow Down", "The fade out slows the audio down to a standstill instead of fading its level");
+    for (auto* b : { &speedUp, &slowDown })
+        b->onClick = [this, b] {
+            const bool on = b->getToggleState();
+            forRegions (b == &speedUp ? "Fade In Type" : "Fade Out Type", Kind::audio, [&] (const model::Region& r) {
+                if (b == &speedUp)
+                    return studio.session().setRegionFades (r.id, model::Fade { r.audio.fadeIn.length, r.audio.fadeIn.curve, on }, std::nullopt);
+                return studio.session().setRegionFades (r.id, std::nullopt, model::Fade { r.audio.fadeOut.length, r.audio.fadeOut.curve, on });
+            });
+        };
+
+    // Audio region pitch and speed (D-UI-51). Pitch changes render the region's audio again, so they apply when the
+    // slider is let go.
+    setupSlider (audioTranspose, -24.0, 24.0, 1.0, " st");
+    setupSlider (fineTune, -50.0, 50.0, 1.0, " ct");
+    setupSlider (audioSpeed, 25.0, 400.0, 1.0, "%");
+    audioSpeed.setSkewFactorFromMidPoint (100.0);
+    describe (audioTranspose, "Audio transpose", "Shifts the region's pitch this many semitones, keeping its length (double-click resets)");
+    describe (fineTune, "Fine tune", "Shifts the region's pitch this many cents (double-click resets)");
+    describe (audioSpeed, "Speed", "Plays the region faster or slower, like tape: faster is also higher and shorter (double-click resets)");
+    audioTranspose.setDoubleClickReturnValue (true, 0.0);
+    fineTune.setDoubleClickReturnValue (true, 0.0);
+    audioSpeed.setDoubleClickReturnValue (true, 100.0);
+    for (auto* sl : { &audioTranspose, &fineTune })
+    {
+        sl->setChangeNotificationOnlyOnRelease (true);
+        sl->onValueChange = [this, sl] {
+            if (refreshing)
+                return;
+            const auto v = static_cast<int> (std::lround (sl->getValue()));
+            forRegions ("Transpose", Kind::audio, [&] (const model::Region& r) {
+                return sl == &audioTranspose ? studio.session().setAudioRegionPitch (r.id, v, r.audio.fineTune)
+                                             : studio.session().setAudioRegionPitch (r.id, r.audio.transpose, v);
+            });
+        };
+    }
+    audioSpeed.setChangeNotificationOnlyOnRelease (true);
+    audioSpeed.onValueChange = [this] {
+        if (refreshing)
+            return;
+        const auto v = audioSpeed.getValue() / 100.0;
+        forRegions ("Region Speed", Kind::audio, [&] (const model::Region& r) { return studio.session().setAudioRegionSpeed (r.id, v); });
+    };
 
     regionQuantize.addItem ("Off", 1);
     for (std::size_t i = 1; i < gridValues().size(); ++i)
@@ -316,6 +389,47 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             });
         };
     }
+    setupSlider (quantizeRange, -960.0, 960.0, 1.0, "");
+    setupSlider (quantizeFlam, -960.0, 960.0, 1.0, "");
+    describe (quantizeRange, "Q-Range", "Positive: only notes this close to the grid move. Negative: only notes further away. 0: all (ticks)");
+    describe (quantizeFlam, "Q-Flam", "Spreads notes that quantize together this many ticks apart, upwards (or downwards when negative)");
+    for (auto* sl : { &quantizeRange, &quantizeFlam })
+    {
+        sl->setDoubleClickReturnValue (true, 0.0);
+        sl->onDragStart = [this] { studio.session().beginGesture ("Region Quantize"); };
+        sl->onDragEnd = [this] {
+            studio.session().endGesture();
+            studio.edited();
+        };
+        sl->onValueChange = [this] { setRegionQuantize(); };
+    }
+    for (const auto& [value, name] : dynamicsValues())
+        regionDynamics.addItem (name, regionDynamics.getNumItems() + 1);
+    regionDynamics.setTextWhenNothingSelected (dash());
+    describe (regionDynamics, "Region dynamics", "Widens or narrows the differences between velocities; Fixed plays them all alike");
+    regionDynamics.onChange = [this] {
+        const auto i = regionDynamics.getSelectedItemIndex();
+        if (refreshing || i < 0)
+            return;
+        const auto v = dynamicsValues()[static_cast<std::size_t> (i)].first;
+        forRegions ("Region Dynamics", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionDynamics (r.id, v); });
+    };
+    for (const auto& [value, name] : gateValues())
+        regionGate.addItem (name, regionGate.getNumItems() + 1);
+    regionGate.setTextWhenNothingSelected (dash());
+    describe (regionGate, "Region gate time", "Plays notes shorter or longer by a percent; Fixed plays them short, Legato ties each to the next");
+    regionGate.onChange = [this] {
+        const auto i = regionGate.getSelectedItemIndex();
+        if (refreshing || i < 0)
+            return;
+        const auto v = gateValues()[static_cast<std::size_t> (i)].first;
+        forRegions ("Region Gate Time", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionGate (r.id, v); });
+    };
+    describe (regionClipLength, "Clip Length", "Notes stop at the region's end; off, they play their whole length");
+    regionClipLength.onClick = [this] {
+        const bool on = regionClipLength.getToggleState();
+        forRegions ("Region Clip Length", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionClipLength (r.id, on); });
+    };
     describe (applyQuantize, Cmd::applyQuantize);
     applyQuantize.onClick = [this] {
         forRegions ("Apply Quantize", Kind::midi, [&] (const model::Region& r) { return studio.session().applyRegionQuantize (r.id); });
@@ -397,10 +511,119 @@ Inspector::Inspector (Studio& s) : eq (s), studio (s)
             studio.check (studio.session().setTrackMonitor (studio.selectedTrack(), modes[monitor.getSelectedItemIndex()]));
     };
 
+    // Track parameters (P-TRI-9..19, D-W3-13).
+    describe (midiIn, "MIDI input", "The MIDI input this track plays and records from; the computer keyboard always reaches it");
+    midiIn.onChange = [this] { setMidiInput(); };
+    midiInChannel.addItem ("All", 1);
+    for (int c = 1; c <= 16; ++c)
+        midiInChannel.addItem (juce::String (c), c + 1);
+    describe (midiInChannel, "MIDI input channel", "The MIDI channel this track listens to, or All");
+    midiInChannel.onChange = [this] { setMidiInput(); };
+    midiOutChannel.addItem ("As played", 1);
+    for (int c = 1; c <= 16; ++c)
+        midiOutChannel.addItem (juce::String (c), c + 1);
+    describe (midiOutChannel, "MIDI output channel", "Sends every note and controller to the instrument on this channel, or on each one's own");
+    midiOutChannel.onChange = [this] {
+        if (! refreshing && midiOutChannel.getSelectedId() > 0)
+            setPlayback ([this] (model::TrackPlayback& p) { p.outChannel = midiOutChannel.getSelectedId() - 1; });
+    };
+    delayUnit.addItem ("ms", 1);
+    delayUnit.addItem ("ticks", 2);
+    describe (delayUnit, "Track delay unit", "Delay in milliseconds or in ticks (960 to a quarter note)");
+    delayUnit.onChange = [this] {
+        if (refreshing || delayUnit.getSelectedId() == 0)
+            return;
+        // Changing the unit keeps the delay at zero rather than reading milliseconds as ticks.
+        setPlayback ([this] (model::TrackPlayback& p) {
+            p.delayInTicks = delayUnit.getSelectedId() == 2;
+            p.delay = 0;
+        });
+    };
+    setupSlider (trackDelay, -model::TrackPlayback::maxDelayMs, model::TrackPlayback::maxDelayMs, 0.1, "");
+    trackDelay.textFromValueFunction = [this] (double v) {
+        return delayUnit.getSelectedId() == 2 ? juce::String (juce::roundToInt (v)) : juce::String (v, 1);
+    };
+    describe (trackDelay, "Track delay", "Plays this track's MIDI later, or earlier when negative (double-click resets)");
+    setupSlider (trackTranspose, -96.0, 96.0, 1.0, " st");
+    describe (trackTranspose, "Track transpose", "Plays the track's notes this many semitones up or down (double-click resets)");
+    setupSlider (trackVelocity, -99.0, 99.0, 1.0, "");
+    describe (trackVelocity, "Track velocity", "Adds to every note's velocity on this track (double-click resets)");
+    for (auto* sl : { &keyLow, &keyHigh })
+    {
+        setupSlider (*sl, 0.0, 127.0, 1.0, "");
+        sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 44, size::control);
+        sl->textFromValueFunction = [] (double v) { return juce::String (commands::noteName (juce::roundToInt (v))); };
+        sl->valueFromTextFunction = [] (const juce::String& t) {
+            if (t.trim().containsOnly ("0123456789"))
+                return t.getDoubleValue();
+            for (int p = 0; p < 128; ++p)
+                if (t.trim().equalsIgnoreCase (juce::String (commands::noteName (p))))
+                    return static_cast<double> (p);
+            return 0.0;
+        };
+    }
+    describe (keyLow, "Key limit low", "Notes below this one don't play");
+    describe (keyHigh, "Key limit high", "Notes above this one don't play");
+    for (auto* sl : { &velocityLow, &velocityHigh })
+    {
+        setupSlider (*sl, 1.0, 127.0, 1.0, "");
+        sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 36, size::control);
+    }
+    describe (velocityLow, "Velocity limit low", "Notes played softer than this don't play");
+    describe (velocityHigh, "Velocity limit high", "Notes played harder than this don't play");
+    trackDelay.setDoubleClickReturnValue (true, 0.0);
+    trackTranspose.setDoubleClickReturnValue (true, 0.0);
+    trackVelocity.setDoubleClickReturnValue (true, 0.0);
+    keyLow.setDoubleClickReturnValue (true, 0.0);
+    keyHigh.setDoubleClickReturnValue (true, 127.0);
+    velocityLow.setDoubleClickReturnValue (true, 1.0);
+    velocityHigh.setDoubleClickReturnValue (true, 127.0);
+    for (auto* sl : { &trackDelay, &trackTranspose, &trackVelocity, &keyLow, &keyHigh, &velocityLow, &velocityHigh })
+    {
+        sl->onDragStart = [this] { studio.session().beginGesture ("Track Parameters"); };
+        sl->onDragEnd = [this] {
+            studio.session().endGesture();
+            studio.edited();
+        };
+        sl->onValueChange = [this, sl] {
+            if (refreshing)
+                return;
+            const auto v = sl->getValue();
+            const auto i = static_cast<int> (std::lround (v));
+            setPlayback ([&] (model::TrackPlayback& p) {
+                if (sl == &trackDelay)
+                    p.delay = p.delayInTicks ? std::round (v) : v;
+                else if (sl == &trackTranspose)
+                    p.transpose = i;
+                else if (sl == &trackVelocity)
+                    p.velocityOffset = i;
+                // A limit pushed past its partner takes the partner along.
+                else if (sl == &keyLow)
+                    p.keyHigh = std::max (p.keyHigh, p.keyLow = i);
+                else if (sl == &keyHigh)
+                    p.keyLow = std::min (p.keyLow, p.keyHigh = i);
+                else if (sl == &velocityLow)
+                    p.velocityHigh = std::max (p.velocityHigh, p.velocityLow = i);
+                else
+                    p.velocityLow = std::min (p.velocityLow, p.velocityHigh = i);
+            });
+        };
+    }
+    describe (noTranspose, "No Transpose", "The regions' own transpose doesn't apply to this track (for drum kits)");
+    noTranspose.onClick = [this] {
+        const bool on = noTranspose.getToggleState();
+        setPlayback ([on] (model::TrackPlayback& p) { p.noTranspose = on; });
+    };
+
     for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionGain, &regionDelay, &fadeIn, &fadeOut,
                                                                           &fadeInCurve, &fadeOutCurve, &regionQuantize, &quantizeStrength, &quantizeSwing,
+                                                                          &regionDelayUnit, &regionReverse, &quantizeRange, &quantizeFlam, &regionDynamics,
+                                                                          &regionGate, &regionClipLength, &audioTranspose, &fineTune, &audioSpeed,
+                                                                          &speedUp, &slowDown,
                                                                           &applyQuantize, &regionTranspose, &regionVelocity, &notePitch, &noteVelocity, &noteLength, &notePosition,
-                                                                          &noteChannel, &trackName, &trackColour, &monitor })
+                                                                          &noteChannel, &trackName, &trackColour, &monitor, &midiIn, &midiInChannel, &midiOutChannel,
+                                                                          &delayUnit, &trackDelay, &trackTranspose, &trackVelocity, &keyLow, &keyHigh,
+                                                                          &velocityLow, &velocityHigh, &noTranspose })
     {
         // Every control is reachable with Tab; a click doesn't take focus from the arrange window.
         c->setWantsKeyboardFocus (true);
@@ -442,6 +665,9 @@ void Inspector::refreshStrips()
     Id outputId;
     if (t != nullptr && t->kind != model::TrackKind::master)
         outputId = t->output.busId.empty() ? m.info.masterTrackId : t->output.busId;
+    // A track in a stack shows the stack's main on the right (P-INS-5): for a summing stack that's its output anyway.
+    if (const auto* main = t != nullptr ? m.stackMain (t->id) : nullptr)
+        outputId = main->id;
     if (m.track (outputId) == nullptr)
         outputId.clear();
     const auto place = [this] (std::unique_ptr<ChannelStrip>& strip, const Id& id) {
@@ -459,9 +685,30 @@ void Inspector::refreshStrips()
         strip->refresh();
     };
     place (trackStrip, t != nullptr ? t->id : Id());
+    if (t == nullptr || t->vcaId != shownVca || ! m.vcas.contains (shownVca))
+        shownVca.clear();
+    if (! shownVca.empty())
+    {
+        outputId.clear();
+        if (vcaStrip == nullptr || vcaStrip->vcaId() != shownVca)
+        {
+            vcaStrip = std::make_unique<VcaStrip> (studio, shownVca);
+            body.addAndMakeVisible (*vcaStrip);
+        }
+        vcaStrip->refresh();
+    }
+    else
+        vcaStrip.reset();
     place (outputStrip, outputId);
     if (trackStrip != nullptr)
+    {
         trackStrip->highlightSelection = false;
+        trackStrip->onShowVca = [this] (const Id& vcaId) {
+            shownVca = vcaId;
+            refreshStrips();
+            resized();
+        };
+    }
     if (outputStrip != nullptr)
     {
         // Clicking the output's strip edits it without moving the selection off the track.
@@ -547,6 +794,23 @@ void Inspector::editNotes (std::string_view name, const std::function<void (mode
     studio.edited();
 }
 
+const std::vector<std::pair<int, juce::String>>& Inspector::dynamicsValues()
+{
+    static const std::vector<std::pair<int, juce::String>> values { { 0, "Fixed" },    { 33, "3:1" },     { 50, "2:1" },   { 67, "1.5:1" },
+                                                                    { 80, "1.25:1" }, { 100, "Off" },    { 125, "1:1.25" }, { 150, "1:1.5" },
+                                                                    { 200, "1:2" },   { 300, "1:3" } };
+    return values;
+}
+
+const std::vector<std::pair<int, juce::String>>& Inspector::gateValues()
+{
+    using M = model::MidiRegionData;
+    static const std::vector<std::pair<int, juce::String>> values { { 0, "Off" },   { M::gateFixed, "Fixed" }, { 25, "25%" },  { 50, "50%" },
+                                                                    { 75, "75%" },  { 90, "90%" },             { 110, "110%" }, { 125, "125%" },
+                                                                    { 150, "150%" }, { 200, "200%" },          { M::gateLegato, "Legato" } };
+    return values;
+}
+
 void Inspector::setRegionQuantize()
 {
     if (refreshing || regionQuantize.getSelectedId() <= 0)
@@ -554,7 +818,8 @@ void Inspector::setRegionQuantize()
     const auto index = regionQuantize.getSelectedId() - 1;
     std::optional<model::RegionQuantize> q;
     if (index > 0)
-        q = model::RegionQuantize { gridValues()[static_cast<std::size_t> (index)].ticks, quantizeStrength.getValue() / 100.0, quantizeSwing.getValue() / 100.0 };
+        q = model::RegionQuantize { gridValues()[static_cast<std::size_t> (index)].ticks, quantizeStrength.getValue() / 100.0, quantizeSwing.getValue() / 100.0,
+                                    static_cast<Ticks> (std::lround (quantizeRange.getValue())), static_cast<Ticks> (std::lround (quantizeFlam.getValue())) };
     forRegions ("Region Quantize", Kind::midi, [&] (const model::Region& r) { return studio.session().setRegionQuantize (r.id, q); });
 }
 
@@ -577,16 +842,25 @@ void Inspector::refresh()
         sl.setValue (value, juce::dontSendNotification);
         sl.updateText();
     };
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionName, &regionMute, &regionLoop, &regionDelay, &regionDelayUnit })
         c->setVisible (r != nullptr);
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionGain, &fadeIn, &fadeOut, &fadeInCurve, &fadeOutCurve, &regionReverse,
+                                                                          &audioTranspose, &fineTune, &audioSpeed, &speedUp, &slowDown })
         c->setVisible (audio);
     if (r != nullptr)
     {
         regionName.setText (all.size() == 1 ? juce::String (r->name) : juce::String (static_cast<int> (all.size())) + " regions", juce::dontSendNotification);
         regionMute.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->muted; }), juce::dontSendNotification);
         regionLoop.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->loop && x->loop->enabled; }), juce::dontSendNotification);
-        show (regionDelay, r->delayMs, same ([] (const model::Region& x) { return x.delayMs; }));
+        const bool ticks = r->delayInTicks;
+        const bool sameUnit = same ([] (const model::Region& x) { return x.delayInTicks; });
+        regionDelayUnit.setSelectedId (sameUnit ? (ticks ? 2 : 1) : 0, juce::dontSendNotification);
+        if (ticks)
+            regionDelay.setRange (-static_cast<double> (model::Region::maxDelayTicks), static_cast<double> (model::Region::maxDelayTicks), 1.0);
+        else
+            regionDelay.setRange (-500.0, 500.0, 0.1);
+        show (regionDelay, ticks ? static_cast<double> (r->delayTicks) : r->delayMs,
+              sameUnit && same ([] (const model::Region& x) { return x.delayInTicks ? static_cast<double> (x.delayTicks) : x.delayMs; }));
     }
     if (audio)
     {
@@ -596,9 +870,16 @@ void Inspector::refresh()
         show (fadeOut, static_cast<double> (r->audio.fadeOut.length) * 1000.0 / rate, same ([] (const model::Region& x) { return x.audio.fadeOut.length; }));
         fadeInCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeIn.curve; }) ? curveIndex (r->audio.fadeIn.curve) : -1, juce::dontSendNotification);
         fadeOutCurve.setSelectedItemIndex (same ([] (const model::Region& x) { return x.audio.fadeOut.curve; }) ? curveIndex (r->audio.fadeOut.curve) : -1, juce::dontSendNotification);
+        regionReverse.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.reversed; }), juce::dontSendNotification);
+        show (audioTranspose, r->audio.transpose, same ([] (const model::Region& x) { return x.audio.transpose; }));
+        show (fineTune, r->audio.fineTune, same ([] (const model::Region& x) { return x.audio.fineTune; }));
+        show (audioSpeed, r->audio.speed * 100.0, same ([] (const model::Region& x) { return x.audio.speed; }));
+        speedUp.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.fadeIn.speed; }), juce::dontSendNotification);
+        slowDown.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->audio.fadeOut.speed; }), juce::dontSendNotification);
     }
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &applyQuantize,
-                                                                          &regionTranspose, &regionVelocity })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &regionQuantize, &quantizeStrength, &quantizeSwing, &quantizeRange, &quantizeFlam,
+                                                                          &applyQuantize, &regionTranspose, &regionVelocity, &regionDynamics, &regionGate,
+                                                                          &regionClipLength })
         c->setVisible (midi);
     if (midi)
     {
@@ -614,8 +895,22 @@ void Inspector::refresh()
         show (quantizeStrength, q ? q->strength * 100.0 : 100.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->strength : 1.0; }));
         show (quantizeSwing, q ? q->swing * 100.0 : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->swing : 0.0; }));
         const bool any = std::any_of (all.begin(), all.end(), [] (const model::Region* x) { return x->midi.quantize.has_value(); });
+        show (quantizeRange, q ? static_cast<double> (q->range) : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->range : Ticks (0); }));
+        show (quantizeFlam, q ? static_cast<double> (q->flam) : 0.0, same ([] (const model::Region& x) { return x.midi.quantize ? x.midi.quantize->flam : Ticks (0); }));
         quantizeStrength.setEnabled (any && sameGrid);
         quantizeSwing.setEnabled (any && sameGrid);
+        quantizeRange.setEnabled (any && sameGrid);
+        quantizeFlam.setEnabled (any && sameGrid);
+        const auto indexOf = [] (const std::vector<std::pair<int, juce::String>>& values, int v) {
+            for (std::size_t i = 0; i < values.size(); ++i)
+                if (values[i].first == v)
+                    return static_cast<int> (i);
+            return -1;
+        };
+        regionDynamics.setSelectedItemIndex (same ([] (const model::Region& x) { return x.midi.dynamics; }) ? indexOf (dynamicsValues(), r->midi.dynamics) : -1,
+                                             juce::dontSendNotification);
+        regionGate.setSelectedItemIndex (same ([] (const model::Region& x) { return x.midi.gate; }) ? indexOf (gateValues(), r->midi.gate) : -1, juce::dontSendNotification);
+        regionClipLength.setToggleState (std::all_of (all.begin(), all.end(), [] (const model::Region* x) { return x->midi.clipLength; }), juce::dontSendNotification);
         applyQuantize.setEnabled (any);
     }
 
@@ -667,9 +962,84 @@ void Inspector::refresh()
         monitor.setSelectedItemIndex (t->monitor == "on" ? 1 : t->monitor == "off" ? 2 : 0, juce::dontSendNotification);
         monitor.setVisible (commands::LocalView::canArm (*t));
     }
+    const bool instrument = t != nullptr && t->kind == model::TrackKind::instrument;
+    for (auto* c : trackParameters())
+        c->setVisible (instrument);
+    if (instrument)
+        refreshTrackParameters (*t);
     refreshStrips();
     resized();
     body.repaint();
+}
+
+std::vector<juce::Component*> Inspector::trackParameters()
+{
+    return { &midiIn, &midiInChannel, &midiOutChannel, &delayUnit, &trackDelay, &trackTranspose, &trackVelocity,
+             &keyLow, &keyHigh, &velocityLow, &velocityHigh, &noTranspose };
+}
+
+void Inspector::refreshTrackParameters (const model::Track& t)
+{
+    const juce::ScopedValueSetter<bool> busy (refreshing, true);
+    // The device list is read when another track is selected, not on every edit.
+    const auto device = t.input.kind == model::InputAssignment::Kind::midi ? t.input.device : std::string ("all");
+    if (devicesFor != t.id || (device != "all" && std::find (midiDevices.begin(), midiDevices.end(), device) == midiDevices.end()))
+    {
+        devicesFor = t.id;
+        midiDevices = midiDeviceNames ? midiDeviceNames() : engine::JuceMidiInputs::deviceNames();
+        // A device that isn't connected now stays in the menu while a track uses it.
+        if (device != "all" && std::find (midiDevices.begin(), midiDevices.end(), device) == midiDevices.end())
+            midiDevices.push_back (device);
+        midiIn.clear (juce::dontSendNotification);
+        midiIn.addItem ("All", 1);
+        for (std::size_t i = 0; i < midiDevices.size(); ++i)
+            midiIn.addItem (juce::String (midiDevices[i]), static_cast<int> (i) + 2);
+    }
+    const auto at = std::find (midiDevices.begin(), midiDevices.end(), device);
+    midiIn.setSelectedId (at == midiDevices.end() ? 1 : static_cast<int> (at - midiDevices.begin()) + 2, juce::dontSendNotification);
+    midiInChannel.setSelectedId (t.input.kind == model::InputAssignment::Kind::midi ? t.input.channel + 1 : 1, juce::dontSendNotification);
+    const auto& p = t.playback;
+    midiOutChannel.setSelectedId (p.outChannel + 1, juce::dontSendNotification);
+    delayUnit.setSelectedId (p.delayInTicks ? 2 : 1, juce::dontSendNotification);
+    if (p.delayInTicks)
+        trackDelay.setRange (-model::TrackPlayback::maxDelayTicks, model::TrackPlayback::maxDelayTicks, 1.0);
+    else
+        trackDelay.setRange (-model::TrackPlayback::maxDelayMs, model::TrackPlayback::maxDelayMs, 0.1);
+    trackDelay.setValue (p.delay, juce::dontSendNotification);
+    trackDelay.updateText();
+    trackTranspose.setValue (p.transpose, juce::dontSendNotification);
+    trackVelocity.setValue (p.velocityOffset, juce::dontSendNotification);
+    keyLow.setValue (p.keyLow, juce::dontSendNotification);
+    keyHigh.setValue (p.keyHigh, juce::dontSendNotification);
+    velocityLow.setValue (p.velocityLow, juce::dontSendNotification);
+    velocityHigh.setValue (p.velocityHigh, juce::dontSendNotification);
+    noTranspose.setToggleState (p.noTranspose, juce::dontSendNotification);
+}
+
+void Inspector::setPlayback (const std::function<void (model::TrackPlayback&)>& change)
+{
+    const auto* t = studio.model().track (studio.selectedTrack());
+    if (t == nullptr || t->kind != model::TrackKind::instrument)
+        return;
+    const auto id = t->id;
+    auto p = t->playback;
+    change (p);
+    if (! (p == t->playback))
+        studio.check (studio.session().setTrackPlayback (id, p));
+}
+
+void Inspector::setMidiInput()
+{
+    const auto* t = studio.model().track (studio.selectedTrack());
+    if (refreshing || t == nullptr || t->kind != model::TrackKind::instrument || midiIn.getSelectedId() == 0)
+        return;
+    model::InputAssignment in;
+    in.kind = model::InputAssignment::Kind::midi;
+    const auto index = midiIn.getSelectedId() - 2;
+    in.device = index >= 0 && index < static_cast<int> (midiDevices.size()) ? midiDevices[static_cast<std::size_t> (index)] : std::string ("all");
+    in.channel = std::max (0, midiInChannel.getSelectedId() - 1);
+    const auto id = t->id;
+    studio.check (studio.session().setTrackInput (id, in));
 }
 
 namespace
@@ -717,11 +1087,18 @@ void Inspector::paintBody (juce::Graphics& g)
     label (regionDelay, "Delay");
     label (fadeIn, "Fade in");
     label (fadeOut, "Fade out");
+    label (audioTranspose, "Transpose");
+    label (fineTune, "Fine Tune");
+    label (audioSpeed, "Speed");
     label (regionQuantize, "Quantize");
     label (quantizeStrength, "Strength");
     label (quantizeSwing, "Swing");
     label (regionTranspose, "Transpose");
     label (regionVelocity, "Velocity");
+    label (quantizeRange, "Q-Range");
+    label (quantizeFlam, "Q-Flam");
+    label (regionDynamics, "Dynamics");
+    label (regionGate, "Gate time");
     label (notePitch, "Pitch");
     label (noteVelocity, "Velocity");
     label (noteLength, "Length");
@@ -729,6 +1106,14 @@ void Inspector::paintBody (juce::Graphics& g)
     label (noteChannel, "Channel");
     label (trackColour, "Colour");
     label (monitor, "Monitor");
+    label (midiIn, "MIDI in");
+    label (midiInChannel, "In channel");
+    label (midiOutChannel, "Out channel");
+    label (trackDelay, "Delay");
+    label (trackTranspose, "Transpose");
+    label (trackVelocity, "Velocity");
+    label (keyLow, "Key limit");
+    label (velocityLow, "Vel. limit");
 }
 
 void Inspector::resized()
@@ -763,23 +1148,38 @@ int Inspector::layout (int width, int visibleHeight)
         auto toggles = row();
         regionMute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2));
         regionLoop.setBounds (toggles);
-        regionDelay.setBounds (withLabel (row()));
+        {
+            auto delay = withLabel (row());
+            regionDelayUnit.setBounds (delay.removeFromRight (64));
+            regionDelay.setBounds (delay.withTrimmedRight (space::half));
+        }
         if (regionGain.isVisible())
         {
+            regionReverse.setBounds (withLabel (row()));
             regionGain.setBounds (withLabel (row()));
             fadeIn.setBounds (withLabel (row()));
             fadeInCurve.setBounds (withLabel (row()));
+            speedUp.setBounds (withLabel (row()));
             fadeOut.setBounds (withLabel (row()));
             fadeOutCurve.setBounds (withLabel (row()));
+            slowDown.setBounds (withLabel (row()));
+            audioTranspose.setBounds (withLabel (row()));
+            fineTune.setBounds (withLabel (row()));
+            audioSpeed.setBounds (withLabel (row()));
         }
         if (regionQuantize.isVisible())
         {
             regionQuantize.setBounds (withLabel (row()));
             quantizeStrength.setBounds (withLabel (row()));
             quantizeSwing.setBounds (withLabel (row()));
+            quantizeRange.setBounds (withLabel (row()));
+            quantizeFlam.setBounds (withLabel (row()));
             applyQuantize.setBounds (withLabel (row()));
             regionTranspose.setBounds (withLabel (row()));
             regionVelocity.setBounds (withLabel (row()));
+            regionDynamics.setBounds (withLabel (row()));
+            regionGate.setBounds (withLabel (row()));
+            regionClipLength.setBounds (withLabel (row()));
         }
         r.removeFromTop (space::s1);
     }
@@ -795,6 +1195,27 @@ int Inspector::layout (int width, int visibleHeight)
     trackColour.setBounds (withLabel (row()));
     if (monitor.isVisible())
         monitor.setBounds (withLabel (row()));
+    if (midiIn.isVisible())
+    {
+        midiIn.setBounds (withLabel (row()));
+        midiInChannel.setBounds (withLabel (row()));
+        midiOutChannel.setBounds (withLabel (row()));
+        auto delay = withLabel (row());
+        delayUnit.setBounds (delay.removeFromRight (64));
+        trackDelay.setBounds (delay.withTrimmedRight (space::half));
+        trackTranspose.setBounds (withLabel (row()));
+        trackVelocity.setBounds (withLabel (row()));
+        // The low and high limits side by side.
+        const auto pair = [&] (juce::Slider& lo, juce::Slider& hi) {
+            auto b = withLabel (row());
+            const auto half = (b.getWidth() - space::half) / 2;
+            lo.setBounds (b.removeFromLeft (half));
+            hi.setBounds (b.withTrimmedLeft (space::half));
+        };
+        pair (keyLow, keyHigh);
+        pair (velocityLow, velocityHigh);
+        noTranspose.setBounds (withLabel (row()));
+    }
     if (trackStrip == nullptr)
     {
         channelTop = -1;
@@ -814,6 +1235,8 @@ int Inspector::layout (int width, int visibleHeight)
     strips.removeFromLeft (space::s1);
     if (outputStrip != nullptr)
         outputStrip->setBounds (strips.withWidth (stripWidth));
+    if (vcaStrip != nullptr)
+        vcaStrip->setBounds (strips.withWidth (stripWidth));
     return r.getY() + space::s1;
 }
 } // namespace weft::ui

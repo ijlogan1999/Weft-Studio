@@ -63,6 +63,13 @@ public:
     juce::Slider strength, swing;
     juce::TextButton quantizeButton { "Q" };
     juce::ToggleButton auditionToggle { "Audition" }, followToggle { "Follow" };
+    // Second row (D-W4-15): the regions shown, the selected notes' velocity, scale quantize, and what's under the pointer.
+    juce::Label title, info;
+    juce::Slider velocitySlider { juce::Slider::LinearBar, juce::Slider::TextBoxLeft };
+    juce::ComboBox scaleRootBox, scaleBox;
+    juce::TextButton scaleButton { "Scale Q" };
+    /** The info line's text for a point: pitch and position in the grid, empty elsewhere. */
+    juce::String infoAt (juce::Point<float> p) const;
     NoteTool tool = NoteTool::pointer;
     LaneKind lane;
 
@@ -72,7 +79,7 @@ public:
     int rowHeight = 10;
     int topPitch = 84; // the pitch in the top row
     bool laneShown = true;
-    static constexpr int toolbarHeight = size::panelHeader, keyboardWidth = 56, rulerHeight = 24, laneHeight = 88;
+    static constexpr int toolbarHeight = 2 * size::panelHeader, keyboardWidth = 56, rulerHeight = 24, laneHeight = 88;
 
     juce::Rectangle<int> keyboardArea() const;
     juce::Rectangle<int> rulerArea() const;

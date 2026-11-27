@@ -9,6 +9,7 @@
 #include "weft/doc/Value.h"
 #include "weft/time/Time.h"
 
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
@@ -118,6 +119,67 @@ struct LockInfo
     std::string note;
 };
 
+/** Track playback parameters (P-TRI-12..19, D-W3-13). They change what an instrument track's
+    MIDI plays, from its regions and from live input, without changing the notes. */
+struct TrackPlayback
+{
+    static constexpr double maxDelayMs = 500, maxDelayTicks = 960;
+    int transpose = 0;      // semitones, -96..+96
+    int velocityOffset = 0; // -99..+99
+    int keyLow = 0, keyHigh = 127;        // notes outside are not played
+    int velocityLow = 1, velocityHigh = 127;
+    double delay = 0;       // in milliseconds, or ticks when delayInTicks; negative plays early
+    bool delayInTicks = false;
+    bool noTranspose = false; // the regions' own transpose doesn't apply (drum kits)
+    int outChannel = 0;       // 0: each event keeps its channel; 1-16: every event is sent on this one
+
+    bool isDefault() const noexcept;
+    /** The pitch and velocity played, or nullopt when the limits drop the note. */
+    std::optional<std::pair<int, int>> play (int pitch, int velocity, int regionTranspose) const noexcept;
+    static TrackPlayback fromValue (const Value& v);
+    Value toValue() const;
+    bool operator== (const TrackPlayback&) const = default;
+};
+
+struct AutomationTarget
+{
+    std::string kind = "volume"; // volume | pan | mute | sendLevel | pluginParam
+    Id sendId;
+    Id pluginId;
+    std::string paramId;
+
+    /** Identity of the target, for "one lane per (track, target)" (D-DM-11). */
+    std::string key() const;
+    /** The target a key() came from, if it parses. */
+    static std::optional<AutomationTarget> fromKey (const std::string& key);
+    static AutomationTarget fromValue (const Value& v);
+    Value toValue() const;
+};
+
+/** Smart Controls (D-UI-52): screen knobs for a track, each sweeping one or more of its parameters. */
+struct SmartMapping
+{
+    AutomationTarget target;
+    double min = 0.0, max = 1.0; // the part of the target's (normalized) range the knob sweeps; max < min turns it backwards
+};
+
+struct SmartControl
+{
+    std::string name; // empty: named after its first mapping
+    std::vector<SmartMapping> mappings;
+    int cc = -1;       // hardware: MIDI controller 0..127 that turns it, -1 none
+    int ccChannel = 0; // its MIDI channel 1..16, 0 any
+};
+
+struct SmartControls
+{
+    static constexpr int layouts[] = { 4, 8, 12 };
+    int layout = 8;                      // how many knobs
+    std::vector<SmartControl> controls;  // `layout` of them
+    static SmartControls fromValue (const Value& v);
+    Value toValue() const;
+};
+
 struct Track
 {
     Id id;
@@ -136,6 +198,19 @@ struct Track
     std::optional<LockInfo> locked;
     ChannelStrip strip;
     std::string automationMode = "read"; // off | read | touch | latch | write (F-AUT-5: read is default)
+    TrackPlayback playback; // instrument tracks
+    Id groupId; // the group it's in (D-W6-15), or none
+    Id vcaId;   // the VCA fader that scales it (D-W6-16), or none
+    /** Track stacks (D-W6-17). On a stack's main track (a bus): "folder" or "summing", and whether it's open.
+        On a member: its main track. Stacks don't nest. */
+    std::string stack;
+    bool stackOpen = true;
+    Id stackId;
+    bool isStackMain() const noexcept { return kind == TrackKind::bus && ! stack.empty(); }
+    bool isFolderStack() const noexcept { return kind == TrackKind::bus && stack == "folder"; }
+    std::string notes; // track notes (D-UI-47)
+    /** Smart Controls (D-UI-52); absent, they're mapped automatically from the track's parameters. */
+    std::optional<SmartControls> smartControls;
 
     static Track fromValue (const Id& id, const Value& v);
     Value toValue() const;
@@ -145,6 +220,9 @@ struct Fade
 {
     Samples length = 0;
     std::string curve = "equalPower"; // linear | equalPower | sCurve
+    /** A speed fade (D-UI-51) instead of a level fade: a fade in is Speed Up (the audio starts from a standstill and
+        reaches full speed at the end of the fade), a fade out is Slow Down (it winds down to a standstill). */
+    bool speed = false;
 };
 
 struct AudioRegionData
@@ -153,6 +231,21 @@ struct AudioRegionData
     Samples sourceOffset = 0;
     double gainDb = 0.0;
     Fade fadeIn, fadeOut;
+    bool reversed = false; // plays a reversed copy of its audio (L-RGN-12); Reverse toggles it
+    // Pitch and time (D-UI-51).
+    int transpose = 0;     // semitones, -24..24; the length stays the same
+    int fineTune = 0;      // cents, -50..50
+    double speed = 1.0;    // tape-style speed, 0.25..4: faster is also higher and the region shorter
+    double stretch = 1.0;  // time stretch, 0.25..4: the region lasts this many times as long at the same pitch
+
+    static constexpr double minRate = 0.25, maxRate = 4.0;
+    /** Source samples played per timeline sample. */
+    double sourcePerSample() const noexcept { return speed / stretch; }
+    /** The part of the source a region this long plays, and the other way round. */
+    Samples sourceLength (Samples timelineLength) const noexcept;
+    Samples timelineLength (Samples sourceSamples) const noexcept;
+    /** Pitch shift in cents. */
+    int cents() const noexcept { return transpose * 100 + fineTune; }
 };
 
 struct RegionQuantize
@@ -160,6 +253,13 @@ struct RegionQuantize
     Ticks grid = 240;
     double strength = 1.0; // 0..1
     double swing = 0.0;    // 0..1 (UI shows 0-100%)
+    /** Q-Range (D-W4-16): positive, only notes within this many ticks of their grid point move; negative,
+        only notes further away than that; 0, every note. */
+    Ticks range = 0;
+    /** Q-Flam: notes landing together are spread this many ticks apart, upwards in pitch (negative: downwards). */
+    Ticks flam = 0;
+    Value toValue() const;
+    bool operator== (const RegionQuantize&) const = default;
 };
 
 struct MidiRegionData
@@ -169,6 +269,14 @@ struct MidiRegionData
     std::optional<RegionQuantize> quantize;
     int transpose = 0;
     int velocityOffset = 0;
+    /** Dynamics (D-W4-16): each velocity's distance from 64 is scaled by this percent; 0 is Fixed (all 64), 100 off. */
+    int dynamics = 100;
+    /** Gate time: 0 off, else a percent of each note's length; gateFixed plays short notes, gateLegato ties them. */
+    int gate = 0;
+    static constexpr int gateFixed = -1, gateLegato = -2, maxGate = 200, maxDynamics = 300;
+    static constexpr Ticks fixedGateTicks = 30;
+    /** Clip Length: notes stop at the region's end (the default); off, they play their whole length. */
+    bool clipLength = true;
 };
 
 struct RegionLoop
@@ -189,6 +297,10 @@ struct Region
     bool muted = false;
     /** Playback delay in milliseconds, -500..+500 (L-RGN-6, D-W3-5): the region plays this much later (or earlier). */
     double delayMs = 0.0;
+    /** The delay in ticks instead (D-W4-16), -960..+960; whichever was set last applies. */
+    bool delayInTicks = false;
+    Ticks delayTicks = 0;
+    static constexpr Ticks maxDelayTicks = 960;
     std::int64_t z = 0;
     std::optional<RegionLoop> loop;
     Id takeFolderId;
@@ -279,6 +391,8 @@ struct Marker
     std::string name;
     std::optional<Color> color;
     UserId createdBy;
+    /** The marker's text (D-UI-48): notes shown in the Marker List's text area and the Marker Text window. */
+    std::string text;
 
     static Marker fromValue (const Id& id, const Value& v);
     Value toValue() const;
@@ -335,20 +449,6 @@ struct VersionTag
     Value toValue() const;
 };
 
-struct AutomationTarget
-{
-    std::string kind = "volume"; // volume | pan | mute | sendLevel | pluginParam
-    Id sendId;
-    Id pluginId;
-    std::string paramId;
-
-    /** Identity of the target, for "one lane per (track, target)" (D-DM-11). */
-    std::string key() const;
-    /** The target a key() came from, if it parses. */
-    static std::optional<AutomationTarget> fromKey (const std::string& key);
-    static AutomationTarget fromValue (const Value& v);
-    Value toValue() const;
-};
 
 struct AutoPoint
 {
@@ -385,11 +485,19 @@ struct MetronomeSettings
     bool enabled = true;
     double levelDb = 0.0;
     std::string during = "both";   // record | play | both (D-W1-10: clicks whenever the metronome is on)
-    int countInBars = 1;           // W-1: default 1 bar
+    int countInBars = 1;           // W-1: default 1 bar; see countInChoices
 
     static MetronomeSettings fromValue (const Value& v);
     Value toValue() const;
 };
+
+/** Count-in lengths in menu order (W-35, D-UI-42): none, 1 to 6 bars, then -1 and -2 for one or two beats. */
+inline constexpr std::array<int, 9> countInChoices { 0, 1, 2, 3, 4, 5, 6, -1, -2 };
+inline constexpr int minCountIn = -2, maxCountIn = 6;
+/** The choice's index in countInChoices; 0 (none) for a value that isn't one. */
+int countInIndex (int countIn) noexcept;
+/** "None", "1 bar", "3 bars", "1 beat", "2 beats". */
+std::string countInName (int countIn);
 
 /** The project's key (F-TMP-10, D-DM-20): a tonic pitch class and major or minor. */
 struct KeySignature
@@ -410,6 +518,64 @@ struct KeySignature
     bool operator== (const KeySignature&) const = default;
 };
 
+/** A key change on the global Key track (D-UI-44): from `pos` on the key is `key`; before the
+    first change it is ProjectInfo::key. */
+struct KeyChange
+{
+    Id id;
+    Ticks pos = 0;
+    KeySignature key;
+
+    static KeyChange fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A section of the song on the global Arrangement track (D-UI-45): Intro, Verse, Chorus... */
+struct Section
+{
+    Id id;
+    Ticks start = 0;
+    Ticks length = 8 * 3840; // 8 bars of 4/4
+    std::string name;
+    std::optional<Color> color;
+
+    Ticks end() const noexcept { return start + length; }
+    static Section fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A group of tracks (D-W6-15): changing one member's linked properties changes the others'. */
+struct Group
+{
+    Id id;
+    int number = 1; // 1 to maxNumber, shown in the Group slot
+    std::string name;
+    bool enabled = true; // "On"
+    bool hidden = false; // "H": its tracks have no rows and no strips
+    // What it links (P-GRP-6 to P-GRP-18). Selection: picking regions on one member picks the ones over the same
+    // time on the others. Quantize: audio regions are quantized together (stored; audio quantize isn't built yet).
+    bool linkSelection = false, linkQuantize = false, linkAutomationMode = false, linkVolume = true, linkMute = true, linkInput = false,
+         linkPan = false, linkSolo = true, linkRecord = false, linkColor = false, linkZoom = false, linkHide = false;
+    int linkSends = 0; // bit n: send slot n + 1 (of 8) moves on all members
+
+    static constexpr int maxNumber = 32;
+
+    static Group fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
+/** A VCA fader (D-W6-16): scales the volume of the tracks assigned to it, and mutes them. */
+struct Vca
+{
+    Id id;
+    std::string name;
+    double volumeDb = 0.0; // -inf to +6
+    bool mute = false;
+
+    static Vca fromValue (const Id& id, const Value& v);
+    Value toValue() const;
+};
+
 /** Scalar project fields (collections live in ProjectModel). */
 struct ProjectInfo
 {
@@ -427,7 +593,25 @@ struct ProjectInfo
     MetronomeSettings metronomeDefaults;
     KeySignature key;
     bool showHiddenTracks = false; // L-TRH-10: hidden tracks get rows again (to unhide them)
+    bool groupsActive = true;      // D-W6-15: off, no group links anything
+    std::string notes;             // project notes (D-UI-47)
+    double panLawDb = -3.0;        // W-35: a mono source's level at centre pan (isValidPanLaw)
+    int midiInputFilter = 0;       // W-35: midiFilter bits for live MIDI the project ignores
 };
+
+/** Pan laws Project Settings offers (W-35, D-UI-42): 0, -3, -4.5 or -6 dB at centre. */
+inline constexpr std::array<double, 4> panLaws { 0.0, -3.0, -4.5, -6.0 };
+bool isValidPanLaw (double db) noexcept;
+/** The law's index in panLaws, or -1. */
+int panLawIndex (double db) noexcept;
+
+/** Kinds of live MIDI input the project can ignore (W-35, D-UI-42): bits of ProjectInfo::midiInputFilter. */
+namespace midiFilter
+{
+inline constexpr int notes = 1, programChange = 2, pitchBend = 4, controllers = 8, channelPressure = 16, polyPressure = 32, all = 63;
+/** Whether a filter drops a live message. Note-offs (and velocity-0 note-ons) always pass, so no note hangs. */
+bool drops (int filter, int status, int data2) noexcept;
+} // namespace midiFilter
 
 bool isValidSampleRate (int rate) noexcept;
 bool isValidBitDepth (int bits) noexcept;

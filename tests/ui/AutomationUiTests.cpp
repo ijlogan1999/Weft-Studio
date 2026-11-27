@@ -266,3 +266,93 @@ TEST_CASE ("The track header's mute writes automation in Latch, like the mixer's
         wroteMuted = wroteMuted || automation::toMute (p.value);
     CHECK (wroteMuted);
 }
+
+TEST_CASE ("AT-AUT-14 automation modes for all tracks, Off/Read and Latch/Read toggles, Alt+mode, closing lanes, used parameters, nudging points", "[UI][AT-AUT-14]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto a = ui.m().trackOrder.front();
+    const auto b = s.createTrack (model::TrackKind::audio, "B").value();
+    ui.studio.edited();
+    ui.settle();
+    const auto modeOf = [&] (const Id& id) { return ui.m().track (id)->automationMode; };
+
+    // Set All Tracks to Automation Touch / Off: one undo step each.
+    REQUIRE (ui.studio.perform (Cmd::automationAllTouch));
+    CHECK ((modeOf (a) == "touch" && modeOf (b) == "touch"));
+    CHECK (s.undoName() == "Automation Mode");
+    REQUIRE (ui.studio.perform (Cmd::automationAllLatch));
+    CHECK (modeOf (b) == "latch");
+    REQUIRE (ui.studio.perform (Cmd::automationAllRead));
+    REQUIRE (ui.studio.perform (Cmd::automationAllOff));
+    CHECK ((modeOf (a) == "off" && modeOf (b) == "off"));
+    CHECK_FALSE (ui.studio.perform (Cmd::automationAllOff)); // nothing to change
+
+    // The selected track's Off/Read and Latch/Read toggles.
+    ui.studio.selectTrack (a);
+    REQUIRE (ui.studio.perform (Cmd::automationOffRead));
+    CHECK (modeOf (a) == "read");
+    REQUIRE (ui.studio.perform (Cmd::automationOffRead));
+    CHECK (modeOf (a) == "off");
+    REQUIRE (ui.studio.perform (Cmd::automationLatchRead));
+    CHECK (modeOf (a) == "read");
+    REQUIRE (ui.studio.perform (Cmd::automationLatchRead));
+    CHECK (modeOf (a) == "latch");
+    CHECK (modeOf (b) == "off");
+
+    // Alt while choosing a mode on a header: every track.
+    REQUIRE (ui.studio.perform (Cmd::toggleAutomation));
+    ui.settle();
+    auto& tracks = ui.main->tracks();
+    TrackHeader* header = nullptr;
+    for (const auto& h : tracks.headers())
+        if (h->trackId == b)
+            header = h.get();
+    REQUIRE (header != nullptr);
+    juce::ModifierKeys::currentModifiers = juce::ModifierKeys (juce::ModifierKeys::altModifier);
+    header->mode.setSelectedItemIndex (2, juce::sendNotificationSync); // Touch
+    juce::ModifierKeys::currentModifiers = {};
+    ui.settle();
+    CHECK ((modeOf (a) == "touch" && modeOf (b) == "touch"));
+
+    // A lane's × closes it; with none left Volume shows.
+    ui.studio.addShownLane (b);
+    ui.settle();
+    REQUIRE (ui.studio.shownLanes (b).size() == 2);
+    for (const auto& h : tracks.headers())
+        if (h->trackId == b)
+            header = h.get();
+    REQUIRE (header->removeLane.size() == 2);
+    header->removeLane[0]->onClick();
+    ui.settle();
+    REQUIRE (ui.studio.shownLanes (b).size() == 1);
+    CHECK (ui.studio.shownLanes (b).front().kind == "pan");
+    ui.studio.removeShownLane (b, 0);
+    CHECK (ui.studio.shownLanes (b).front().kind == "volume");
+
+    // Cycle Through Used Automation Parameters: only the parameters with automation.
+    model::AutomationTarget volume, pan;
+    volume.kind = "volume";
+    pan.kind = "pan";
+    ui.studio.selectTrack (b);
+    CHECK_FALSE (ui.studio.perform (Cmd::cycleAutomationParameter));
+    const auto p1 = s.addAutomationPoint (b, volume, 0, 0.5).value();
+    const auto p2 = s.addAutomationPoint (b, volume, 3840, 0.6).value();
+    REQUIRE (s.addAutomationPoint (b, pan, 0, 0.5));
+    ui.studio.edited();
+    REQUIRE (ui.studio.perform (Cmd::cycleAutomationParameter));
+    CHECK (ui.studio.shownLanes (b).front().kind == "pan");
+    REQUIRE (ui.studio.perform (Cmd::cycleAutomationParameter));
+    CHECK (ui.studio.shownLanes (b).front().kind == "volume");
+
+    // Up/Down with points selected nudge their values by 1%, Shift by 10%, one undo step each.
+    const auto laneId = ui.m().lane (b, volume)->id;
+    ui.studio.pointSelection = { laneId, { p1, p2 } };
+    REQUIRE (ui.key (juce::KeyPress::upKey));
+    const auto valueOf = [&] (const Id& point) { return ui.m().automationLanes.at (laneId)->points.at (point).value; };
+    CHECK (valueOf (p1) == Catch::Approx (0.51));
+    CHECK (valueOf (p2) == Catch::Approx (0.61));
+    REQUIRE (ui.key (juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier));
+    CHECK (valueOf (p1) == Catch::Approx (0.41));
+    CHECK (ui.studio.selectedTrack() == b); // the arrows didn't move the track selection
+}

@@ -5,7 +5,9 @@
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -79,12 +81,189 @@ const model::Region* midiRegionAt (const model::ProjectModel& m, const Id& track
     return best;
 }
 
+std::vector<PlayedNote> playedNotes (const model::Region& r, const model::MidiSequence& seq, Ticks passStart, Ticks passEnd, bool onlyQuantize)
+{
+    std::vector<PlayedNote> out;
+    const auto windowStart = r.midi.sequenceOffset;
+    const auto windowEnd = windowStart + r.length;
+    const auto& q = r.midi.quantize;
+    const auto& m = r.midi;
+    for (const auto* note : seq.sortedNotes())
+    {
+        if (note->muted || note->pos < windowStart || note->pos >= windowEnd)
+            continue;
+        auto on = passStart + (note->pos - windowStart);
+        if (q)
+        {
+            // Q-Range: positive keeps notes far from the grid (played that way on purpose), negative keeps the close ones.
+            const auto distance = std::abs (quantizeTarget (on, q->grid, q->swing * 100.0) - on);
+            if (q->range == 0 || (q->range > 0 ? distance <= q->range : distance > -q->range))
+                on = quantizeTick (on, q->grid, q->strength, q->swing * 100.0);
+        }
+        PlayedNote p;
+        p.note = note;
+        p.on = on;
+        p.off = on + std::max<Ticks> (1, note->length);
+        p.velocity = note->velocity;
+        if (! onlyQuantize)
+        {
+            const auto scaled = m.dynamics == 100 ? note->velocity : 64 + static_cast<int> (std::lround ((note->velocity - 64) * m.dynamics / 100.0));
+            p.velocity = std::clamp (scaled + m.velocityOffset, 1, 127);
+        }
+        out.push_back (p);
+    }
+    const auto byOn = [] (const PlayedNote& a, const PlayedNote& b) { return a.on < b.on; };
+    std::stable_sort (out.begin(), out.end(), byOn);
+
+    // Q-Flam: notes that land together spread out, low to high (or high to low), keeping their lengths.
+    if (q && q->flam != 0)
+    {
+        for (std::size_t i = 0; i < out.size();)
+        {
+            auto j = i;
+            while (j < out.size() && out[j].on == out[i].on)
+                ++j;
+            std::stable_sort (out.begin() + static_cast<std::ptrdiff_t> (i), out.begin() + static_cast<std::ptrdiff_t> (j), [&] (const PlayedNote& a, const PlayedNote& b) {
+                return q->flam > 0 ? a.note->pitch < b.note->pitch : a.note->pitch > b.note->pitch;
+            });
+            for (auto k = i; k < j; ++k)
+            {
+                const auto shift = static_cast<Ticks> (k - i) * std::abs (q->flam);
+                out[k].on += shift;
+                out[k].off += shift;
+            }
+            i = j;
+        }
+        std::stable_sort (out.begin(), out.end(), byOn);
+    }
+    std::erase_if (out, [&] (const PlayedNote& p) { return p.on < passStart || p.on >= passEnd; });
+    if (onlyQuantize)
+        return out;
+
+    // Gate time.
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        auto& p = out[i];
+        if (m.gate > 0)
+            p.off = p.on + std::max<Ticks> (1, static_cast<Ticks> (std::llround (static_cast<double> (p.off - p.on) * m.gate / 100.0)));
+        else if (m.gate == model::MidiRegionData::gateFixed)
+            p.off = p.on + model::MidiRegionData::fixedGateTicks;
+        else if (m.gate == model::MidiRegionData::gateLegato)
+        {
+            // Each note lasts until the next one starts; the last keeps its length.
+            auto next = i + 1;
+            while (next < out.size() && out[next].on == p.on)
+                ++next;
+            if (next < out.size())
+                p.off = out[next].on;
+        }
+    }
+    for (auto& p : out)
+        p.off = std::max (p.on + 1, m.clipLength ? std::min (p.off, passEnd) : p.off);
+    return out;
+}
+
+namespace
+{
+std::atomic<int> middleC { 3 };
+}
+
+void setMiddleCOctave (int octave) noexcept { middleC.store (octave == 4 ? 4 : 3, std::memory_order_relaxed); }
+int middleCOctave() noexcept { return middleC.load (std::memory_order_relaxed); }
+
 std::string noteName (int pitch)
 {
     static const std::array<const char*, 12> names { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     const auto k = ((pitch % 12) + 12) % 12;
-    const auto octave = (pitch - k) / 12 - 2; // 60 -> C3 (D-W4-1)
+    const auto octave = (pitch - k) / 12 - 5 + middleCOctave(); // 60 -> C3 (D-W4-1), or C4 (D-UI-41)
     return std::string (names[static_cast<std::size_t> (k)]) + std::to_string (octave);
+}
+
+std::map<NoteRef, NoteSpan> legatoSpans (const std::vector<TimedNote>& notes)
+{
+    std::vector<Ticks> starts;
+    for (const auto& n : notes)
+        starts.push_back (n.start);
+    std::sort (starts.begin(), starts.end());
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+    {
+        const auto next = std::upper_bound (starts.begin(), starts.end(), n.start);
+        if (next == starts.end())
+            continue;
+        const auto length = *next - n.start;
+        if (length != n.length)
+            out[n.ref] = { n.start, length };
+    }
+    return out;
+}
+
+std::map<NoteRef, NoteSpan> overlapFreeSpans (const std::vector<TimedNote>& notes, const std::vector<TimedNote>& all)
+{
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+    {
+        std::optional<Ticks> next;
+        for (const auto& o : all)
+            if (o.pitch == n.pitch && o.start > n.start && ! (o.ref == n.ref) && (! next || o.start < *next))
+                next = o.start;
+        if (next && n.start + n.length > *next)
+            out[n.ref] = { n.start, *next - n.start };
+    }
+    return out;
+}
+
+std::map<NoteRef, NoteSpan> startToPlayheadSpans (const std::vector<TimedNote>& notes, Ticks playhead)
+{
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+        if (n.start < playhead && n.start + n.length > playhead)
+            out[n.ref] = { playhead, n.start + n.length - playhead };
+    return out;
+}
+
+std::map<NoteRef, NoteSpan> endToPlayheadSpans (const std::vector<TimedNote>& notes, Ticks playhead)
+{
+    std::map<NoteRef, NoteSpan> out;
+    for (const auto& n : notes)
+        if (n.start < playhead && n.start + n.length != playhead)
+            out[n.ref] = { n.start, playhead - n.start };
+    return out;
+}
+
+const std::vector<ScaleInfo>& scales()
+{
+    // Bit n set: n semitones above the root.
+    static const std::vector<ScaleInfo> list {
+        { "Major", 0b101010110101 },
+        { "Natural Minor", 0b010110101101 },
+        { "Harmonic Minor", 0b100110101101 },
+        { "Melodic Minor", 0b101010101101 },
+        { "Dorian", 0b011010101101 },
+        { "Phrygian", 0b010110101011 },
+        { "Lydian", 0b101011010101 },
+        { "Mixolydian", 0b011010110101 },
+        { "Locrian", 0b010101101011 },
+        { "Major Pentatonic", 0b001010010101 },
+        { "Minor Pentatonic", 0b010010101001 },
+        { "Blues", 0b010011101001 },
+    };
+    return list;
+}
+
+int scaleQuantizePitch (int pitch, int root, std::uint16_t degrees) noexcept
+{
+    if ((degrees & 0xFFF) == 0)
+        return pitch;
+    const auto in = [&] (int p) { return p >= 0 && p <= 127 && (degrees >> (((p - root) % 12 + 12) % 12) & 1) != 0; };
+    for (int d = 0; d <= 12; ++d)
+    {
+        if (in (pitch - d))
+            return pitch - d;
+        if (in (pitch + d))
+            return pitch + d;
+    }
+    return pitch;
 }
 
 NoteSpan resizeNote (NoteSpan note, bool rightEdge, Ticks pointer, Ticks grid) noexcept
@@ -366,22 +545,72 @@ EditResult Session::applyRegionQuantize (const Id& regionId)
         return reject ("Quantize applies to MIDI regions.");
     if (! r->midi.quantize)
         return reject ("This region has no quantize setting to apply.");
-    const auto q = *r->midi.quantize;
     std::vector<std::pair<Id, Ticks>> moves;
-    for (const auto& [id, n] : seq->notes)
-    {
-        if (n.pos < r->midi.sequenceOffset || n.pos >= r->midi.sequenceOffset + r->length)
-            continue;
-        // The same positions playback uses (SnapshotCompiler).
-        const auto to = quantizeTick (noteTimelineTick (*r, n.pos), q.grid, q.strength, q.swing * 100.0);
-        if (const auto pos = noteSequenceTick (*r, std::max (to, r->start)); pos != n.pos)
-            moves.emplace_back (id, pos);
-    }
+    // The same positions playback uses (SnapshotCompiler).
+    for (const auto& p : playedNotes (*r, *seq, r->start, r->start + r->length, true))
+        if (const auto pos = noteSequenceTick (*r, std::max (p.on, r->start)); pos != p.note->pos)
+            moves.emplace_back (p.note->id, pos);
     return run ("Apply Quantize", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "midi" / "quantize", Value());
         for (const auto& [id, pos] : moves)
             good = good && w.put (notePath (r->midi.sequenceId, id) / "pos", Value (pos));
         stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::applyRegionParameters (const std::vector<Id>& regionIds, bool delay)
+{
+    struct Change
+    {
+        Id sequenceId, noteId;
+        model::Note note;
+    };
+    std::vector<Change> changes;
+    std::vector<const Region*> regions;
+    for (const auto& id : regionIds)
+    {
+        const auto* r = projection.region (id);
+        const auto* seq = sequenceOf (projection, r);
+        if (seq == nullptr)
+            return reject ("Region parameters apply to MIDI regions.");
+        regions.push_back (r);
+        // The delay as ticks: milliseconds at the tempo where the region starts.
+        Ticks shift = 0;
+        if (delay)
+            shift = r->delayInTicks ? r->delayTicks
+                                    : static_cast<Ticks> (std::llround (r->delayMs / 1000.0 * projection.tempo.bpmAt (r->start) / 60.0 * static_cast<double> (ticksPerQuarter)));
+        for (const auto& p : playedNotes (*r, *seq, r->start, r->start + r->length))
+        {
+            auto n = *p.note;
+            const auto on = std::max (r->start, p.on + shift);
+            n.pos = noteSequenceTick (*r, on);
+            n.length = std::max<Ticks> (1, p.off - p.on);
+            n.pitch = std::clamp (n.pitch + r->midi.transpose, 0, 127);
+            n.velocity = p.velocity;
+            if (! (n.pos == p.note->pos && n.length == p.note->length && n.pitch == p.note->pitch && n.velocity == p.note->velocity))
+                changes.push_back ({ r->midi.sequenceId, n.id, n });
+        }
+    }
+    if (regions.empty())
+        return reject ("Select MIDI regions.");
+    return run (delay ? "Apply All Parameters" : "Apply All Except Delay", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto* r : regions)
+        {
+            const auto midi = regionPath (r->id) / "midi";
+            good = good && w.put (midi / "quantize", Value()) && w.put (midi / "transpose", Value (0)) && w.put (midi / "velocityOffset", Value (0))
+                && w.put (midi / "dynamics", Value (100)) && w.put (midi / "gate", Value (0));
+            if (delay)
+                good = good && w.put (regionPath (r->id) / "delayMs", Value (0.0)) && w.put (regionPath (r->id) / "delayTicks", Value (static_cast<Ticks> (0)));
+            stamp (w, r->id);
+        }
+        for (const auto& c : changes)
+        {
+            const auto path = notePath (c.sequenceId, c.noteId);
+            good = good && w.put (path / "pos", Value (c.note.pos)) && w.put (path / "length", Value (c.note.length)) && w.put (path / "pitch", Value (c.note.pitch))
+                && w.put (path / "velocity", Value (c.note.velocity));
+        }
         return wrote (good);
     });
 }
@@ -428,6 +657,38 @@ EditResult Session::moveController (const Id& regionId, const Id& eventId, Ticks
             good = good && w.put (ccPath (r->midi.sequenceId, eventId) / "pos", Value (pos));
         if (value != e.value)
             good = good && w.put (ccPath (r->midi.sequenceId, eventId) / "value", Value (value));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setControllerEvent (const Id& regionId, const model::CcEvent& event)
+{
+    const auto* r = projection.region (regionId);
+    const auto* seq = sequenceOf (projection, r);
+    if (seq == nullptr || ! seq->controllers.contains (event.id))
+        return reject ("That event no longer exists.");
+    const auto& e = seq->controllers.at (event.id);
+    const bool bend = e.kind == "pitchBend";
+    if (event.number < 0 || event.number > 127 || event.channel < 1 || event.channel > 16
+        || (bend ? (event.value < -8192 || event.value > 8191) : (event.value < 0 || event.value > 127)))
+        return reject ("Controller values are out of range.");
+    if (event.pos < r->start)
+        return reject ("An event can't start before its region.");
+    auto now = e;
+    now.pos = noteSequenceTick (*r, event.pos);
+    now.number = event.number;
+    now.value = event.value;
+    now.channel = event.channel;
+    const auto before = e.toValue();
+    const auto after = now.toValue();
+    if (before == after)
+        return reject ("The event hasn't changed.");
+    return run ("Change Event", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto* key : { "pos", "number", "value", "channel" })
+            if (! (before[key] == after[key]))
+                good = good && w.put (ccPath (r->midi.sequenceId, e.id) / key, after[key]);
         stamp (w, regionId);
         return wrote (good);
     });

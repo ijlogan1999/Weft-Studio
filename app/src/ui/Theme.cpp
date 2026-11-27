@@ -650,6 +650,8 @@ juce::Font font (Type type)
     return plex (t.regular, 12.0f);
 }
 
+juce::Font fontAtHeight (Type type, float height) { return font (type).withHeight (height); }
+
 juce::String captionText (const juce::String& s) { return s.toUpperCase(); }
 
 // Depth --------------------------------------------------------------------------------------
@@ -859,6 +861,47 @@ juce::Path lock()
     juce::Path p;
     juce::PathStrokeType (1.5f).createStrokedPath (p, shackle);
     p.addRoundedRectangle (3.0f, 7.0f, 10.0f, 7.0f, 1.0f);
+    return p;
+}
+
+juce::Path track (int kind)
+{
+    juce::Path p;
+    switch (kind)
+    {
+        case 0: // audio: a row of bars, tallest in the middle
+        {
+            const float heights[] = { 4.0f, 8.0f, 12.0f, 14.0f, 10.0f, 6.0f, 3.0f };
+            for (int i = 0; i < 7; ++i)
+                p.addRoundedRectangle (1.5f + 2.0f * static_cast<float> (i), 8.0f - heights[i] / 2.0f, 1.3f, heights[i], 0.6f);
+            break;
+        }
+        case 1: // instrument: three white keys with two black ones
+        {
+            juce::Path outline;
+            for (int i = 0; i < 3; ++i)
+                outline.addRectangle (1.5f + 4.5f * static_cast<float> (i), 2.0f, 4.0f, 12.0f);
+            juce::PathStrokeType (1.0f).createStrokedPath (p, outline);
+            p.addRectangle (4.5f, 2.0f, 2.5f, 7.0f);
+            p.addRectangle (9.0f, 2.0f, 2.5f, 7.0f);
+            break;
+        }
+        case 2: // bus: two lines joining into one
+        {
+            juce::Path lines;
+            lines.startNewSubPath (2.0f, 3.0f);
+            lines.lineTo (8.0f, 8.0f);
+            lines.lineTo (14.0f, 8.0f);
+            lines.startNewSubPath (2.0f, 13.0f);
+            lines.lineTo (8.0f, 8.0f);
+            juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded).createStrokedPath (p, lines);
+            break;
+        }
+        default: // master: two level bars
+            p.addRoundedRectangle (3.0f, 4.0f, 4.0f, 10.0f, 1.0f);
+            p.addRoundedRectangle (9.0f, 2.0f, 4.0f, 12.0f, 1.0f);
+            break;
+    }
     return p;
 }
 } // namespace icon----------------------------------------------------------------------------------

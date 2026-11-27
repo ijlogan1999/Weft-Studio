@@ -15,6 +15,9 @@ struct LocalView
     std::set<Id> soloed;
     std::set<Id> armed;
     Id selectedTrack; // receives live MIDI when it's an instrument track (D-W2-1)
+    // Settings › Audio (D-UI-41): input monitoring off everywhere, or only on the selected track.
+    bool softwareMonitoring = true;
+    bool monitorSelectedOnly = false;
 
     /** Only audio and instrument tracks can be record-enabled (F-TRK-11). */
     static bool canArm (const model::Track& track) noexcept

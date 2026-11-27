@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace weft::engine
@@ -37,6 +38,9 @@ public:
     static std::shared_ptr<MediaSource> openPartial (const std::filesystem::path& file, std::int64_t totalFrames, std::string* error = nullptr);
     /** Loads the blocks that have arrived since (message thread). */
     void extend();
+    /** The whole file in memory (message thread): from the loaded blocks when resident, else read from disk.
+        Nothing while it is still downloading or can't be read. */
+    std::optional<media::AudioData> readAll() const;
     ~MediaSource();
     MediaSource (const MediaSource&) = delete;
     MediaSource& operator= (const MediaSource&) = delete;

@@ -9,18 +9,27 @@ std::vector<MediaUsage> mediaUsage (const model::ProjectModel& m)
 {
     std::map<std::string, MediaUsage> byHash;
     for (const auto& [hash, ref] : m.media)
-        byHash[hash] = { hash, ref->originalName, ref->sampleRate > 0 ? static_cast<double> (ref->lengthSamples) / ref->sampleRate : 0.0, 0 };
+        byHash[hash] = { hash, ref->originalName, ref->sampleRate > 0 ? static_cast<double> (ref->lengthSamples) / ref->sampleRate : 0.0, 0, {},
+                         ref->sampleRate, ref->channels, ref->bitDepth };
     for (const auto& [id, r] : m.regions)
         if (! r->isMidi && ! r->audio.media.empty())
         {
             auto [it, added] = byHash.try_emplace (r->audio.media);
             if (added)
-                it->second = { r->audio.media, "(missing)", 0.0, 0 };
+                it->second = { r->audio.media, "(missing)", 0.0, 0, {}, 0, 0, 0 };
             ++it->second.regions;
+            it->second.regionIds.push_back (id);
         }
     std::vector<MediaUsage> out;
     for (auto& [hash, u] : byHash)
+    {
+        std::sort (u.regionIds.begin(), u.regionIds.end(), [&] (const Id& a, const Id& b) {
+            const auto* x = m.region (a);
+            const auto* y = m.region (b);
+            return std::tie (x->start, x->id) < std::tie (y->start, y->id);
+        });
         out.push_back (std::move (u));
+    }
     std::sort (out.begin(), out.end(), [] (const MediaUsage& a, const MediaUsage& b) { return std::tie (a.name, a.hash) < std::tie (b.name, b.hash); });
     return out;
 }

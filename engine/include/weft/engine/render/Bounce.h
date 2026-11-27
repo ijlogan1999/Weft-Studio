@@ -2,7 +2,7 @@
 
 // Bounce (W-9, F-EXP-1 to 5 and 11): renders the master output over a range, offline
 // through a private engine or in real time through the live one, then converts it and
-// writes WAV and MP3 files. Message thread only; a job renders a slice per step(), so
+// writes WAV, AIFF, FLAC and MP3 files (D-W9-7 to D-W9-11). Message thread only; a job renders a slice per step(), so
 // the window stays responsive and can cancel.
 
 #include "weft/engine/arrange/OfflineRender.h"
@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -38,10 +39,37 @@ enum class DitherMode
 /** Whether a bounce at this bit depth gets dither (32 is float: never). */
 bool dithers (DitherMode mode, int bitDepth) noexcept;
 
+/** WAV, AIFF or FLAC. AIFF and FLAC are 16 or 24 bits: 32 writes them at 24 (D-W9-8). */
 struct WavFormat
 {
     int bitDepth = 24;      // 16, 24 or 32 (float)
     double sampleRate = 0;  // 0: the project rate
+};
+
+/** Normalize (D-W9-7): scale the mix so its peak is 0 dBFS, always or only when it would clip. */
+enum class Normalize
+{
+    off,
+    overloadOnly,
+    on
+};
+
+/** Interleaved stereo; split into "name.L" and "name.R" mono files; or one mono file (L+R)/2. */
+enum class FileChannels
+{
+    interleaved,
+    split,
+    mono
+};
+
+/** Writes the formats the engine has no writer of its own for (AIFF, FLAC); the app gives one from its platform layer. */
+class AudioEncoder
+{
+public:
+    virtual ~AudioEncoder() = default;
+    /** Lower-case extensions with the dot. */
+    virtual std::vector<std::string> extensions() const = 0;
+    virtual bool encode (const std::filesystem::path& file, const media::AudioData& audio, int bitDepth, std::string& error) const = 0;
 };
 
 struct Mp3Format
@@ -51,6 +79,7 @@ struct Mp3Format
     int vbrQuality = 2;     // VBR: 0 (best) to 9
     double sampleRate = 0;  // 0: the project rate when it's 44.1 or 48 kHz, else 44.1
     std::string title, artist, album, year;
+    double bpm = 0;         // > 0: written as the tag's tempo (Include Tempo Information)
 };
 
 /** The MP3 rate a setting gives for a project rate. */
@@ -61,8 +90,21 @@ struct BounceSettings
     BounceRange range;
     bool includeTail = true;
     bool realtime = false;
+    /** Offline mode: renders offline even when a plug-in says it can only run in real time.
+        Otherwise (Automatic) such a plug-in switches the bounce to real time. */
+    bool forceOffline = false;
+    /** Renders the range twice as a cycle and keeps the second pass, so effect tails from the
+        end carry into the start (no tail is added after it). Offline only. */
+    bool secondCyclePass = false;
     std::optional<WavFormat> wav = WavFormat {};
+    std::optional<WavFormat> aiff, flac;
     std::optional<Mp3Format> mp3;
+    FileChannels channels = FileChannels::interleaved; // MP3 is mono or stereo (split writes it stereo)
+    Normalize normalize = Normalize::off;
+    /** Writes the tempo at the range start into the MP3 tag. */
+    bool includeTempo = true;
+    /** Export Track (D-W9-9): only these tracks, and what they feed, are heard. Always offline. */
+    std::set<Id> soloTracks;
     DitherMode dither = DitherMode::automatic;
     std::filesystem::path folder;
     std::string name = "Bounce"; // file name without the extension
@@ -107,8 +149,9 @@ struct BounceResult
     bool cancelled = false;
     std::vector<std::filesystem::path> files;
     std::int64_t frames = 0;      // rendered, tail included (project rate, or the device rate in real time)
-    double peakDb = -1000;        // of the float mix
-    bool clipped = false;
+    double peakDb = -1000;        // of the float mix, before normalizing
+    double gainDb = 0;            // what Normalize applied
+    bool clipped = false;         // after normalizing
     std::string message;          // the completion notice
     std::string error;
 };
@@ -129,6 +172,8 @@ public:
         Engine* live = nullptr; // for real-time bounces
         /** Plug-ins that report they can't render offline (VST3 "OnlyRT"). */
         std::function<bool (const model::PluginInstance&)> realtimeOnly;
+        /** Writes AIFF and FLAC. */
+        std::shared_ptr<const AudioEncoder> encoder;
     };
 
     BounceJob (const model::ProjectModel& model, BounceSettings settings, Context context);
@@ -166,6 +211,7 @@ private:
     Context ctx;
     std::string why;
     std::int64_t rangeFrames = 0, latency = 0;
+    std::int64_t firstPass = 0; // frames of the first cycle pass still to render and drop
     std::unique_ptr<OfflineRenderer> renderer;
     std::shared_ptr<Engine::Capture> capture;
     std::int64_t taken = 0; // capture frames consumed (latency included)

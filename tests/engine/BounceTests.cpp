@@ -593,3 +593,220 @@ TEST_CASE ("A real-time bounce on a 44.1 kHz device writes the project rate", "[
     CHECK (file.sampleRate == 48000.0);
     CHECK (std::abs (file.numFrames() - barSamples) <= 1);
 }
+
+// W32: normalize, channels, second cycle pass, modes, track and MIDI exports ---------------------
+
+TEST_CASE ("AT-EXP-14 Normalize On and Overload Protection Only; Mono and Split files", "[E][bounce][AT-EXP-14]")
+{
+    Rig rig (256);
+    const auto track = toneTrack (rig, "b3:quiet", barSamples, [] (std::int64_t i) { return sine (i, 250.0, 0.25); });
+    TempFolder out;
+
+    // On: a -12 dBFS sine comes up to 0 dBFS, and the notice says by how much.
+    auto s = wavSettings (out, 1, 32);
+    s.name = "On";
+    s.normalize = Normalize::on;
+    const auto on = bounce (rig, s);
+    REQUIRE (on.ok);
+    CHECK (on.gainDb == Catch::Approx (12.04).margin (0.05));
+    CHECK (on.message.find ("Normalized by +12.0 dB.") != std::string::npos);
+    const auto loud = readBack (on.files[0]);
+    CHECK (*std::max_element (loud.channels[0].begin(), loud.channels[0].end()) == Catch::Approx (1.0f).margin (1e-5));
+
+    // Overload Protection Only leaves a quiet mix alone, and brings a hot one down to 0 dBFS.
+    s.name = "Guard";
+    s.normalize = Normalize::overloadOnly;
+    const auto guard = bounce (rig, s);
+    REQUIRE (guard.ok);
+    CHECK (guard.gainDb == 0.0);
+    CHECK (guard.message == "Bounced Guard.wav.");
+    REQUIRE (rig.session.setTrackMute (track, true));
+    const auto hotTrack = toneTrack (rig, "b3:hot", barSamples, [] (std::int64_t i) { return sine (i, 250.0, 1.26); });
+    s.name = "Hot";
+    const auto hot = bounce (rig, s);
+    REQUIRE (hot.ok);
+    CHECK (hot.gainDb < -1.9);
+    CHECK_FALSE (hot.clipped);
+    CHECK (hot.message.find ("clipped") == std::string::npos);
+    const auto tamed = readBack (hot.files[0]);
+    CHECK (*std::max_element (tamed.channels[0].begin(), tamed.channels[0].end()) <= 1.0f);
+    REQUIRE (rig.session.deleteTrack (hotTrack));
+    REQUIRE (rig.session.setTrackMute (track, false));
+    REQUIRE (rig.session.setTrackPan (track, -0.5));
+    rig.sync();
+
+    // Mono is (L + R) / 2 in one channel; Split writes each side as its own file.
+    s = wavSettings (out, 1, 32);
+    s.name = "Stereo";
+    const auto stereo = readBack (bounce (rig, s).files.at (0));
+    s.name = "Mono";
+    s.channels = FileChannels::mono;
+    const auto monoResult = bounce (rig, s);
+    REQUIRE (monoResult.ok);
+    const auto mono = readBack (monoResult.files.at (0));
+    REQUIRE (mono.channels.size() == 1);
+    REQUIRE (mono.numFrames() == stereo.numFrames());
+    for (std::size_t i = 0; i < 2000; i += 97)
+        CHECK (mono.channels[0][i] == Catch::Approx (0.5f * (stereo.channels[0][i] + stereo.channels[1][i])).margin (1e-6));
+    s.name = "Pair";
+    s.channels = FileChannels::split;
+    CHECK (bounceTargets (s) == std::vector<std::filesystem::path> { out.path / "Pair.L.wav", out.path / "Pair.R.wav" });
+    const auto split = bounce (rig, s);
+    REQUIRE (split.files.size() == 2);
+    const auto left = readBack (split.files[0]), right = readBack (split.files[1]);
+    REQUIRE (left.channels.size() == 1);
+    REQUIRE (right.channels.size() == 1);
+    CHECK (left.channels[0] == stereo.channels[0]);
+    CHECK (right.channels[0] == stereo.channels[1]);
+}
+
+TEST_CASE ("AT-EXP-15 the second cycle pass carries the end's echoes into the start; Automatic and Offline modes", "[E][bounce][AT-EXP-15]")
+{
+    Rig rig (256);
+    // A 50 ms burst at the very end of bar 1, into a 250 ms delay.
+    const auto track = toneTrack (rig, "b3:burst", 2400, [] (std::int64_t i) { return sine (i, 1000.0, 0.5); }, barTicks - 96);
+    // Parameters are stored normalized: time is logarithmic from 1 to 2000 ms, feedback 0 to 95 %.
+    addBuiltin (rig, track, "weft.delay", "Delay", { { "time", std::log (250.0) / std::log (2000.0) }, { "feedback", 50.0 / 95.0 } });
+    TempFolder out;
+    auto s = wavSettings (out, 1, 32);
+    s.name = "Once";
+    const auto once = readBack (bounce (rig, s).files.at (0));
+    s.name = "Twice";
+    s.secondCyclePass = true;
+    s.includeTail = true; // ignored: the tail wraps round instead
+    const auto twiceResult = bounce (rig, s);
+    REQUIRE (twiceResult.ok);
+    const auto twice = readBack (twiceResult.files.at (0));
+    CHECK (twice.numFrames() == barSamples);
+    // The first echo lands 200 ms into the bar on the second time round, and only then.
+    const auto from = static_cast<std::size_t> (0.15 * rate), to = static_cast<std::size_t> (0.3 * rate);
+    CHECK (rmsDb (once.channels[0], from, to) < -100.0);
+    CHECK (rmsDb (twice.channels[0], from, to) > -30.0);
+    // The end of the bar (the burst itself) is the same both ways.
+    CHECK (rmsDb (twice.channels[0], barSamples - 2000, barSamples) == Catch::Approx (rmsDb (once.channels[0], barSamples - 2000, barSamples)).margin (1.0));
+
+    // Automatic switches to real time for a real-time-only plug-in; Offline doesn't, and says so.
+    addBuiltin (rig, track, "weft.gain", "Hardware Insert");
+    auto ctx = context (rig);
+    ctx.realtimeOnly = [] (const model::PluginInstance& p) { return p.name == "Hardware Insert"; };
+    auto automatic = wavSettings (out, 1);
+    BounceJob a (rig.session.model(), automatic, ctx);
+    CHECK (a.realtime());
+    auto offline = automatic;
+    offline.forceOffline = true;
+    BounceJob o (rig.session.model(), offline, ctx);
+    CHECK_FALSE (o.realtime());
+    CHECK (o.notice() == "Hardware Insert says it can only render in real time; Offline mode renders it offline anyway.");
+    // A real-time bounce plays the range once.
+    auto live = automatic;
+    live.realtime = true;
+    live.secondCyclePass = true;
+    BounceJob r (rig.session.model(), live, context (rig));
+    CHECK_FALSE (r.settings().secondCyclePass);
+    CHECK (r.notice() == "A real-time bounce plays the range once (no second cycle pass).");
+}
+
+TEST_CASE ("AT-EXP-17 exporting a track renders only it (and what it feeds), always offline", "[E][bounce][AT-EXP-17]")
+{
+    Rig rig (256);
+    const auto low = toneTrack (rig, "b3:low", barSamples, [] (std::int64_t i) { return sine (i, 200.0, 0.3); });
+    toneTrack (rig, "b3:high", barSamples, [] (std::int64_t i) { return sine (i, 3000.0, 0.3); });
+    TempFolder out;
+    auto s = wavSettings (out, 1, 32);
+    s.name = "Low";
+    s.soloTracks = { low };
+    s.realtime = true;
+    BounceJob job (rig.session.model(), s, context (rig));
+    CHECK_FALSE (job.realtime());
+    job.render();
+    const auto result = job.finish();
+    REQUIRE (result.ok);
+    const auto audio = readBack (result.files.at (0));
+    Decoded d;
+    d.samples = audio.channels[0];
+    d.frames = audio.channels[0].size();
+    d.channels = 1;
+    d.sampleRate = static_cast<int> (rate);
+    CHECK (power (d, 200.0) > 1000.0 * power (d, 3000.0));
+    // The mix has both.
+    s.soloTracks.clear();
+    s.realtime = false;
+    s.name = "Both";
+    const auto both = readBack (bounce (rig, s).files.at (0));
+    d.samples = both.channels[0];
+    CHECK (power (d, 3000.0) > 0.1 * power (d, 200.0));
+}
+
+TEST_CASE ("AT-EXP-18 Export Selection as MIDI File: one file track per project track, from the earliest region", "[E][bounce][AT-EXP-18]")
+{
+    Rig rig (256);
+    const auto keys = rig.session.createTrack (TrackKind::instrument, "Keys").value();
+    const auto bass = rig.session.createTrack (TrackKind::instrument, "Bass").value();
+    const auto a = rig.session.createMidiRegion (bass, barTicks, barTicks).value();
+    const auto b = rig.session.createMidiRegion (keys, 2 * barTicks, barTicks).value();
+    const auto c = rig.session.createMidiRegion (keys, 3 * barTicks, barTicks).value();
+    model::Note n;
+    n.pos = 960;
+    n.length = 480;
+    n.pitch = 40;
+    REQUIRE (rig.session.addNote (a, n));
+    n.pitch = 64;
+    n.pos = 0;
+    REQUIRE (rig.session.addNote (b, n));
+    n.pitch = 67;
+    REQUIRE (rig.session.addNote (c, n));
+    REQUIRE (rig.session.setTempoAt (0, 100.0));
+    const auto file = midiSelectionFile (rig.session.model(), { c, a, b });
+    REQUIRE (file.tracks.size() == 2);
+    CHECK (file.tracks[0].name == "Keys"); // track order, not selection order
+    CHECK (file.tracks[1].name == "Bass");
+    REQUIRE (file.tracks[0].notes.size() == 2);
+    CHECK (file.tracks[0].notes[0].tick == barTicks);
+    CHECK (file.tracks[0].notes[1].tick == 2 * barTicks);
+    CHECK (file.tracks[0].notes[1].pitch == 67);
+    REQUIRE (file.tracks[1].notes.size() == 1);
+    CHECK (file.tracks[1].notes[0].tick == 960);
+    REQUIRE (file.tempos.size() == 1);
+    CHECK (file.tempos[0].bpm == Catch::Approx (100.0));
+    // It reads back the same.
+    const auto parsed = media::parseMidiFile (media::encodeMidiFile (file));
+    REQUIRE (parsed);
+    REQUIRE (parsed->tracks.size() >= 2);
+    // Nothing MIDI selected: no tracks.
+    CHECK (midiSelectionFile (rig.session.model(), {}).tracks.empty());
+}
+
+TEST_CASE ("AT-VS-3 bounces ignore Varispeed: offline and real time, the file is at normal speed", "[E][bounce][varispeed][AT-VS-3]")
+{
+    Rig rig (256);
+    rig.addAudioRegion (rig.audioTrack(), 0, 3 * barSamples);
+    TempFolder out;
+    auto s = wavSettings (out, 2);
+    const auto normal = bounce (rig, s);
+    REQUIRE (normal.ok);
+    const auto expected = readBack (normal.files[0]);
+
+    // Varispeed at +50% on the live engine (this user's playback).
+    auto ts = rig.engine.settings();
+    ts.varispeed = 1.5;
+    rig.engine.setSettings (ts);
+    REQUIRE (rig.device.render (1024));
+    s.name = "Offline";
+    const auto offline = bounce (rig, s);
+    REQUIRE (offline.ok);
+    CHECK (readBack (offline.files[0]).channels == expected.channels);
+
+    s.realtime = true;
+    s.name = "Live";
+    BounceJob job (rig.session.model(), s, context (rig));
+    const auto live = bounceRealtime (rig, job);
+    REQUIRE (live.ok);
+    const auto captured = readBack (live.files[0]);
+    REQUIRE (captured.numFrames() == expected.numFrames());
+    int beyondOneLsb = 0;
+    for (std::size_t ch = 0; ch < 2; ++ch)
+        for (std::size_t i = 0; i < static_cast<std::size_t> (expected.numFrames()); ++i)
+            if (std::abs (captured.channels[ch][i] - expected.channels[ch][i]) > 1.5f / 8388608.0f)
+                ++beyondOneLsb;
+    CHECK (beyondOneLsb == 0);
+}

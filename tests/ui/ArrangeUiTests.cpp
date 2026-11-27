@@ -1,6 +1,8 @@
 // Arrange window [UI] criteria: ruler, selection, zoom, tools, markers, track headers.
 
 #include "UiFixture.h"
+#include "ui/PluginSearch.h"
+#include "ui/ProjectDialogs.h"
 
 #include "weft/time/Position.h"
 
@@ -132,7 +134,7 @@ TEST_CASE ("AT-ARR-23 tool menu: pencil, scissors, glue, eraser, Esc", "[UI]")
     ui.studio.uiCommand = [&] (Cmd c) { asked = c; };
     ui.key ('T');
     CHECK (asked == Cmd::toolMenu);
-    CHECK (main.toolMenu().getNumItems() == 6);
+    CHECK (main.toolMenu().getNumItems() == 11); // D-UI-36 added five
 
     main.pickTool (static_cast<int> (Tool::pencil) + 1);
     ui.settle();
@@ -403,9 +405,9 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (! it.getItem().isSeparator)
             items.add (it.getItem().text);
-    CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "Duplicate Track", "Duplicate Track with Regions",
-                                        "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down", "Mute Track", "Solo Track", "Record-Enable Track",
-                                        "Lock/Unlock Track" });
+    CHECK (items == juce::StringArray { "New Track", "New Audio Track", "New Instrument Track", "New Track with Next Input", "Duplicate Track",
+                                        "Duplicate Track with Regions", "Delete Track", "Delete Unused Tracks", "Color", "Move Track Up", "Move Track Down",
+                                        "Mute Track", "Solo Track", "Record-Enable Track", "Input Monitoring Track", "Mute Off for All", "Clear/Recall Solo", "Solo Tracks of Selected Regions", "Search and Select Track...", "Lock/Unlock Track", "Create Folder Stack", "Create Summing Stack", "Flatten Stack", "Open/Close Track Stack", "Turn All Tracks On/Off", "Configure Track Header..." });
 
     // Color › swatch 7 from the menu bar.
     ui.main->menuItemSelected (MainComponent::colourMenuBase + 7, 0);
@@ -423,7 +425,7 @@ TEST_CASE ("AT-TRK-4 [UI] Duplicate Track, Color and Delete from the Track menu 
         if (! it.getItem().isSeparator)
             headerItems.add (it.getItem().text);
     CHECK (headerItems == juce::StringArray { "Rename", "Duplicate Track", "Duplicate Track with Regions", "Color", "Move Track Up", "Move Track Down",
-                                              "Delete Track", "Turn Track Off", "Hide Track", "Lock Track", "Add Comment" });
+                                              "Delete Track", "Turn Track Off", "Hide Track", "Lock Track", "Add Comment", "Configure Track Header" });
     header->pickMenu (TrackHeader::itemTrackOff); // L-TRH-7
     CHECK (ui.m().track (audio)->off);
     header->pickMenu (TrackHeader::itemTrackOff);
@@ -1135,6 +1137,163 @@ TEST_CASE ("AT-TRN-20 Stop while stopped goes to the start; with Cycle on, Play 
     CHECK (items.contains ("Stop"));
 }
 
+TEST_CASE ("AT-TRN-21 Navigate › Metronome Clicks sets the bar, beat and division clicks, count-in only and tone", "[UI][AT-TRN-21]")
+{
+    Ui ui;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    const juce::PopupMenu* clicks = nullptr;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().text == "Metronome Clicks")
+            clicks = it.getItem().subMenu.get();
+    REQUIRE (clicks != nullptr);
+    juce::StringArray names;
+    const juce::PopupMenu* tone = nullptr;
+    for (juce::PopupMenu::MenuItemIterator it (*clicks); it.next();)
+    {
+        names.add (it.getItem().text);
+        if (it.getItem().text == "Tone")
+            tone = it.getItem().subMenu.get();
+    }
+    for (auto name : { "Bar", "Beat", "Division", "Only During Count-in", "Tone" })
+        CHECK (names.contains (name));
+    REQUIRE (tone != nullptr);
+    int toneItems = 0, ticked = -1;
+    for (juce::PopupMenu::MenuItemIterator it (*tone); it.next();)
+    {
+        if (it.getItem().isTicked)
+            ticked = it.getItem().itemID - MainComponent::clickTone0;
+        ++toneItems;
+    }
+    CHECK (toneItems == engine::Metronome::numTones);
+    CHECK (ticked == engine::Metronome::middleTone);
+
+    const auto before = ui.studio.engine().settings();
+    CHECK (before.clickBars);
+    CHECK (before.clickBeats);
+    CHECK_FALSE (before.clickDivisions);
+    CHECK_FALSE (before.clickOnlyCountIn);
+    ui.main->menuItemSelected (MainComponent::clickBar, 4);
+    ui.main->menuItemSelected (MainComponent::clickDivision, 4);
+    ui.main->menuItemSelected (MainComponent::clickOnlyCountIn, 4);
+    ui.main->menuItemSelected (MainComponent::clickTone0, 4);
+    const auto after = ui.studio.engine().settings();
+    CHECK_FALSE (after.clickBars);
+    CHECK (after.clickBeats);
+    CHECK (after.clickDivisions);
+    CHECK (after.clickOnlyCountIn);
+    CHECK (after.clickTone == 0);
+    ui.main->menuItemSelected (MainComponent::clickBeat, 4);
+    CHECK_FALSE (ui.studio.engine().settings().clickBeats);
+}
+
+TEST_CASE ("AT-TRN-22 go-to, play-from and stop-and-go commands, cycle moves, Play and Stop menus", "[UI][AT-TRN-22]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    auto& s = studio.session();
+    const auto run = [&] {
+        ui.renderAudio (512);
+        studio.tick();
+        ui.settle();
+    };
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto region = *s.createMidiRegion (keys, 4 * bar, 2 * bar);
+    REQUIRE (s.setCycle (false, 2 * bar, 3 * bar));
+    studio.edited();
+    ui.settle();
+
+    // Go to.
+    REQUIRE (ui.key (juce::KeyPress::homeKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (studio.playhead() == 2 * bar);
+    REQUIRE (ui.key (juce::KeyPress::endKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (studio.playhead() == 3 * bar);
+    CHECK_FALSE (studio.perform (Cmd::goToSelectionStart)); // nothing selected
+    studio.selection.set ({ region });
+    REQUIRE (ui.key (juce::KeyPress::homeKey, juce::ModifierKeys::shiftModifier));
+    CHECK (studio.playhead() == 4 * bar);
+    REQUIRE (ui.key (juce::KeyPress::endKey, juce::ModifierKeys::shiftModifier));
+    CHECK (studio.playhead() == 6 * bar);
+    studio.locate (7 * bar);
+    REQUIRE (studio.perform (Cmd::goToStart));
+    CHECK (studio.playhead() == 0);
+    // The last locate position is where the playhead was last put before that: going there twice stays.
+    studio.locate (5 * bar);
+    REQUIRE (studio.perform (Cmd::goToLastLocate));
+    CHECK (studio.playhead() == 5 * bar);
+
+    // Play from.
+    REQUIRE (ui.key (juce::KeyPress::spaceKey, juce::ModifierKeys::shiftModifier)); // from the selection
+    run();
+    REQUIRE (studio.playing());
+    CHECK (studio.playhead() >= 4 * bar);
+    CHECK (studio.playhead() < 4 * bar + bar / 2);
+    CHECK (studio.lastLocatePosition() == 4 * bar);
+    REQUIRE (studio.perform (Cmd::stopGoToCycleStart));
+    run();
+    CHECK_FALSE (studio.playing());
+    CHECK (studio.playhead() == 2 * bar);
+    REQUIRE (studio.perform (Cmd::playFromPreviousBar));
+    run();
+    CHECK (studio.playhead() >= bar);
+    CHECK (studio.playhead() < 2 * bar);
+    REQUIRE (studio.perform (Cmd::stopGoToStart));
+    run();
+    CHECK_FALSE (studio.playing());
+    CHECK (studio.playhead() == 0);
+    studio.view.originTick = 8.0 * bar;
+    REQUIRE (studio.perform (Cmd::playFromWindowEdge));
+    run();
+    CHECK (studio.playhead() >= 8 * bar);
+    REQUIRE (studio.perform (Cmd::stopGoToLastLocate));
+    run();
+    CHECK (studio.playhead() == 8 * bar);
+    REQUIRE (studio.perform (Cmd::playFromStart));
+    run();
+    CHECK (studio.playhead() < bar);
+    REQUIRE (studio.perform (Cmd::stop));
+    run();
+
+    // Cycle moves: one undo step each.
+    REQUIRE (ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.m().info.cycle.start == 3 * bar);
+    CHECK (ui.m().info.cycle.end == 4 * bar);
+    REQUIRE (studio.perform (Cmd::doubleCycle));
+    CHECK (ui.m().info.cycle.end == 5 * bar);
+    REQUIRE (studio.perform (Cmd::halveCycle));
+    CHECK (ui.m().info.cycle.end == 4 * bar);
+    REQUIRE (ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.m().info.cycle.start == 2 * bar);
+    REQUIRE (studio.perform (Cmd::undo));
+    CHECK (ui.m().info.cycle.start == 3 * bar);
+
+    // Navigate menu groups; Play and Stop open a menu on right-click.
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    juce::StringArray subs;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().subMenu != nullptr)
+            subs.add (it.getItem().text);
+    for (auto name : { "Go To", "Play From", "Stop And", "Cycle Range" })
+        CHECK (subs.contains (name));
+    auto& controls = ui.main->controlBar();
+    CommandButton* play = nullptr;
+    for (auto* b : controls.commandButtons())
+        if (b->getTitle() == "Play")
+            play = b;
+    REQUIRE (play != nullptr);
+    REQUIRE (play->popupMenu);
+    juce::StringArray items;
+    const auto playMenu = play->popupMenu();
+    for (juce::PopupMenu::MenuItemIterator it (playMenu); it.next();)
+        items.add (it.getItem().text);
+    CHECK (items.contains ("Play from Cycle Start"));
+    play->popupPicked (static_cast<int> (Cmd::playFromCycleStart) + 1);
+    run();
+    CHECK (studio.playing());
+    CHECK (studio.playhead() >= 2 * bar);
+    REQUIRE (studio.perform (Cmd::stop));
+    run();
+}
+
 TEST_CASE ("AT-ARR-31 Deselect All and Invert Selection", "[UI][AT-ARR-31]")
 {
     Ui ui;
@@ -1342,6 +1501,89 @@ TEST_CASE ("AT-TRK-17 keys for the selected track's Mute, Solo and Record-enable
         items.add (it.getItem().text);
     for (const auto* name : { "New Audio Track", "New Instrument Track", "Mute Track", "Solo Track", "Record-Enable Track" })
         CHECK (items.contains (name));
+}
+
+TEST_CASE ("AT-TRK-21 New Track with Next Input and Search and Select Track", "[UI][AT-TRK-21]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto bus = s.createTrack (model::TrackKind::bus, "Drums").value();
+    const auto first = s.createTrack (model::TrackKind::audio, "Mono", 1).value();
+    model::InputAssignment in;
+    in.kind = model::InputAssignment::Kind::audio;
+    in.firstChannel = 0;
+    REQUIRE (s.setTrackInput (first, in));
+    REQUIRE (s.setTrackOutput (first, bus));
+    REQUIRE (s.setTrackMonitor (first, "on"));
+    ui.studio.edited();
+    ui.studio.selectTrack (first);
+    ui.settle();
+    const auto inputs = ui.studio.device().config().numInputChannels;
+    REQUIRE (inputs >= 2);
+
+    // Ctrl+Shift+N: a mono audio track on input 2, out to Drums, monitoring on, below and selected, one undo step.
+    const auto before = ui.m().trackOrder.size();
+    REQUIRE (ui.key ('N', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier));
+    REQUIRE (ui.m().trackOrder.size() == before + 1);
+    const auto made = ui.studio.selectedTrack();
+    const auto* t = ui.m().track (made);
+    REQUIRE (t != nullptr);
+    CHECK (t->kind == model::TrackKind::audio);
+    CHECK (t->channels == 1);
+    CHECK (t->input.kind == model::InputAssignment::Kind::audio);
+    CHECK (t->input.firstChannel == 1);
+    CHECK (t->output.busId == bus);
+    CHECK (t->monitor == "on");
+    const auto& order = ui.m().trackOrder;
+    CHECK (std::find (order.begin(), order.end(), made) == std::find (order.begin(), order.end(), first) + 1);
+    CHECK (s.undoName() == "New Track");
+
+    // Past the device's last input the new track gets none.
+    in.firstChannel = inputs - 1;
+    REQUIRE (s.setTrackInput (made, in));
+    ui.studio.edited();
+    REQUIRE (ui.studio.perform (Cmd::newTrackNextInput));
+    CHECK (ui.m().track (ui.studio.selectedTrack())->input.kind == model::InputAssignment::Kind::none);
+
+    // Alt+click on + does the same; a bus selected says so.
+    const auto count = ui.m().trackOrder.size();
+    juce::ModifierKeys::currentModifiers = juce::ModifierKeys::altModifier;
+    ui.main->tracks().addTrackButton().onClick();
+    juce::ModifierKeys::currentModifiers = {};
+    ui.settle();
+    CHECK (ui.m().trackOrder.size() == count + 1);
+    ui.studio.selectTrack (bus);
+    CHECK_FALSE (ui.studio.perform (Cmd::newTrackNextInput));
+    CHECK (ui.m().trackOrder.size() == count + 1);
+
+    // Instrument tracks keep the instrument.
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto instruments = ui.studio.pluginChoices (true);
+    REQUIRE_FALSE (instruments.empty());
+    REQUIRE (ui.studio.setInstrument (keys, instruments.back()));
+    ui.settle();
+    ui.studio.selectTrack (keys);
+    REQUIRE (ui.studio.perform (Cmd::newTrackNextInput));
+    const auto* inst = ui.m().track (ui.studio.selectedTrack());
+    REQUIRE (inst->kind == model::TrackKind::instrument);
+    REQUIRE (inst->strip.instrument);
+    CHECK (inst->strip.instrument->pluginUid == ui.m().track (keys)->strip.instrument->pluginUid);
+
+    // Search and Select Track: every word, any case; the master is never listed.
+    REQUIRE (s.renameTrack (first, "Lead Vocal"));
+    ui.studio.edited();
+    CHECK (TrackSearch::matches (ui.studio, "vocal LEAD") == std::vector<Id> { first });
+    CHECK (TrackSearch::matches (ui.studio, "drums") == std::vector<Id> { bus });
+    for (const auto& id : TrackSearch::matches (ui.studio, {}))
+        CHECK (ui.m().track (id)->kind != model::TrackKind::master);
+    TrackSearch search (ui.studio);
+    Id chosen;
+    search.onChosen = [&] (const Id& id) { chosen = id; };
+    search.setSearch ("drum");
+    REQUIRE (search.results().size() == 1);
+    REQUIRE (search.selectHighlighted());
+    CHECK (ui.studio.selectedTrack() == bus);
+    CHECK (chosen == bus);
 }
 
 TEST_CASE ("AT-ARR-36 right-click menus in the marker, tempo and signature lanes", "[UI][AT-ARR-36]")
@@ -1720,7 +1962,7 @@ TEST_CASE ("AT-UI-12 one key picks a tool while the Tool menu is open", "[UI][AT
     const auto menu = ui.main->toolMenu();
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         keys.add (it.getItem().shortcutKeyDescription);
-    CHECK (keys.joinIntoString (" ") == "T P I J E M");
+    CHECK (keys.joinIntoString (" ") == "T P I J E M N Z A G Q");
 
     auto& listener = ui.main->toolKeys;
     CHECK (listener.keyPressed (juce::KeyPress ('p', {}, 'p'), nullptr));
@@ -1728,7 +1970,7 @@ TEST_CASE ("AT-UI-12 one key picks a tool while the Tool menu is open", "[UI][AT
     CHECK (ui.studio.tool == Tool::pencil);
     CHECK (listener.keyPressed (juce::KeyPress ('m', {}, 'm'), nullptr));
     CHECK (ui.studio.tool == Tool::mute);
-    CHECK_FALSE (listener.keyPressed (juce::KeyPress ('q', {}, 'q'), nullptr));
+    CHECK_FALSE (listener.keyPressed (juce::KeyPress ('w', {}, 'w'), nullptr));
     CHECK (ui.studio.tool == Tool::mute);
     CHECK_FALSE (listener.keyPressed (juce::KeyPress ('t', juce::ModifierKeys (juce::ModifierKeys::commandModifier), 't'), nullptr));
     CHECK (ui.studio.tool == Tool::mute);
@@ -1787,11 +2029,11 @@ TEST_CASE ("AT-TRK-20 New Track dialog: input, output, monitoring, record enable
 
     // Right-click below the headers: the new-track commands and Delete Unused Tracks.
     juce::StringArray items;
-    const auto menu = TracksArea::headerAreaMenu();
+    const auto menu = ui.main->tracks().headerAreaMenu();
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (it.getItem().itemID != 0)
             items.add (it.getItem().text);
-    CHECK (items.joinIntoString ("|") == "New Track|New Audio Track|New Instrument Track|Delete Unused Tracks");
+    CHECK (items.joinIntoString ("|") == "New Track|New Audio Track|New Instrument Track|Delete Unused Tracks|Turn All Tracks On/Off");
     const auto before = ui.m().trackOrder.size();
     ui.main->tracks().pickHeaderAreaMenu (static_cast<int> (Cmd::newInstrumentTrack) + 1);
     ui.settle();
@@ -1814,4 +2056,689 @@ TEST_CASE ("AT-TRK-20 New Track dialog: input, output, monitoring, record enable
     REQUIRE (ui.studio.perform (Cmd::undo));
     ui.settle();
     CHECK (ui.m().track (first) != nullptr);
+}
+
+TEST_CASE ("AT-TRK-22 Configure Track Header: optional buttons, hidden parts, column width, all tracks on/off", "[UI][AT-TRK-22]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    REQUIRE (s.createTrack (model::TrackKind::audio, "Two"));
+    REQUIRE (s.createTrack (model::TrackKind::instrument, "Keys"));
+    ui.studio.edited();
+    ui.settle();
+    std::vector<Id> t;
+    for (const auto& id : ui.m().trackOrder)
+        if (const auto* track = ui.m().track (id); track->kind == model::TrackKind::audio || track->kind == model::TrackKind::instrument)
+            t.push_back (id);
+    REQUIRE (t.size() == 3);
+    const auto off = [&] (std::size_t i) { return ui.m().track (t[i])->off; };
+
+    // By default the optional buttons don't show; the header's menu and the column's offer the options.
+    auto* first = headerFor (ui, t[0]);
+    REQUIRE (first != nullptr);
+    CHECK_FALSE (first->onOff.isVisible());
+    CHECK_FALSE (first->monitor.isVisible());
+    CHECK_FALSE (first->hide.isVisible());
+    juce::StringArray subMenus;
+    const auto headerMenu = first->menu();
+    for (juce::PopupMenu::MenuItemIterator it (headerMenu); it.next();)
+        if (it.getItem().subMenu != nullptr)
+            subMenus.add (it.getItem().text);
+    CHECK (subMenus.contains ("Configure Track Header"));
+    CHECK (commandInfo (Cmd::configureTrackHeader).shortcut == "Alt+T");
+
+    first->pickMenu (static_cast<int> (TrackHeader::itemHeaderOption) + Studio::headerOnOff);
+    ui.main->tracks().pickHeaderAreaMenu (TracksArea::headerOptionBase + Studio::headerMonitor);
+    ui.studio.toggleHeaderOption (Studio::headerHide);
+    ui.settle();
+    first = headerFor (ui, t[0]);
+    CHECK (first->onOff.isVisible());
+    CHECK (first->monitor.isVisible());
+    CHECK (first->hide.isVisible());
+    CHECK (first->onOff.getToggleState());
+    CHECK_FALSE (headerFor (ui, t[2])->monitor.isVisible()); // input monitoring is for audio tracks
+    CHECK (headerFor (ui, t[2])->onOff.isVisible());
+    // Left to right: On, M, S, R, I, H; the name keeps the rest.
+    CHECK (first->onOff.getRight() < first->mute.getX());
+    CHECK (first->arm.getRight() < first->monitor.getX());
+    CHECK (first->monitor.getRight() < first->hide.getX());
+    CHECK (first->name.getRight() <= first->onOff.getX());
+
+    // On/Off: a click turns the track off; Ctrl+click turns only this one on; Alt+click sets them all.
+    const auto ctrl = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+    const auto alt = juce::ModifierKeys (juce::ModifierKeys::altModifier);
+    clickWith (ui, headerFor (ui, t[0])->onOff, {});
+    CHECK (off (0));
+    CHECK (s.undoName() == "Turn Track Off");
+    CHECK_FALSE (headerFor (ui, t[0])->onOff.getToggleState());
+    clickWith (ui, headerFor (ui, t[1])->onOff, ctrl);
+    CHECK ((off (0) && ! off (1) && off (2)));
+    CHECK (s.undoName() == "Turn On Only");
+    clickWith (ui, headerFor (ui, t[1])->onOff, alt);
+    CHECK ((off (0) && off (1) && off (2)));
+    CHECK (s.undoName() == "Turn All Tracks Off");
+
+    // Track › Turn All Tracks On/Off: any off turns them all on; then all go off.
+    REQUIRE (ui.studio.perform (Cmd::toggleAllTracksOff));
+    ui.settle();
+    CHECK_FALSE ((off (0) || off (1) || off (2)));
+    CHECK (s.undoName() == "Turn All Tracks On");
+    REQUIRE (ui.studio.perform (Cmd::toggleAllTracksOff));
+    ui.settle();
+    CHECK ((off (0) && off (1) && off (2)));
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK_FALSE ((off (0) || off (1) || off (2)));
+
+    // A swipe across the On/Off column is one undo step.
+    {
+        auto& from = headerFor (ui, t[0])->onOff;
+        from.swipeOver (&headerFor (ui, t[1])->onOff);
+        from.swipeOver (&headerFor (ui, t[2])->onOff);
+        from.swipeOver (&headerFor (ui, t[1])->mute); // another kind of button is ignored
+        CHECK (from.endSwipe());
+        ui.settle();
+    }
+    CHECK ((off (0) && off (1) && off (2)));
+    CHECK_FALSE (ui.m().track (t[1])->mute);
+    CHECK (s.undoName() == "Turn Tracks On/Off");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+
+    // Input monitoring: on, then back to auto.
+    clickWith (ui, headerFor (ui, t[0])->monitor, {});
+    CHECK (ui.m().track (t[0])->monitor == "on");
+    CHECK (headerFor (ui, t[0])->monitor.getToggleState());
+    clickWith (ui, headerFor (ui, t[0])->monitor, {});
+    CHECK (ui.m().track (t[0])->monitor == "auto");
+
+    // Hide: the track goes (until Show Hidden Tracks).
+    clickWith (ui, headerFor (ui, t[1])->hide, {});
+    CHECK (ui.m().track (t[1])->hidden);
+    CHECK (headerFor (ui, t[1]) == nullptr);
+
+    // Volume, pan, numbers, icons.
+    first = headerFor (ui, t[0]);
+    const auto nameX = first->name.getX();
+    CHECK (first->volume.isVisible());
+    ui.studio.toggleHeaderOption (Studio::headerVolume);
+    ui.settle();
+    first = headerFor (ui, t[0]);
+    CHECK_FALSE (first->volume.isVisible());
+    CHECK (first->pan.isVisible());
+    ui.studio.toggleHeaderOption (Studio::headerNumbers);
+    ui.settle();
+    CHECK (headerFor (ui, t[0])->name.getX() < nameX);
+    ui.studio.toggleHeaderOption (Studio::headerNumbers);
+    ui.studio.toggleHeaderOption (Studio::headerIcons);
+    ui.settle();
+    CHECK (headerFor (ui, t[0])->name.getX() > nameX);
+    CHECK_FALSE (icon::track (0).isEmpty());
+    CHECK_FALSE (icon::track (1).isEmpty());
+
+    // The column's width: drag its edge, within limits; double-click for the default.
+    auto& tracks = ui.main->tracks();
+    auto& edge = tracks.headerResizer();
+    CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth);
+    const auto start = edge.getLocalBounds().getCentre().toFloat();
+    edge.mouseDown (mouse (edge, start));
+    edge.mouseDrag (mouse (edge, start + juce::Point<float> (60.0f, 0.0f), {}, 1, start));
+    ui.settle();
+    CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth + 60);
+    CHECK (headerFor (ui, t[0])->getWidth() == Studio::defaultHeaderWidth + 60);
+    CHECK (tracks.timeline().getX() == Studio::defaultHeaderWidth + 60);
+    edge.mouseDrag (mouse (edge, start + juce::Point<float> (2000.0f, 0.0f), {}, 1, start));
+    ui.settle();
+    CHECK (tracks.headerWidth() == Studio::maxHeaderWidth);
+    edge.mouseDoubleClick (mouse (edge, start, {}, 2));
+    ui.settle();
+    CHECK (tracks.headerWidth() == Studio::defaultHeaderWidth);
+}
+
+TEST_CASE ("AT-ARR-41 zoom sliders, vertical zoom, saved zooms, navigation back and forward, paging, zoom one track", "[UI][AT-ARR-41]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    for (int i = 0; i < 12; ++i)
+        REQUIRE (s.createTrack (model::TrackKind::audio, "T" + std::to_string (i)));
+    ui.studio.edited();
+    ui.settle();
+    auto& tracks = ui.main->tracks();
+    const auto first = ui.m().trackOrder.front();
+    auto& view = ui.studio.view;
+
+    // The horizontal slider is the zoom, on a log scale; the vertical one sets every track's height.
+    CHECK (tracks.horizontalZoom.getValue() == Catch::Approx (TracksArea::positionFor (view.pixelsPerTick)));
+    CHECK (TracksArea::pixelsPerTickFor (TracksArea::positionFor (0.01)) == Catch::Approx (0.01));
+    tracks.horizontalZoom.setValue (0.75, juce::sendNotificationSync);
+    CHECK (view.pixelsPerTick == Catch::Approx (TracksArea::pixelsPerTickFor (0.75)));
+    tracks.verticalZoom.setValue (80, juce::sendNotificationSync);
+    ui.settle();
+    for (const auto& id : ui.m().trackOrder)
+        CHECK (ui.studio.trackHeight (id) == 80);
+    CHECK (tracks.horizontalZoom.getRight() <= tracks.addTrackButton().getX());
+
+    // Ctrl+Down / Ctrl+Up: every track taller / shorter.
+    REQUIRE (ui.key (juce::KeyPress::downKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (ui.studio.trackHeight (first) == 100);
+    REQUIRE (ui.key (juce::KeyPress::upKey, juce::ModifierKeys::ctrlModifier));
+    CHECK (ui.studio.trackHeight (first) == 80);
+
+    // Save as Zoom 1, change the view, Recall Zoom 1 brings it back; an unsaved slot only says so.
+    view.originTick = 3840 * 4;
+    REQUIRE (ui.studio.perform (Cmd::saveZoom1));
+    const auto saved = view.pixelsPerTick;
+    REQUIRE (ui.studio.perform (Cmd::zoomIn));
+    REQUIRE (ui.studio.perform (Cmd::zoomVerticalIn));
+    view.originTick = 0;
+    REQUIRE (ui.key ('1', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::altModifier));
+    CHECK (view.pixelsPerTick == Catch::Approx (saved));
+    CHECK (view.originTick == Catch::Approx (3840 * 4));
+    CHECK (ui.studio.trackHeight (first) == 80);
+    CHECK_FALSE (ui.studio.perform (Cmd::recallZoom2));
+
+    // Navigation: Back undoes the last zoom change; Forward redoes it.
+    REQUIRE (ui.studio.perform (Cmd::navigateBack));
+    CHECK (ui.studio.trackHeight (first) == 100);
+    REQUIRE (ui.studio.perform (Cmd::navigateBack));
+    CHECK (ui.studio.trackHeight (first) == 80);
+    CHECK (view.pixelsPerTick == Catch::Approx (saved * 1.5));
+    REQUIRE (ui.studio.perform (Cmd::navigateForward));
+    CHECK (ui.studio.trackHeight (first) == 100);
+
+    // Page Left/Right move the view by its width; Page Up/Down scroll the tracks by the view's height.
+    view.originTick = 0;
+    REQUIRE (ui.key (juce::KeyPress::pageDownKey, juce::ModifierKeys::altModifier));
+    CHECK (view.tickToX (0) == Catch::Approx (-ui.studio.timelineWidth));
+    REQUIRE (ui.studio.perform (Cmd::pageLeft));
+    CHECK (view.originTick == Catch::Approx (0.0));
+    REQUIRE (ui.studio.perform (Cmd::pageLeft));
+    CHECK (view.originTick == Catch::Approx (0.0)); // never before the start
+    REQUIRE (ui.key (juce::KeyPress::pageDownKey));
+    CHECK (tracks.timeline().scrollY > 0);
+    REQUIRE (ui.key (juce::KeyPress::pageUpKey));
+    CHECK (tracks.timeline().scrollY == 0);
+
+    // Zoom Selected Track: the selected track grows; again, it goes back.
+    ui.studio.selectTrack (first);
+    const auto before = ui.studio.trackHeight (first);
+    REQUIRE (ui.studio.perform (Cmd::zoomTrack));
+    CHECK (ui.studio.trackHeight (first) > before);
+    CHECK (ui.studio.trackHeight (ui.m().trackOrder[1]) == before);
+    REQUIRE (ui.studio.perform (Cmd::zoomTrack));
+    CHECK (ui.studio.trackHeight (first) == before);
+
+    // Ctrl+drag on a header's lower edge sets every track's height.
+    auto* header = tracks.headers().front().get();
+    const auto edge = juce::Point<float> (40.0f, static_cast<float> (ui.studio.trackHeight (first) - 2));
+    header->mouseDown (mouse (*header, edge, juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::leftButtonModifier)));
+    header->mouseDrag (mouse (*header, edge + juce::Point<float> (0.0f, 20.0f), juce::ModifierKeys (juce::ModifierKeys::commandModifier | juce::ModifierKeys::leftButtonModifier), 1, edge));
+    header->mouseUp (mouse (*header, edge + juce::Point<float> (0.0f, 20.0f), juce::ModifierKeys (juce::ModifierKeys::commandModifier), 1, edge));
+    ui.settle();
+    CHECK (ui.studio.trackHeight (ui.m().trackOrder[5]) == before + 20);
+}
+
+TEST_CASE ("AT-ARR-42 region selection commands, move and trim to the playhead, split at the cycle, Up/Down through tracks", "[UI][AT-ARR-42]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto bass = s.createTrack (model::TrackKind::instrument, "Bass").value();
+    const Ticks bar = 3840;
+    const auto a = s.createMidiRegion (keys, 0, bar).value();
+    const auto b = s.createMidiRegion (keys, 2 * bar, bar).value();
+    const auto c = s.createMidiRegion (keys, 4 * bar, bar).value();
+    const auto d = s.createMidiRegion (bass, 2 * bar, 2 * bar).value();
+    REQUIRE (s.setRegionMuted (b, true));
+    REQUIRE (s.setRegionColor (d, model::Color { 5, {} }));
+    REQUIRE (s.setRegionColor (a, model::Color { 5, {} }));
+    ui.studio.edited();
+    ui.settle();
+    auto& sel = ui.studio.selection;
+    const auto selected = [&] {
+        auto ids = sel.ids();
+        std::sort (ids.begin(), ids.end());
+        return ids;
+    };
+    const auto sorted = [] (std::vector<Id> ids) {
+        std::sort (ids.begin(), ids.end());
+        return ids;
+    };
+
+    // Select All Following: from the earliest selected region.
+    sel.set ({ b });
+    REQUIRE (ui.key ('F', juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ b, c, d }));
+    // Inside the cycle, muted, same colour, first and last.
+    REQUIRE (s.setCycle (false, 2 * bar, 4 * bar));
+    ui.studio.edited();
+    REQUIRE (ui.key ('L', juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ b, d }));
+    REQUIRE (ui.studio.perform (Cmd::selectMutedRegions));
+    CHECK (selected() == std::vector<Id> { b });
+    sel.set ({ d });
+    REQUIRE (ui.studio.perform (Cmd::selectSameColor));
+    CHECK (selected() == sorted ({ a, d }));
+    ui.studio.selectTrack (keys);
+    REQUIRE (ui.studio.perform (Cmd::selectLast));
+    CHECK (selected() == std::vector<Id> { c });
+    REQUIRE (ui.studio.perform (Cmd::selectFirst));
+    CHECK (selected() == std::vector<Id> { a });
+    // Shift+Right adds the next region on the track; Shift+Left from there the previous.
+    REQUIRE (ui.key (juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ a, b }));
+    sel.set ({ c });
+    REQUIRE (ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::shiftModifier));
+    CHECK (selected() == sorted ({ b, c }));
+
+    // Up and Down in the arrange view select the previous and next track.
+    ui.studio.selectTrack (keys);
+    REQUIRE (ui.key (juce::KeyPress::downKey));
+    CHECK (ui.studio.selectedTrack() == bass);
+    REQUIRE (ui.key (juce::KeyPress::upKey));
+    CHECK (ui.studio.selectedTrack() == keys);
+
+    // Move Region to Playhead (and Select Next).
+    sel.set ({ b });
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::moveToPlayheadSelectNext));
+    ui.settle();
+    CHECK (ui.m().region (b)->start == 3 * bar);
+    CHECK (selected() == std::vector<Id> { c });
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().region (b)->start == 2 * bar);
+
+    // Set Region Start / End to Playhead trims the selected regions the playhead is inside.
+    sel.set ({ d });
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::regionEndToPlayhead));
+    ui.settle();
+    CHECK (ui.m().region (d)->length == bar);
+    CHECK (s.undoName() == "Set Region End");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::regionStartToPlayhead));
+    ui.settle();
+    CHECK (ui.m().region (d)->start == 3 * bar);
+    CHECK (ui.m().region (d)->length == bar);
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    ui.studio.locate (10 * bar);
+    CHECK_FALSE (ui.studio.perform (Cmd::regionStartToPlayhead));
+
+    // Split Regions at Cycle: a region crossing both locators becomes three, one undo step.
+    REQUIRE (s.setCycle (false, 2 * bar + bar / 2, 3 * bar + bar / 2));
+    ui.studio.edited();
+    sel.set ({ d });
+    const auto before = ui.m().regions.size();
+    REQUIRE (ui.studio.perform (Cmd::splitAtCycle));
+    ui.settle();
+    CHECK (ui.m().regions.size() == before + 2);
+    CHECK (s.undoName() == "Split at Cycle");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    ui.settle();
+    CHECK (ui.m().regions.size() == before);
+
+    // Scroll to Selection brings a region far to the right into view.
+    const auto far = s.createMidiRegion (bass, 200 * bar, bar).value();
+    ui.studio.edited();
+    sel.set ({ far });
+    ui.studio.view.originTick = 0;
+    REQUIRE (ui.studio.perform (Cmd::scrollToSelection));
+    CHECK (ui.studio.view.tickToX (200.0 * bar) >= 0.0);
+    CHECK (ui.studio.view.tickToX (200.0 * bar) < ui.studio.timelineWidth);
+}
+
+TEST_CASE ("AT-ARR-43 marker for the selection, cycle to a marker's range, markers and locators, go to marker number", "[UI][AT-ARR-43]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    const Ticks bar = 3840;
+    const auto keys = s.createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto region = s.createMidiRegion (keys, 6 * bar, 2 * bar).value();
+    REQUIRE (s.setRegionName (region, "Bridge"));
+    REQUIRE (s.addMarker (0, "Intro"));
+    REQUIRE (s.addMarker (2 * bar, "Verse"));
+    REQUIRE (s.addMarker (4 * bar, "Chorus"));
+    ui.studio.edited();
+    ui.settle();
+    const auto& cycle = [&] { return ui.m().info.cycle; };
+
+    // Shift+; adds a marker at the selected regions' start, named after the first.
+    ui.studio.selection.set ({ region });
+    REQUIRE (ui.key (';', juce::ModifierKeys::shiftModifier, ':'));
+    const auto markers = arrange::markersInOrder (ui.m());
+    REQUIRE (markers.size() == 4);
+    CHECK (markers.back()->pos == 6 * bar);
+    CHECK (markers.back()->name == "Bridge");
+
+    // Set Cycle to Marker: from the marker at or before the playhead to the next one; cycle on.
+    ui.studio.locate (3 * bar);
+    REQUIRE (ui.studio.perform (Cmd::cycleToMarker));
+    CHECK (cycle().enabled);
+    CHECK (cycle().start == 2 * bar);
+    CHECK (cycle().end == 4 * bar);
+    CHECK (ui.studio.playhead() == 3 * bar); // the playhead stays
+    REQUIRE (ui.studio.perform (Cmd::cycleToNextMarker));
+    CHECK ((cycle().start == 4 * bar && cycle().end == 6 * bar));
+    CHECK (ui.studio.playhead() == 4 * bar);
+    REQUIRE (ui.studio.perform (Cmd::cycleToPreviousMarker));
+    CHECK ((cycle().start == 2 * bar && cycle().end == 4 * bar));
+    // The last marker's range runs to the project end.
+    ui.studio.locate (7 * bar);
+    REQUIRE (ui.studio.perform (Cmd::cycleToMarker));
+    CHECK (cycle().start == 6 * bar);
+    CHECK (cycle().end == std::max<Ticks> (commands::projectEndTick (ui.m()), 7 * bar));
+
+    // Previous / Next Marker and Set Locators keep Cycle as it is.
+    REQUIRE (s.setCycle (false, 0, bar));
+    ui.studio.edited();
+    ui.studio.locate (bar);
+    REQUIRE (ui.key ('.', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::altModifier | juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.playhead() == 2 * bar);
+    CHECK ((cycle().start == 2 * bar && cycle().end == 4 * bar && ! cycle().enabled));
+    REQUIRE (ui.studio.perform (Cmd::previousMarkerSetLocators));
+    CHECK (ui.studio.playhead() == 0);
+    CHECK ((cycle().start == 0 && cycle().end == 2 * bar));
+
+    // Go to Marker Number.
+    CHECK (commandInfo (Cmd::goToMarkerNumber).shortcut == "Ctrl+/");
+    REQUIRE (ui.studio.goToMarkerNumber (3));
+    CHECK (ui.studio.playhead() == 4 * bar);
+    CHECK_FALSE (ui.studio.goToMarkerNumber (9));
+}
+
+TEST_CASE ("AT-ARR-45 global tracks: choose which show, single track, protect; Key and Arrangement tracks; create commands", "[UI][AT-ARR-45]")
+{
+    Ui ui;
+    auto& ruler = ui.ruler();
+    auto& area = ui.main->tracks();
+    const auto bar = 3840;
+    // Every prompt answers at once with the next text.
+    juce::String answer;
+    ruler.promptForText = [&answer] (const juce::String&, const juce::String&, std::function<void (juce::String)> done) { done (answer); };
+
+    // The Configure Global Tracks menu lists the five tracks; showing Key and Arrangement adds their lanes in order.
+    juce::StringArray names;
+    const auto menu = area.globalTracksMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+        names.add (it.getItem().text);
+    for (const auto* n : { "Arrangement", "Markers", "Tempo", "Signature", "Key", "Show Single Global Track", "Marker Track Only", "Add Arrangement Section" })
+        CHECK (names.contains (n));
+    area.pickGlobalTracksMenu (TracksArea::globalShowBase + laneKey);
+    REQUIRE (ui.studio.perform (Cmd::toggleArrangementTrack));
+    ui.settle();
+    REQUIRE (ruler.lanes().size() == 5);
+    CHECK (ruler.lanes()[0].first == laneArrangement);
+    CHECK (ruler.lanes()[4].first == laneKey);
+    CHECK (ruler.getHeight() == Ruler::rulerHeight + Ruler::arrangementLane + Ruler::markerLane + Ruler::tempoLane + Ruler::signatureLane + Ruler::keyLane);
+    CHECK (ruler.laneBounds (laneTempo)->getY() == Ruler::rulerHeight + Ruler::arrangementLane + Ruler::markerLane);
+
+    // Hiding the tempo track; Single shows only the last one clicked; Marker Track Only and back.
+    REQUIRE (ui.studio.perform (Cmd::toggleTempoTrack));
+    CHECK_FALSE (ruler.laneBounds (laneTempo));
+    const auto keyY = static_cast<float> (ruler.laneBounds (laneKey)->getCentreY());
+    ruler.pointerDown ({ 5.0f, keyY }, {});
+    ruler.pointerUp();
+    REQUIRE (ui.studio.perform (Cmd::showSingleGlobalTrack));
+    ui.settle();
+    REQUIRE (ruler.lanes().size() == 1);
+    CHECK (ruler.lanes()[0].first == laneKey);
+    REQUIRE (ui.studio.perform (Cmd::showSingleGlobalTrack));
+    REQUIRE (ui.studio.perform (Cmd::markerTrackOnly));
+    REQUIRE (ruler.lanes().size() == 1);
+    CHECK (ruler.lanes()[0].first == laneMarkers);
+    REQUIRE (ui.studio.perform (Cmd::markerTrackOnly));
+    REQUIRE (ui.studio.perform (Cmd::toggleTempoTrack));
+    ui.settle();
+    REQUIRE (ruler.lanes().size() == 5);
+
+    // Key track: add a change from the lane's menu, see it in the control bar after it, move it, delete it.
+    const auto x = [&] (Ticks t) { return static_cast<float> (ui.studio.view.tickToX (static_cast<double> (t))); };
+    const auto laneY = [&] (GlobalLane lane) { return static_cast<float> (ruler.laneBounds (lane)->getCentreY()); };
+    answer = "F# minor";
+    ruler.pickContext (Ruler::contextEdit, { x (4 * bar) + 1.0f, laneY (laneKey) });
+    ui.settle();
+    REQUIRE (ui.m().keyChanges.size() == 1);
+    const auto change = ui.m().keyChanges.begin()->second->id;
+    CHECK (ui.m().keyAt (4 * bar) == model::KeySignature { 6, true });
+    ui.studio.locate (5 * bar);
+    ui.main->controlBar().refresh();
+    CHECK (ui.main->controlBar().keyDisplay().getText().contains ("F"));
+    ruler.pointerDown ({ x (4 * bar) + 2.0f, laneY (laneKey) }, {});
+    ruler.pointerDrag ({ x (6 * bar) + 2.0f, laneY (laneKey) });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().keyChanges.at (change)->pos == 6 * bar);
+    CHECK (ui.studio.session().undoName() == "Move Key Change");
+
+    // Arrangement: add a section from the lane's menu (8 bars), rename it, resize it by its end, select its regions.
+    const auto region = ui.studio.session().createMidiRegion (ui.instrumentTracks (1)[0], 2 * bar, bar).value();
+    ui.studio.edited();
+    ruler.pickContext (Ruler::contextAdd, { x (bar) + 1.0f, laneY (laneArrangement) });
+    ui.settle();
+    REQUIRE (ui.m().sections.size() == 1);
+    const auto section = ui.m().sections.begin()->second->id;
+    CHECK (ui.m().sections.at (section)->start == bar);
+    CHECK (ui.m().sections.at (section)->length == 8 * bar);
+    answer = "Verse";
+    ruler.pickContext (Ruler::contextRename, { x (2 * bar), laneY (laneArrangement) });
+    CHECK (ui.m().sections.at (section)->name == "Verse");
+    ruler.pointerDown ({ x (9 * bar), laneY (laneArrangement) }, {});
+    ruler.pointerDrag ({ x (5 * bar), laneY (laneArrangement) });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.m().sections.at (section)->end() == 5 * bar);
+    ruler.pointerDown ({ x (3 * bar), laneY (laneArrangement) }, {});
+    ruler.pointerUp();
+    CHECK (ui.studio.selection.ids() == std::vector<Id> { region });
+    CHECK (ui.studio.playhead() == bar);
+    // Add Arrangement Section puts the next one after it.
+    REQUIRE (ui.studio.perform (Cmd::addSection));
+    REQUIRE (ui.m().sections.size() == 2);
+    CHECK (ui.m().sectionsInOrder()[1]->start == 5 * bar);
+    CHECK (ui.m().sectionsInOrder()[1]->name == "Verse");
+    // Dragging a section drops it at the nearest section edge with its regions (AT-ARR-46); Ctrl copies.
+    const auto first = ui.m().sectionsInOrder()[0]->id;
+    ruler.pointerDown ({ x (3 * bar), laneY (laneArrangement) }, {});
+    ruler.pointerDrag ({ x (12 * bar) + 30.0f, laneY (laneArrangement) });
+    CHECK (ruler.sectionDropTarget() == std::optional<Ticks> (13 * bar));
+    ruler.pointerUp();
+    ui.settle();
+    CHECK_FALSE (ruler.sectionDropTarget());
+    CHECK (ui.studio.session().undoName() == "Move Section");
+    CHECK (ui.m().sections.at (first)->start == 9 * bar);
+    CHECK (ui.m().regions.at (region)->start == 10 * bar);
+    REQUIRE (ui.studio.session().undo().done);
+    ui.studio.edited();
+    CHECK (ui.m().regions.at (region)->start == 2 * bar);
+    ruler.pointerDown ({ x (3 * bar), laneY (laneArrangement) }, juce::ModifierKeys::commandModifier);
+    ruler.pointerDrag ({ x (13 * bar), laneY (laneArrangement) });
+    ruler.pointerUp();
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Copy Section");
+    CHECK (ui.m().sections.size() == 3);
+    CHECK (ui.m().regions.size() == 2);
+    REQUIRE (ui.studio.session().undo().done);
+    ui.studio.edited();
+
+    // Protect: the lock stops edits there (commands, menus, drags) but not going to a marker.
+    const auto marker = ui.studio.session().addMarker (3 * bar, "Hook").value();
+    ui.studio.edited();
+    ui.studio.toggleLaneProtect (laneMarkers);
+    const auto markersBefore = ui.m().markers.size();
+    CHECK_FALSE (ui.studio.perform (Cmd::addMarker));
+    CHECK (ui.studio.status.contains ("protected"));
+    CHECK (ui.m().markers.size() == markersBefore);
+    const auto markerMenu = ruler.contextMenu ({ x (3 * bar) + 4.0f, laneY (laneMarkers) });
+    for (juce::PopupMenu::MenuItemIterator it (markerMenu); it.next();)
+        if (! it.getItem().isSeparator)
+            CHECK_FALSE (it.getItem().isEnabled);
+    ruler.pointerDown ({ x (3 * bar) + 4.0f, laneY (laneMarkers) }, {});
+    ruler.pointerDrag ({ x (7 * bar), laneY (laneMarkers) });
+    ruler.pointerUp();
+    CHECK (ui.m().markers.at (marker)->pos == 3 * bar);
+    CHECK (ui.studio.playhead() == 3 * bar);
+    // Clicking the lock beside the name unprotects it.
+    const auto lock = area.protectButtonBounds (laneMarkers);
+    REQUIRE_FALSE (lock.isEmpty());
+    area.mouseDown (juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), lock.getCentre().toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                      &area, &area, juce::Time::getCurrentTime(), lock.getCentre().toFloat(), juce::Time::getCurrentTime(), 1, false));
+    CHECK ((ui.studio.protectedLanes & laneMarkers) == 0);
+    CHECK (ui.studio.perform (Cmd::addMarker));
+
+    // Create Time Signature Change asks at the next bar; Create Key Change at the playhead.
+    ui.studio.locate (2 * bar + 960);
+    answer = "3/4";
+    REQUIRE (ui.studio.perform (Cmd::createSignatureChange));
+    CHECK (ui.m().signatures.signatureAtBar (3).numerator == 3);
+    CHECK (ui.m().signatures.signatureAtBar (2).numerator == 4);
+    answer = "Eb";
+    REQUIRE (ui.studio.perform (Cmd::createKeyChange));
+    CHECK (ui.m().keyAt (2 * bar + 960) == model::KeySignature { 3, false });
+
+    // The choice of tracks survives a restart.
+    const auto again = PanelLayout::fromString (ui.studio.layout.toString());
+    CHECK (again.globalLanes == allGlobalLanes);
+}
+
+TEST_CASE ("AT-REC-27 Record Toggle, Replace and Capture as Recording in Navigate and the control bar; MIDI auto record enable", "[UI][AT-REC-27]")
+{
+    Ui ui;
+    juce::StringArray items;
+    const auto menu = ui.main->getMenuForIndex (4, "Navigate");
+    bool replaceTicked = true;
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+        {
+            items.add (it.getItem().text);
+            if (it.getItem().text == "Replace")
+                replaceTicked = it.getItem().isTicked;
+        }
+    CHECK (items.contains ("Record Toggle"));
+    CHECK (items.contains ("Capture as Recording"));
+    CHECK (items.contains ("Replace"));
+    CHECK_FALSE (replaceTicked);
+    CHECK (commandInfo (Cmd::recordToggle).shortcut == "Alt+R");
+    CHECK (commandInfo (Cmd::captureRecording).shortcut == "Ctrl+Shift+R");
+
+    // Replace: the command, the control bar button and the MIDI Recording item are one setting.
+    auto& bar = ui.main->controlBar();
+    CHECK (ui.studio.perform (Cmd::toggleReplace));
+    CHECK (ui.studio.engine().settings().replace);
+    bar.refresh();
+    CommandButton* replaceButton = nullptr;
+    for (auto* b : bar.commandButtons())
+        if (b->command == Cmd::toggleReplace)
+            replaceButton = b;
+    REQUIRE (replaceButton != nullptr);
+    CHECK (replaceButton->getToggleState());
+    ui.main->menuItemSelected (MainComponent::replaceMidi, 4);
+    CHECK_FALSE (ui.studio.engine().settings().replace);
+
+    // Capture with nothing played says so.
+    const auto keys = ui.instrumentTracks (2);
+    ui.studio.selectTrack (keys[0]);
+    CHECK_FALSE (ui.studio.perform (Cmd::captureRecording));
+    CHECK (ui.studio.status.startsWith ("Nothing to capture"));
+
+    // MIDI auto record enable: selecting an instrument track arms it and disarms the last one armed that way.
+    auto p = ui.studio.preferences();
+    p.autoArmMidi = true;
+    ui.studio.setPreferences (p);
+    SettingsDialog dialog (ui.studio);
+    CHECK (dialog.autoArmMidi.getToggleState());
+    ui.studio.selectTrack (keys[1]);
+    CHECK (ui.studio.localView().armed.contains (keys[1]));
+    ui.studio.selectTrack (keys[0]);
+    CHECK (ui.studio.localView().armed.contains (keys[0]));
+    CHECK_FALSE (ui.studio.localView().armed.contains (keys[1]));
+    CHECK (Preferences::fromString (ui.studio.preferences().toString()).autoArmMidi);
+}
+
+TEST_CASE ("AT-UI-19 audio region Transpose, Fine Tune, Speed and speed fades in the inspector; Ctrl-drag an edge to time-stretch", "[UI][AT-UI-19]")
+{
+    Ui ui;
+    ui.studio.view.pixelsPerTick = 200.0 / bar;
+    const auto file = writeSine (ui.folder.path / "sine.wav");
+    engine::DropTarget target;
+    target.at = 0;
+    target.trackId = ui.m().trackOrder.front();
+    const auto outcome = ui.studio.importFiles ({ file }, target);
+    REQUIRE (outcome.regions.size() == 1);
+    const auto id = outcome.regions.front();
+    ui.studio.selection.set ({ id });
+    ui.studio.edited();
+    ui.settle();
+    auto& inspector = ui.main->inspector();
+    REQUIRE (inspector.audioTranspose.isVisible());
+    REQUIRE (inspector.fineTune.isVisible());
+    REQUIRE (inspector.audioSpeed.isVisible());
+    REQUIRE (inspector.speedUp.isVisible());
+    CHECK_FALSE (inspector.regionTranspose.isVisible()); // the MIDI one
+
+    inspector.audioTranspose.setValue (5.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.transpose == 5);
+    CHECK (ui.region (id).length == 48000);
+    inspector.fineTune.setValue (-20.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fineTune == -20);
+    CHECK (ui.region (id).audio.transpose == 5);
+    ui.renderAudio (4096); // the shifted audio plays
+
+    inspector.audioSpeed.setValue (200.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.speed == Catch::Approx (2.0));
+    CHECK (ui.region (id).length == 24000);
+    CHECK (ui.studio.session().undoName() == "Region Speed");
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).length == 48000);
+    CHECK (inspector.audioSpeed.getValue() == Catch::Approx (100.0));
+
+    // The fade types: Speed Up and Slow Down keep the fade lengths.
+    REQUIRE (ui.studio.session().setRegionFades (id, model::Fade { 4800, "linear" }, model::Fade { 4800, "linear" }));
+    ui.studio.edited();
+    ui.settle();
+    inspector.speedUp.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fadeIn.speed);
+    CHECK (ui.region (id).audio.fadeIn.length == 4800);
+    inspector.slowDown.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fadeOut.speed);
+    // Changing the curve keeps the type.
+    inspector.fadeInCurve.setSelectedItemIndex (0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.region (id).audio.fadeIn.speed);
+
+    // Ctrl-drag the right edge from half a bar to a bar: shown as an outline while dragging, applied on release
+    // as one undo step "Time Stretch". A plain drag still trims.
+    auto& tl = ui.timeline();
+    const auto box = tl.regionBounds (ui.region (id));
+    const juce::Point<float> edge { box.getRight() - 2.0f, box.getBottom() - 4.0f };
+    REQUIRE (tl.zoneAt (ui.region (id), edge) == Timeline::Zone::trimEnd);
+    const auto ctrl = juce::ModifierKeys (juce::ModifierKeys::commandModifier);
+    tl.pointerDown (edge, ctrl);
+    for (int i = 1; i <= 50; ++i)
+        tl.pointerDrag (edge.translated (static_cast<float> (i) * 2.0f, 0.0f), ctrl);
+    CHECK (ui.region (id).length == 48000);
+    tl.pointerUp (edge.translated (100.0f, 0.0f), ctrl);
+    ui.settle();
+    CHECK (ui.region (id).audio.stretch == Catch::Approx (2.0).margin (0.02));
+    CHECK (ui.region (id).length == Catch::Approx (96000.0).margin (1000.0));
+    CHECK (ui.studio.session().undoName() == "Time Stretch");
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.region (id).length == 48000);
+    CHECK (ui.region (id).audio.stretch == Catch::Approx (1.0));
+
+    tl.pointerDown (edge, {});
+    tl.pointerDrag (edge.translated (-40.0f, 0.0f), {});
+    tl.pointerUp (edge.translated (-40.0f, 0.0f), {});
+    ui.settle();
+    CHECK (ui.region (id).length < 48000);
+    CHECK (ui.region (id).audio.stretch == Catch::Approx (1.0));
 }

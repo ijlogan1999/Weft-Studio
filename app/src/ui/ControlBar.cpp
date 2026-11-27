@@ -1,5 +1,7 @@
 #include "ControlBar.h"
 
+#include "Mixer.h"
+
 #include "weft/time/Position.h"
 
 namespace weft::ui
@@ -12,6 +14,12 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         addAndMakeVisible (*b);
         auto* button = b;
         b->onClick = [this, button] {
+            // Right-click on Play or Stop: a menu of where to play from or go (D-UI-35).
+            if (button->popupClick && button->popupMenu)
+            {
+                button->showPopup();
+                return;
+            }
             if (button == &stop)
             {
                 studio.perform (Cmd::stop); // stopped already: back to the start (D-UI-17)
@@ -28,8 +36,21 @@ ControlBar::ControlBar (Studio& s) : studio (s)
             studio.perform (button->command);
         };
     }
-    describe (stop, "Stop", "Stop (Space). Stopped already: go to the start of the cycle or project");
-    describe (play, "Play", "Play (Space)");
+    const auto commandMenu = [] (std::initializer_list<Cmd> cmds) {
+        juce::PopupMenu menu;
+        for (auto c : cmds)
+            menu.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+        return menu;
+    };
+    play.popupMenu = [commandMenu] {
+        return commandMenu ({ Cmd::playFromStart, Cmd::playFromCycleStart, Cmd::playFromSelection, Cmd::playFromWindowEdge, Cmd::playFromPreviousBar,
+                              Cmd::playFromLastLocate });
+    };
+    stop.popupMenu = [commandMenu] { return commandMenu ({ Cmd::stopGoToStart, Cmd::stopGoToCycleStart, Cmd::stopGoToLastLocate }); };
+    for (auto* b : { &play, &stop })
+        b->popupPicked = [this] (int item) { studio.perform (static_cast<Cmd> (item - 1)); };
+    describe (stop, "Stop", "Stop (Space). Stopped already: go to the start of the cycle or project. Right-click: stop and go to...");
+    describe (play, "Play", "Play (Space). Right-click: play from...");
     describe (rewind, "Previous Bar", "Previous Bar (,). Ctrl+click: previous marker");
     describe (forward, "Next Bar", "Next Bar (.). Ctrl+click: next marker");
     // Icons for the transport; the labels stay as the accessible names.
@@ -63,6 +84,21 @@ ControlBar::ControlBar (Studio& s) : studio (s)
     describe (signature, "Time signature", "Time signature at the playhead (double-click to type, e.g. 3/4)");
     describe (key, "Key", "The project's key (double-click to type, e.g. F# minor or Bb)");
     describe (cpu, "CPU", "Audio thread load and dropouts");
+    describe (varispeed, "Varispeed", "Varispeed: play everything faster and higher, or slower and lower (only for you; bounces ignore it)");
+    describe (varispeedValue, "Varispeed amount", "Drag up or down, or double-click to type. Right-click: percent, tempo, semitones or tuning");
+    varispeedValue.setJustificationType (juce::Justification::centred);
+    varispeedValue.setFont (font (Type::monoValue));
+    varispeedValue.setEditable (false, true);
+    varispeedValue.onTextChange = [this] {
+        // Typed in the shown unit; typing turns Varispeed on.
+        const auto typed = varispeedValue.getText().retainCharacters ("0123456789.,+-").replaceCharacter (',', '.');
+        if (typed.containsAnyOf ("0123456789"))
+            studio.setVarispeed (true, engine::varispeed::fromUnit (typed.getDoubleValue(), studio.layout.bar.varispeedUnit,
+                                                                    studio.model().tempo.bpmAt (studio.playhead())));
+        refresh();
+    };
+    varispeedValue.addMouseListener (this, false);
+    addChildComponent (varispeedValue);
     position.setEditable (false, true);
     tempo.setEditable (false, true);
     signature.setEditable (false, true);
@@ -89,16 +125,18 @@ ControlBar::ControlBar (Studio& s) : studio (s)
         const auto typed = model::KeySignature::parse (key.getText().toStdString());
         if (! typed)
             studio.setStatus ("Type a key like C, F# minor or Bbm.");
-        else if (*typed != studio.model().info.key)
-            studio.check (studio.session().setKey (*typed));
+        else if (*typed != studio.model().keyAt (studio.playhead()))
+            studio.check (studio.session().setKeyAt (studio.playhead(), *typed)); // the key in effect here (D-UI-44)
         refresh();
     };
 
-    countIn.addItemList ({ "No count-in", "1-bar count-in", "2-bar count-in" }, 1);
+    for (const auto choice : model::countInChoices)
+        countIn.addItem (choice == 0 ? juce::String ("No count-in") : juce::String (std::abs (choice)) + (choice > 0 ? "-bar" : "-beat") + " count-in",
+                         countIn.getNumItems() + 1);
     describe (countIn, "Count-in", "Count-in before recording");
     countIn.onChange = [this] {
         auto settings = studio.engine().settings();
-        settings.countInBars = countIn.getSelectedItemIndex();
+        settings.countInBars = model::countInChoices[static_cast<std::size_t> (std::max (0, countIn.getSelectedItemIndex()))];
         studio.engine().setSettings (settings);
     };
     addAndMakeVisible (countIn);
@@ -113,6 +151,24 @@ ControlBar::ControlBar (Studio& s) : studio (s)
                                       });
     };
     addChildComponent (more);
+
+    // The master control beside the modes (D-UI-43): the master's fader, one undo step a drag.
+    masterVolume.setNormalisableRange (fader::range());
+    masterVolume.setDoubleClickReturnValue (true, 0.0);
+    describe (masterVolume, "Master volume", "The master's volume (double-click for 0 dB). Right-click the bar to show an output meter instead");
+    masterVolume.onDragStart = [this] { studio.session().beginGesture ("Volume"); };
+    masterVolume.onDragEnd = [this] { studio.session().endGesture(); };
+    masterVolume.onValueChange = [this] {
+        const auto v = masterVolume.getValue();
+        studio.check (studio.session().setTrackVolume (studio.model().info.masterTrackId, v <= fader::minDb + 1e-6 ? fader::silentDb : v));
+        studio.edited();
+    };
+    addChildComponent (masterVolume);
+    addChildComponent (outputMeter);
+    // Right-click on the display (or anywhere on the bar) customizes it; double-click on the CPU reading opens a meter window.
+    for (auto* l : { &position, &time, &tempo, &signature, &key, &cpu })
+        l->addMouseListener (this, false);
+    outputMeter.addMouseListener (this, false);
     int id = 1;
     for (const auto& c : arrange::snapChoices())
         if (c.snap.kind != arrange::Snap::Kind::off)
@@ -141,8 +197,8 @@ ControlBar::~ControlBar()
 
 std::vector<CommandButton*> ControlBar::commandButtons()
 {
-    return { &inspector, &side, &mixer, &editor, &global, &start, &rewind, &forward, &stop, &play, &record, &cycle,
-             &metronome, &punch, &snap, &follow, &keyboard };
+    return { &inspector, &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle, &start, &rewind, &forward, &stop, &play, &record, &cycle,
+             &metronome, &punch, &replace, &snap, &follow, &keyboard, &varispeed };
 }
 
 void ControlBar::refresh()
@@ -156,16 +212,31 @@ void ControlBar::refresh()
     side.setToggleState (l.sidePanel, juce::dontSendNotification);
     mixer.setToggleState (l.bottom == BottomTab::mixer, juce::dontSendNotification);
     editor.setToggleState (l.bottom == BottomTab::audioEditor, juce::dontSendNotification);
+    smart.setToggleState (l.bottom == BottomTab::smartControls, juce::dontSendNotification);
     global.setToggleState (l.globalTracks, juce::dontSendNotification);
+    varispeed.setToggleState (studio.varispeedOn(), juce::dontSendNotification);
+    if (! varispeedValue.isBeingEdited())
+        varispeedValue.setText (studio.varispeedText(), juce::dontSendNotification);
+    // On, it reads in the warning colour so nobody forgets it (D-ARCH-55).
+    varispeedValue.setColour (juce::Label::textColourId, colour (studio.varispeedOn() ? Token::warning : Token::textDim));
+    toolbarToggle.setToggleState (l.toolbar, juce::dontSendNotification);
+    if (const auto* master = m.track (m.info.masterTrackId); master != nullptr && ! masterVolume.isMouseButtonDown())
+        masterVolume.setValue (std::clamp (master->strip.volumeDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
+    if (! (shownBar == l.bar))
+    {
+        shownBar = l.bar;
+        resized();
+    }
     play.setToggleState (studio.playing(), juce::dontSendNotification);
     record.setToggleState (studio.recording(), juce::dontSendNotification);
     cycle.setToggleState (m.info.cycle.enabled, juce::dontSendNotification);
     metronome.setToggleState (studio.engine().settings().metronomeOn, juce::dontSendNotification);
     punch.setToggleState (m.info.punch.enabled, juce::dontSendNotification);
+    replace.setToggleState (studio.engine().settings().replace, juce::dontSendNotification);
     snap.setToggleState (studio.snapEnabled, juce::dontSendNotification);
     follow.setToggleState (studio.follow, juce::dontSendNotification);
     keyboard.setToggleState (studio.keyboardMidiOn(), juce::dontSendNotification);
-    countIn.setSelectedItemIndex (studio.engine().settings().countInBars, juce::dontSendNotification);
+    countIn.setSelectedItemIndex (model::countInIndex (studio.engine().settings().countInBars), juce::dontSendNotification);
     snapBox.setText (juce::String (arrange::snapLabel (studio.snap)), juce::dontSendNotification);
     time.setColour (juce::Label::textColourId, colour (Token::textDim));
     timerCallback();
@@ -179,17 +250,21 @@ void ControlBar::timerCallback()
     if (! position.isBeingEdited())
         position.setText (juce::String (formatBarsBeats (t, m.signatures)), juce::dontSendNotification);
     const auto seconds = m.tempo.tickToSample (static_cast<double> (t)) / m.info.sampleRate;
-    time.setText (juce::String::formatted ("%d:%06.3f", static_cast<int> (seconds / 60.0), std::fmod (std::max (seconds, 0.0), 60.0)),
-                  juce::dontSendNotification);
+    time.setText (formatDisplayTime (seconds, m.info.sampleRate, studio.layout.bar.timeFormat), juce::dontSendNotification);
     if (! tempo.isBeingEdited())
-        tempo.setText (juce::String (m.tempo.bpmAt (t), 2), juce::dontSendNotification);
+    {
+        const auto decimals = studio.layout.bar.tempoDecimals;
+        tempo.setText (decimals == 0 ? juce::String (juce::roundToInt (m.tempo.bpmAt (t))) : juce::String (m.tempo.bpmAt (t), decimals), juce::dontSendNotification);
+    }
+    if (outputMeter.isVisible())
+        outputMeter.update();
     if (! signature.isBeingEdited())
     {
         const auto& sig = m.signatures.signatureAtBar (m.signatures.barAt (t).bar);
         signature.setText (juce::String (sig.numerator) + "/" + juce::String (sig.denominator), juce::dontSendNotification);
     }
     if (! key.isBeingEdited())
-        key.setText (keyText (m.info.key), juce::dontSendNotification);
+        key.setText (keyText (m.keyAt (t)), juce::dontSendNotification);
     const auto load = studio.engine().cpuLoad();
     cpu.setText ("CPU " + juce::String (juce::roundToInt (load * 100.0)) + "%", juce::dontSendNotification);
     const auto level = load > 0.9 || studio.engine().dropouts() > 0 ? Token::record : load > 0.7 ? Token::warning : Token::textDim;
@@ -206,13 +281,13 @@ void ControlBar::timerCallback()
 juce::PopupMenu ControlBar::overflowMenu() const
 {
     juce::PopupMenu menu;
-    if (! countIn.isVisible())
+    if (! countIn.isVisible() && allowed (&countIn))
     {
-        const auto bars = studio.engine().settings().countInBars;
+        const auto chosen = model::countInIndex (studio.engine().settings().countInBars);
         for (int i = 0; i < countIn.getNumItems(); ++i)
-            menu.addItem (overflowCountIn + i, countIn.getItemText (i), true, bars == i);
+            menu.addItem (overflowCountIn + i, countIn.getItemText (i), true, chosen == i);
     }
-    if (! cpu.isVisible())
+    if (! cpu.isVisible() && allowed (&cpu))
     {
         menu.addSeparator();
         menu.addItem (overflowCpu, cpu.getText() + juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 dropouts ")) + juce::String (studio.engine().dropouts())
@@ -227,23 +302,28 @@ void ControlBar::pickOverflow (int item)
     if (item < overflowCountIn || item >= overflowCountIn + countIn.getNumItems())
         return;
     auto settings = studio.engine().settings();
-    settings.countInBars = item - overflowCountIn;
+    settings.countInBars = model::countInChoices[static_cast<std::size_t> (item - overflowCountIn)];
     studio.engine().setSettings (settings);
     studio.sendChangeMessage();
 }
 
 std::vector<std::vector<juce::Button*>> ControlBar::groups()
 {
-    return { { &inspector, &side, &mixer, &editor, &global },
+    return { { &inspector, &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle },
              { &start, &rewind, &forward, &stop, &play, &record, &cycle },
-             { &metronome, &punch },
+             { &metronome, &punch, &replace },
              { &snap },
-             { &follow, &keyboard } };
+             { &follow, &keyboard },
+             { &varispeed } };
 }
 
 juce::Rectangle<int> ControlBar::displayBounds() const
 {
-    return position.getBounds().getUnion (key.getBounds()).expanded (space::s1, 0).withY (space::half).withHeight (getHeight() - space::s1);
+    auto box = position.getBounds();
+    for (const auto* l : { &tempo, &signature, &key })
+        if (l->isVisible())
+            box = box.getUnion (l->getBounds());
+    return box.expanded (space::s1, 0).withY (space::half).withHeight (getHeight() - space::s1);
 }
 
 void ControlBar::paint (juce::Graphics& g)
@@ -292,8 +372,8 @@ void ControlBar::resized()
     std::vector<Item> items;
     auto gap = [&] (int w) { items.push_back ({ nullptr, w }); };
     items.push_back ({ &inspector, 72 });
-    for (auto* b : { &side, &mixer, &editor, &global })
-        items.push_back ({ b, 56 });
+    for (auto* b : { &side, &mixer, &editor, &smart, &library, &global, &toolbarToggle })
+        items.push_back ({ b, b == &toolbarToggle ? 64 : 56 });
     gap (space::s1);
     for (auto* b : { &start, &rewind, &forward, &stop, &play, &record, &cycle })
         items.push_back ({ b, 32 });
@@ -305,11 +385,16 @@ void ControlBar::resized()
     gap (space::s2);
     items.push_back ({ &metronome, 48 });
     items.push_back ({ &punch, 56 });
+    items.push_back ({ &replace, 64, 2 });
     items.push_back ({ &countIn, 128, 3 });
+    items.push_back ({ &masterVolume, 96, 1 });
+    items.push_back ({ &outputMeter, 96, 1 });
     items.push_back ({ &snap, 48 });
     items.push_back ({ &snapBox, 80 });
     items.push_back ({ &follow, 56 });
     items.push_back ({ &keyboard, 48 });
+    items.push_back ({ &varispeed, 80 });
+    items.push_back ({ &varispeedValue, 88 });
     items.push_back ({ &cpu, 64, 2 });
     items.push_back ({ &more, 32, -1 }); // only while something is dropped
     avatarsWidth = avatars.preferredWidth();
@@ -341,7 +426,7 @@ void ControlBar::resized()
     };
     for (auto& it : items)
         if (it.c != nullptr)
-            it.c->setVisible (it.dropOrder >= 0);
+            it.c->setVisible (it.dropOrder >= 0 && allowed (it.c));
     for (int order = 1; order <= 3 && total() > area.getWidth(); ++order)
         for (auto& it : items)
             if (it.dropOrder == order)
@@ -370,8 +455,229 @@ void ControlBar::resized()
     for (auto* l : { &tempo, &signature, &key })
         l->setBounds (l->getBounds().withTop (getHeight() / 2 - 2).withHeight (18));
     const auto counter = position.getBounds();
-    time.setVisible (position.isVisible());
+    time.setVisible (position.isVisible() && studio.layout.bar.shows (ControlBarLayout::timeDisplay));
     position.setBounds (counter.withY (space::s1 - 1).withHeight (24));
     time.setBounds (counter.withY (position.getBottom() - 2).withHeight (14));
+}
+// Customize Control Bar (D-UI-43) -----------------------------------------------
+
+namespace
+{
+struct ShowItem
+{
+    ControlBarLayout::Item item;
+    const char* name;
+};
+constexpr ShowItem showItems[] = {
+    { ControlBarLayout::panelButtons, "View Buttons" },        { ControlBarLayout::toolbarButton, "Toolbar Button" },
+    { ControlBarLayout::transportMoves, "Go to Start, Previous and Next Bar" },
+    { ControlBarLayout::timeDisplay, "Time" },                 { ControlBarLayout::tempoDisplay, "Tempo" },
+    { ControlBarLayout::signatureDisplay, "Time Signature" },  { ControlBarLayout::keyDisplay, "Key" },
+    { ControlBarLayout::clickAndPunch, "Metronome and Autopunch" }, { ControlBarLayout::countInMenu, "Count-in" },
+    { ControlBarLayout::snapControls, "Snap and Grid" },       { ControlBarLayout::followButton, "Follow" },
+    { ControlBarLayout::keysButton, "Keyboard MIDI" },         { ControlBarLayout::cpuMeter, "CPU Meter" },
+    { ControlBarLayout::varispeedControl, "Varispeed" },
+};
+int bitIndex (ControlBarLayout::Item item)
+{
+    int i = 0;
+    while ((1 << i) != static_cast<int> (item))
+        ++i;
+    return i;
+}
+} // namespace
+
+bool ControlBar::allowed (const juce::Component* c) const
+{
+    using L = ControlBarLayout;
+    const auto& bar = studio.layout.bar;
+    if (c == &inspector || c == &side || c == &mixer || c == &editor || c == &smart || c == &library || c == &global)
+        return bar.shows (L::panelButtons);
+    if (c == &toolbarToggle)
+        return bar.shows (L::toolbarButton);
+    if (c == &start || c == &rewind || c == &forward)
+        return bar.shows (L::transportMoves);
+    if (c == &tempo)
+        return bar.shows (L::tempoDisplay);
+    if (c == &signature)
+        return bar.shows (L::signatureDisplay);
+    if (c == &key)
+        return bar.shows (L::keyDisplay);
+    if (c == &metronome || c == &punch || c == &replace)
+        return bar.shows (L::clickAndPunch);
+    if (c == &countIn)
+        return bar.shows (L::countInMenu);
+    if (c == &snap || c == &snapBox)
+        return bar.shows (L::snapControls);
+    if (c == &follow)
+        return bar.shows (L::followButton);
+    if (c == &keyboard)
+        return bar.shows (L::keysButton);
+    if (c == &cpu)
+        return bar.shows (L::cpuMeter);
+    if (c == &varispeed || c == &varispeedValue)
+        return bar.shows (L::varispeedControl);
+    if (c == &masterVolume)
+        return bar.master == L::Master::volume;
+    if (c == &outputMeter)
+        return bar.master == L::Master::meter;
+    return true;
+}
+
+juce::PopupMenu ControlBar::customizeMenu() const
+{
+    using L = ControlBarLayout;
+    const auto& bar = studio.layout.bar;
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Show in the Control Bar");
+    for (const auto& s : showItems)
+        menu.addItem (itemShowBase + bitIndex (s.item), s.name, true, bar.shows (s.item));
+    juce::PopupMenu master;
+    master.addItem (itemMasterBase + 1, "Master Volume", true, bar.master == L::Master::volume);
+    master.addItem (itemMasterBase + 2, "Output Meter", true, bar.master == L::Master::meter);
+    master.addItem (itemMasterBase, "None", true, bar.master == L::Master::none);
+    menu.addSubMenu ("Master Volume or Output Meter", master);
+    menu.addSeparator();
+    juce::PopupMenu timeFormat;
+    static const char* const formats[] = { "Minutes, Seconds and Milliseconds", "Samples", "Timecode at 24 fps", "Timecode at 25 fps", "Timecode at 30 fps" };
+    for (int i = 0; i < 5; ++i)
+        timeFormat.addItem (itemTimeBase + i, formats[i], true, static_cast<int> (bar.timeFormat) == i);
+    menu.addSubMenu ("Display Time As", timeFormat);
+    juce::PopupMenu tempoFormat;
+    tempoFormat.addItem (itemTempoBase + 0, "BPM Without Decimals", true, bar.tempoDecimals == 0);
+    tempoFormat.addItem (itemTempoBase + 2, "BPM With Two Decimals", true, bar.tempoDecimals == 2);
+    tempoFormat.addItem (itemTempoBase + 4, "BPM With Four Decimals", true, bar.tempoDecimals == 4);
+    menu.addSubMenu ("Display Tempo As", tempoFormat);
+    menu.addSeparator();
+    menu.addItem (itemBigBeats, commandInfo (Cmd::bigBeatsDisplay).name);
+    menu.addItem (itemBigTime, commandInfo (Cmd::bigTimeDisplay).name);
+    menu.addItem (itemPerformance, commandInfo (Cmd::performanceMeter).name);
+    menu.addSeparator();
+    menu.addItem (itemApplyDefaults, "Apply Defaults", ! (bar == studio.layout.barDefault));
+    menu.addItem (itemSaveDefault, "Save As Default", ! (bar == studio.layout.barDefault));
+    menu.addItem (itemRevert, "Revert", canRevert);
+    return menu;
+}
+
+void ControlBar::changeLayout (const ControlBarLayout& next)
+{
+    if (next == studio.layout.bar)
+        return;
+    beforeLastChange = studio.layout.bar;
+    canRevert = true;
+    studio.layout.bar = next;
+    studio.sendChangeMessage();
+    refresh();
+}
+
+void ControlBar::pickCustomize (int item)
+{
+    using L = ControlBarLayout;
+    auto next = studio.layout.bar;
+    if (item >= itemShowBase && item < itemShowBase + 14)
+        next.items ^= 1 << (item - itemShowBase);
+    else if (item >= itemMasterBase && item <= itemMasterBase + 2)
+        next.master = static_cast<L::Master> (item - itemMasterBase);
+    else if (item >= itemTimeBase && item < itemTimeBase + 5)
+        next.timeFormat = static_cast<L::TimeFormat> (item - itemTimeBase);
+    else if (item == itemTempoBase || item == itemTempoBase + 2 || item == itemTempoBase + 4)
+        next.tempoDecimals = item - itemTempoBase;
+    else if (item == itemBigBeats || item == itemBigTime || item == itemPerformance)
+    {
+        studio.perform (item == itemBigBeats ? Cmd::bigBeatsDisplay : item == itemBigTime ? Cmd::bigTimeDisplay : Cmd::performanceMeter);
+        return;
+    }
+    else if (item == itemApplyDefaults)
+        next = studio.layout.barDefault;
+    else if (item == itemSaveDefault)
+    {
+        studio.layout.barDefault = studio.layout.bar;
+        studio.sendChangeMessage();
+        studio.setStatus ("This control bar is now the default.");
+        return;
+    }
+    else if (item == itemRevert)
+    {
+        if (! canRevert)
+            return;
+        const auto back = beforeLastChange;
+        changeLayout (back);
+        return;
+    }
+    else
+        return;
+    changeLayout (next);
+}
+
+void ControlBar::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.eventComponent == &varispeedValue)
+    {
+        dragStartRate = studio.varispeedRate();
+        if (e.mods.isPopupMenu())
+            varispeedMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (varispeedValue),
+                                           [safe = juce::Component::SafePointer<ControlBar> (this)] (int item) {
+                                               if (safe != nullptr)
+                                                   safe->pickVarispeed (item);
+                                           });
+        return;
+    }
+    if (! e.mods.isPopupMenu())
+        return;
+    customizeMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe = juce::Component::SafePointer<ControlBar> (this)] (int item) {
+        if (safe != nullptr)
+            safe->pickCustomize (item);
+    });
+}
+
+void ControlBar::mouseDrag (const juce::MouseEvent& e)
+{
+    // Varispeed: 0.5% a pixel up or down (Shift for 0.1%); dragging turns it on.
+    if (e.eventComponent != &varispeedValue || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 2)
+        return;
+    const double step = e.mods.isShiftDown() ? 0.001 : 0.005;
+    studio.setVarispeed (true, dragStartRate - step * e.getDistanceFromDragStartY());
+}
+
+juce::PopupMenu ControlBar::varispeedMenu() const
+{
+    using U = engine::varispeed::Unit;
+    juce::PopupMenu menu;
+    menu.addItem (static_cast<int> (Cmd::toggleVarispeed) + 1000, "Varispeed", true, studio.varispeedOn());
+    menu.addSeparator();
+    menu.addSectionHeader ("Show As");
+    const std::pair<U, const char*> units[] = { { U::percent, "Percent" }, { U::tempo, "Resulting Tempo" }, { U::semitones, "Detune (Semitones)" },
+                                                { U::tuning, "Tuning Reference (Hz)" } };
+    for (const auto& [u, name] : units)
+        menu.addItem (itemVarispeedUnit + static_cast<int> (u), name, true, studio.layout.bar.varispeedUnit == u);
+    menu.addSeparator();
+    menu.addItem (itemVarispeedReset, "Reset to Normal Speed", ! (std::abs (studio.varispeedRate() - 1.0) < 1e-9));
+    return menu;
+}
+
+void ControlBar::pickVarispeed (int item)
+{
+    if (item == static_cast<int> (Cmd::toggleVarispeed) + 1000)
+        studio.perform (Cmd::toggleVarispeed);
+    else if (item >= itemVarispeedUnit && item < itemVarispeedUnit + 4)
+    {
+        studio.layout.bar.varispeedUnit = static_cast<engine::varispeed::Unit> (item - itemVarispeedUnit);
+        studio.sendChangeMessage();
+    }
+    else if (item == itemVarispeedReset)
+        studio.setVarispeed (studio.varispeedOn(), 1.0);
+    refresh();
+}
+
+void ControlBar::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (e.eventComponent != &cpu)
+        return;
+    // Bigger with Ctrl, biggest with Ctrl+Alt+Shift.
+    const int scale = e.mods.isCommandDown() ? (e.mods.isAltDown() && e.mods.isShiftDown() ? 3 : 2) : 1;
+    if (onPerformanceMeter)
+        onPerformanceMeter (scale);
+    else
+        studio.perform (Cmd::performanceMeter);
 }
 } // namespace weft::ui

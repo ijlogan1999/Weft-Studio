@@ -74,7 +74,8 @@ public:
     const bool vertical;
 };
 
-class MainComponent final : public juce::Component, public juce::MenuBarModel, private juce::ChangeListener, private juce::Timer
+class MainComponent final : public juce::Component, public juce::MenuBarModel, private juce::ChangeListener, private juce::Timer,
+                            private juce::DarkModeSettingListener
 {
 public:
     /** browserRoot: where the file browser starts. */
@@ -109,6 +110,18 @@ public:
     } toolKeys { *this };
 
     ControlBar& controlBar() noexcept { return control; }
+    Toolbar& toolbar() noexcept { return toolbarRow; }
+    /** Open big displays and performance meters (D-UI-43). */
+    const juce::OwnedArray<FloatingWindow>& floatingWindows() const noexcept { return floating; }
+    /** Opens a big beats or time display, or the performance meter (scale 1 to 3). */
+    void openFloating (Cmd kind, int scale = 1);
+    /** The Groups window (D-W6-15), or null when it's closed. Cmd::groupsWindow opens and closes it. */
+    FloatingWindow* groupsWindow() const noexcept { return groups.get(); }
+    /** A window holding `content` (closing it deletes it), and the open one with that title. */
+    FloatingWindow* openWindow (const juce::String& title, std::unique_ptr<juce::Component> content);
+    FloatingWindow* windowNamed (const juce::String& title) const;
+    /** Undo History, the panes as windows, Close / Cycle / Minimize / Zoom / Full Screen, Close Project (D-UI-46). */
+    void windowCommand (Cmd command);
     Inspector& inspector() noexcept { return inspectorPanel; }
     TracksArea& tracks() noexcept { return tracksArea; }
     BottomArea& bottom() noexcept { return bottomArea; }
@@ -153,16 +166,21 @@ public:
         clickDuringRecord = 30001,
         clickDuringPlay,
         clickDuringBoth,
-        returnToStart = 30010, countInOff = 30011, countInOne, countInTwo,
+        returnToStart = 30010, countInOff = 30011, countInOne, countInTwo, // to countInOff + 8: model::countInChoices
         mergeLinear = 30020,
         mergeCycle,
-        replaceMidi
+        replaceMidi,
+        clickBar = 30030, clickBeat, clickDivision, clickOnlyCountIn,
+        clickTone0 = 30040, // to clickTone0 + Metronome::numTones - 1, low to high (D-W1-11)
+        clickToneLast = clickTone0 + engine::Metronome::numTones - 1
     };
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void handleUiCommand (Cmd command);
+    /** Shows the side panel on its Library tab (D-UI-53). */
+    void showLibrary();
     void ask (const juce::String& title, const juce::String& text, const juce::String& first, const juce::String& second,
               std::function<void (int)> answer);
     void alert (const juce::String& title, const juce::String& text);
@@ -177,6 +195,10 @@ private:
 
     Studio& studio;
     ControlBar control;
+    Toolbar toolbarRow { studio };
+    juce::OwnedArray<FloatingWindow> floating;
+    std::unique_ptr<FloatingWindow> groups;
+    int frontWindow = 0; // Cycle Through Windows: the one brought forward last
     Inspector inspectorPanel;
     TracksArea tracksArea;
     BottomArea bottomArea;
@@ -198,7 +220,8 @@ private:
     void chooseSharedFolder();
     Id questionTrack;
     juce::String asked;
-    juce::TooltipWindow tooltips { this, 600 };
+    std::unique_ptr<juce::TooltipWindow> tooltips = std::make_unique<juce::TooltipWindow> (this, 600); // null with help tags off (D-UI-41)
+    void darkModeSettingChanged() override;
     PanelLayout shownLayout;
     std::vector<int> heldKeys; // keyboard MIDI keys currently down
 };

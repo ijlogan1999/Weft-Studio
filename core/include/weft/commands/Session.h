@@ -129,6 +129,9 @@ public:
     bool canRedo() const noexcept { return ! redoStack.empty() && ! gesture; }
     std::string undoName() const { return undoStack.empty() ? std::string() : undoStack.back().name; }
     std::string redoName() const { return redoStack.empty() ? std::string() : redoStack.back().name; }
+    /** Undo History (D-UI-46): the steps that can be undone, oldest first; and those that can be redone, the next last. */
+    std::vector<std::string> undoNames() const;
+    std::vector<std::string> redoNames() const;
     UndoResult undo();
     UndoResult redo();
 
@@ -158,6 +161,14 @@ public:
     EditResult setTrackHidden (const Id& trackId, bool hidden);
     /** Whether hidden tracks get rows (L-TRH-10). */
     EditResult setShowHiddenTracks (bool show);
+    /** Project and track notes (D-UI-47): plain text, one undo step "Project Notes" / "Track Notes". */
+    EditResult setProjectNotes (const std::string& text);
+    /** A track's Smart Controls (D-UI-52), or nullopt for the automatic mapping. One undo step "Smart Controls". */
+    EditResult setSmartControls (const Id& trackId, std::optional<model::SmartControls> controls);
+    EditResult setTrackNotes (const Id& trackId, const std::string& text);
+    /** Project Settings (W-35): the pan law for mono sources, and the live MIDI the project ignores (model::midiFilter bits). */
+    EditResult setPanLaw (double centreDb);
+    EditResult setMidiInputFilter (int filter);
     /** The project's key (F-TMP-10); step "Set Key". */
     EditResult setKey (const model::KeySignature& key);
     EditResult setCycle (bool enabled, Ticks start, Ticks end);
@@ -184,6 +195,8 @@ public:
     EditResult setTrackOutput (const Id& trackId, const Id& busIdOrEmptyForMaster);
     /** Input monitoring: "auto", "on" or "off" (F-REC-4). */
     EditResult setTrackMonitor (const Id& trackId, const std::string& mode);
+    /** An instrument track's playback parameters (P-TRI-12..19, D-W3-13); only changed fields are written. */
+    EditResult setTrackPlayback (const Id& trackId, const model::TrackPlayback& playback);
     /** off, read, touch, latch or write (F-AUT-5; the strip's selector, spec 04 §8). */
     EditResult setTrackAutomationMode (const Id& trackId, const std::string& mode);
     /** Audio input channel(s) or MIDI filter (F-TRK-17). */
@@ -201,6 +214,9 @@ public:
     EditResult trimRegionLength (const Id& regionId, std::int64_t newLength);
     /** Audio editor trim (D-UI-5): sets the source offset exactly, keeping the region's end; the start moves to the nearest tick. */
     EditResult trimAudioStartSamples (const Id& regionId, Samples newSourceOffset);
+    /** Slip (D-W3-11): moves what plays inside the region, which stays put. `newOffset` is the audio source
+        offset in samples (at least 0) or the MIDI sequence offset in ticks. One undo step "Slip Region". */
+    EditResult slipRegion (const Id& regionId, std::int64_t newOffset);
     std::optional<Id> splitRegion (const Id& regionId, Ticks at);
     /** Joins regions on one track into the earliest one (MIDI, or contiguous audio from one file). */
     EditResult joinRegions (const std::vector<Id>& regionIds);
@@ -212,12 +228,30 @@ public:
     /** A region's own color, or nullopt to follow its track (F-TRK-9). */
     EditResult setRegionColor (const Id& regionId, std::optional<model::Color> color);
     EditResult setRegionQuantize (const Id& regionId, std::optional<model::RegionQuantize> q);
-    /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-20); notes keep their stored pitch. */
+    /** MIDI region playback transpose in semitones, -96..+96 (L-RPR-2, D-W4-9); notes keep their stored pitch. */
     EditResult setRegionTranspose (const Id& regionId, int semitones);
+    /** Audio region pitch (D-UI-51): transpose -24..+24 semitones and fine tune -50..+50 cents, the length
+        unchanged. One undo step "Transpose". */
+    EditResult setAudioRegionPitch (const Id& regionId, int semitones, int cents);
+    /** Audio region tape-style speed, 0.25..4 (D-UI-51): the region plays the same audio faster (and higher), so its
+        length scales by the old speed over the new one. One undo step "Region Speed". */
+    EditResult setAudioRegionSpeed (const Id& regionId, double speed);
+    /** Time stretch (D-UI-51): the region plays the same audio at the same pitch over `newLength` samples.
+        `keepEnd` stretches from the start edge, so the end stays put. The stretch stays within 0.25..4. One undo
+        step "Time Stretch". */
+    EditResult stretchAudioRegion (const Id& regionId, Samples newLength, bool keepEnd = false);
     /** Region playback delay, -500..+500 ms (L-RGN-6, D-W3-5); the region's position doesn't change. */
     EditResult setRegionDelay (const Id& regionId, double delayMs);
-    /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-20); results stay within 1..127. */
+    /** MIDI region playback velocity offset, -99..+99 (L-RPR-2, D-W4-9); results stay within 1..127. */
     EditResult setRegionVelocityOffset (const Id& regionId, int offset);
+    /** Region delay in ticks, -960..+960 (D-W4-16); setRegionDelay goes back to milliseconds. */
+    EditResult setRegionDelayTicks (const Id& regionId, Ticks ticks);
+    /** MIDI region Dynamics percent, 0 (Fixed) to 300, 100 off (D-W4-16). */
+    EditResult setRegionDynamics (const Id& regionId, int percent);
+    /** MIDI region Gate Time: 0 off, 1..200 percent, MidiRegionData::gateFixed or gateLegato (D-W4-16). */
+    EditResult setRegionGate (const Id& regionId, int gate);
+    /** MIDI region Clip Length (D-W4-16). */
+    EditResult setRegionClipLength (const Id& regionId, bool clip);
 
     // Several regions (arrange view) ---------------------------------------------
     /** Drag move (W-3b): one undo step; the plan is planMove's. Moved regions go on top (D-W3-2). */
@@ -250,9 +284,24 @@ public:
         position stay.
     */
     EditResult reverseRegionsAs (const std::vector<std::pair<Id, model::MediaRef>>& reversed);
+    /**
+        Audio File Editor (D-UI-49): every region playing `oldHash` plays `media` instead (already in Media/),
+        a copy of the file with [from, to) replaced by `inserted` frames. A region's start and end in the file
+        follow the edit (one inside the replaced part moves to its edge); a region it would leave shorter than
+        the shortest audio region is refused. One undo step `name`; positions, gain and fades stay.
+    */
+    EditResult replaceMediaFile (const std::string& oldHash, const model::MediaRef& media, Samples from, Samples to, Samples inserted,
+                                 const std::string& name);
+    /** Trim in the Audio File Editor: the file keeps only [from, to); regions move with it. */
+    EditResult trimMediaFile (const std::string& oldHash, const model::MediaRef& media, Samples from, Samples to);
 
     // Media ---------------------------------------------------------------------
     EditResult addMedia (const model::MediaRef& media);
+    /** Project Audio › Rename (D-UI-40): the name the file shows; its content and hash stay. */
+    EditResult renameMedia (const std::string& hash, const std::string& name);
+    /** Removes audio files from the project (D-UI-40). Refused while a region still plays one. The file on
+        disk stays, so undo brings it back. */
+    EditResult removeMedia (const std::vector<std::string>& hashes);
 
     // Recording -------------------------------------------------------------------
     /** Adds the recorded media, regions and take folders as one undo step "Record" (W-1a step 8). */
@@ -296,11 +345,16 @@ public:
     EditResult quantizeNotes (const std::vector<Id>& regionIds, const std::vector<NoteRef>& notes, Ticks grid, double strength, double swingPercent);
     /** Apply Quantize (W-5 region quantize step 4): bakes the region's playback quantize into its notes and turns it off. */
     EditResult applyRegionQuantize (const Id& regionId);
+    /** Apply All Parameters Permanently (D-W4-16): writes the region's quantize, transpose, velocity, dynamics,
+        gate time and clip length (and, with `delay`, its delay) into its notes and resets them. One undo step. */
+    EditResult applyRegionParameters (const std::vector<Id>& regionIds, bool delay);
 
     // Controller lanes (F-PRL-12); positions are timeline ticks --------------------------
     std::optional<Id> addController (const Id& regionId, model::CcEvent event);
     EditResult moveController (const Id& regionId, const Id& eventId, Ticks at, int value);
     EditResult deleteControllers (const Id& regionId, const std::vector<Id>& eventIds);
+    /** Event List edit (D-UI-48): a controller event's position (timeline ticks), number, value and channel. */
+    EditResult setControllerEvent (const Id& regionId, const model::CcEvent& event);
 
     // Plugins and sends ---------------------------------------------------------
     std::optional<Id> addInsert (const Id& trackId, model::PluginInstance plugin, std::optional<std::size_t> index = {});
@@ -379,6 +433,74 @@ public:
     /** A palette colour for the marker's chip, or none (04 §5); step "Marker Color". */
     EditResult setMarkerColor (const Id& markerId, std::optional<model::Color> color);
     EditResult deleteMarker (const Id& markerId);
+    /** The marker's text (D-UI-48); step "Marker Text". The same text again is refused. */
+    EditResult setMarkerText (const Id& markerId, const std::string& text);
+
+    // Key track (D-UI-44) ---------------------------------------------------------------
+    /** A key change at pos (after the project start; one per position). */
+    std::optional<Id> addKeyChange (Ticks pos, const model::KeySignature& key);
+    EditResult setKeyChange (const Id& changeId, Ticks pos, const model::KeySignature& key);
+    EditResult deleteKeyChange (const Id& changeId);
+    /** The key display's edit: sets the key in effect at t (a change, or the project key before the first). */
+    EditResult setKeyAt (Ticks t, const model::KeySignature& key);
+
+    // Arrangement track (D-UI-45) -------------------------------------------------------
+    /** A section; sections don't overlap. An empty name takes the next of Intro, Verse, Chorus, Bridge, Outro. */
+    std::optional<Id> addSection (Ticks start, Ticks length, const std::string& name = {});
+    EditResult renameSection (const Id& sectionId, const std::string& name);
+    EditResult setSectionColor (const Id& sectionId, std::optional<model::Color> color);
+    EditResult setSectionRange (const Id& sectionId, Ticks start, Ticks length);
+    /** Removes the section; its regions stay where they are. */
+    EditResult deleteSection (const Id& sectionId);
+    /** Moves a section and what's in it to `to`, the start or end of another section (or 0), shifting what lies
+        between by its length; with `copy`, inserts a copy there instead and shifts everything from `to` on later.
+        Regions crossing the edges are split first; regions, markers, key changes and sections move; tempo and
+        signature changes and automation stay. One undo step "Move Section" or "Copy Section" (D-UI-45). */
+    EditResult moveSection (const Id& sectionId, Ticks to, bool copy);
+
+    // Groups (D-W6-15) and VCA faders (D-W6-16) ----------------------------------------------
+    /** A group with the lowest free number, named "Group N", holding `trackIds` (taken out of their old
+        groups). Refused when all 32 numbers are taken. */
+    std::optional<Id> createGroup (const std::vector<Id>& trackIds = {});
+    /** Name, on, H and links (the id and number are kept). */
+    EditResult setGroup (const model::Group& group);
+    /** Removes the group; its tracks are in no group. */
+    EditResult deleteGroup (const Id& groupId);
+    /** Puts the track in a group (empty: none). */
+    EditResult setTrackGroup (const Id& trackId, const Id& groupId);
+    /** Groups active (P-GRP-2): off, no group links anything or hides tracks. */
+    EditResult setGroupsActive (bool active);
+    /** While on, changes go to the one track only (the temporary override, P-GRP-20). The UI also gives
+        a check that says whether Shift is held on a control right now. */
+    void setGroupOverride (bool on) noexcept { groupOverride = on; }
+    void setGroupOverrideCheck (std::function<bool()> check) { overrideCheck = std::move (check); }
+    bool groupOverridden() const { return groupOverride || (overrideCheck && overrideCheck()); }
+    /** The other tracks a change to `trackId` also goes to for `link`: none while overridden, and tracks
+        someone else has locked are left out. */
+    std::vector<Id> linkedTracks (const Id& trackId, bool model::Group::* link) const;
+    /** The same for send slot `slot` (0 to 7). */
+    std::vector<Id> linkedSendTracks (const Id& trackId, int slot) const;
+
+    /** A VCA fader at 0 dB; an empty name takes "VCA N". */
+    std::optional<Id> createVca (const std::string& name = {});
+    EditResult renameVca (const Id& vcaId, const std::string& name);
+    /** -inf to +6 dB, like a track fader. */
+    EditResult setVcaVolume (const Id& vcaId, double volumeDb);
+    EditResult setVcaMute (const Id& vcaId, bool mute);
+    /** Removes the VCA; its tracks are unassigned. */
+    EditResult deleteVca (const Id& vcaId);
+    /** Assigns the track to a VCA (empty: none). Not the master. */
+    EditResult setTrackVca (const Id& trackId, const Id& vcaId);
+
+    // Track stacks (D-W6-17) --------------------------------------------------------------------
+    /** A main track (a bus "Stack N") above `trackIds` (in track order, moved under it), one undo step. A summing
+        stack's members play into the main, which plays where the first did; a folder stack changes no routing.
+        Tracks in a stack, stack mains and the master are left out. */
+    std::optional<Id> createStack (const std::vector<Id>& trackIds, bool summing);
+    /** Removes the main track; its members stay where they are (a summing stack's play where the main did). */
+    EditResult flattenStack (const Id& mainId);
+    /** Open shows the members' rows (and strips, when the mixer follows stacks). */
+    EditResult setStackOpen (const Id& mainId, bool open);
 
     // Track locks (F-COL-11, 05 §7). Not undo steps (D-COL-35) ------------------------------
     static constexpr std::int64_t lockExpiryMs = 24LL * 60 * 60 * 1000;
@@ -463,6 +585,8 @@ private:
     void refreshFor (const Txn& txn);
     UndoResult invert (std::vector<Txn>& from, std::vector<Txn>& to, std::string_view label);
     void stamp (TxnWriter& w, const Id& regionId);
+    EditResult replaceFile (const std::string& oldHash, const model::MediaRef& media, const std::function<Samples (Samples, bool)>& map,
+                            const std::string& name);
     /** Writes a move or copy plan. nextZ tracks the next z per track across calls in one edit. */
     bool writePlacement (TxnWriter& w, const RegionClipboard& clip, const MovePlan& plan, bool copy, std::vector<Id>& newTrackIds,
                          std::map<Id, std::int64_t>& nextZ, std::vector<Id>* created);
@@ -493,6 +617,8 @@ private:
     std::string accessReason;
     std::map<int, std::function<void (const doc::Bytes&)>> changeListeners;
     bool projectOwner = true; // a project never shared belongs to its user
+    bool groupOverride = false;
+    std::function<bool()> overrideCheck;
     std::map<UserId, std::string> userNames;
     std::map<UserId, std::int64_t> lastSeen;
     std::vector<Notice> notices;

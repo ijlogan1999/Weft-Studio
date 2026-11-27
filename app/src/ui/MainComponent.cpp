@@ -3,10 +3,15 @@
 #include "AboutPanel.h"
 #include "AudioSetup.h"
 #include "BounceDialog.h"
+#include "GroupsPanel.h"
 #include "NewTrackDialog.h"
 #include "PluginSearch.h"
 #include "ProjectDialogs.h"
 #include "ShareDialogs.h"
+#include "UndoHistory.h"
+#include "KeyCommands.h"
+#include "SmartControls.h"
+#include "Library.h"
 
 namespace weft::ui
 {
@@ -134,8 +139,10 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     : studio (s), control (s), inspectorPanel (s), tracksArea (s), bottomArea (s), sidePanel (s, browserRoot), status (s), plugins (s)
 {
     setTitle ("Weft Studio");
-    for (auto* c : std::initializer_list<juce::Component*> { &control, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly, &preview })
+    juce::Desktop::getInstance().addDarkModeSettingListener (this);
+    for (auto* c : std::initializer_list<juce::Component*> { &control, &toolbarRow, &inspectorPanel, &tracksArea, &bottomArea, &sidePanel, &status, &banner, &readOnly, &preview })
         addChildComponent (c);
+    control.onPerformanceMeter = [this] (int scale) { openFloating (Cmd::performanceMeter, scale); };
     preview.restore.onClick = [this] { studio.restorePreviewed(); };
     preview.back.onClick = [this] { studio.returnToCurrent(); };
     studio.confirmBreakLock = [this] (const Id& trackId) {
@@ -201,11 +208,16 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
     };
     // Any input anywhere in the window keeps this user from showing as idle (05 §5).
     addMouseListener (this, true);
-    control.setVisible (true);
     tracksArea.setVisible (true);
     status.setVisible (true);
     setWantsKeyboardFocus (true);
     studio.uiCommand = [this] (Cmd c) { handleUiCommand (c); };
+    studio.showPresets = [this] (const juce::String& pluginName) {
+        showLibrary();
+        auto& lib = sidePanel.library();
+        lib.setView (LibraryView::presets);
+        lib.setSearch (pluginName);
+    };
     studio.addChangeListener (this);
     shownLayout = studio.layout;
     changeListenerCallback (nullptr);
@@ -215,7 +227,9 @@ MainComponent::MainComponent (Studio& s, const juce::File& browserRoot)
 
 MainComponent::~MainComponent()
 {
+    juce::Desktop::getInstance().removeDarkModeSettingListener (this);
     studio.uiCommand = nullptr;
+    studio.showPresets = nullptr;
     studio.onMissingPlugins = nullptr;
     studio.confirmBreakLock = nullptr;
     studio.onShowThread = nullptr;
@@ -223,8 +237,17 @@ MainComponent::~MainComponent()
     studio.removeChangeListener (this);
 }
 
+void MainComponent::darkModeSettingChanged()
+{
+    // Follow the system's appearance when the setting says so (D-UI-41).
+    if (studio.preferences().appearance == Preferences::Appearance::system && studio.wantsDarkTheme() != studio.layout.darkTheme)
+        studio.setPreferences (studio.preferences());
+}
+
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    if (studio.preferences().helpTags != (tooltips != nullptr))
+        tooltips = studio.preferences().helpTags ? std::make_unique<juce::TooltipWindow> (this, 600) : nullptr;
     const auto title = studio.windowTitle();
     if (getName() != title)
     {
@@ -291,7 +314,7 @@ void MainComponent::paintOverChildren (juce::Graphics& g)
                                 : juce::ColourGradient::horizontal (a, r.getX(), a.withAlpha (0.0f), r.getRight()));
         g.fillRect (r);
     };
-    shade ({ 0, control.getBottom(), getWidth(), 6 }, true);
+    shade ({ 0, std::max (control.getBottom(), toolbarRow.getBottom()), getWidth(), 6 }, true);
     if (inspectorPanel.isVisible())
         shade ({ inspectorPanel.getRight(), inspectorPanel.getY(), 5, inspectorPanel.getHeight() }, false);
 }
@@ -300,14 +323,18 @@ int MainComponent::maxBottom() const
 {
     // The tracks area keeps at least 160 px (F-UI-1: it is always visible); the bottom area may
     // take 80 % of the window (spec 04 §G).
-    const auto room = getHeight() - control.getHeight() - StatusBar::height - 160;
+    const auto room = getHeight() - control.getHeight() - toolbarRow.getHeight() - StatusBar::height - 160;
     return std::max (minBottom, std::min (room, getHeight() * 4 / 5));
 }
 
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
-    control.setBounds (r.removeFromTop (size::transport));
+    // View › Control Bar and View › Toolbar (D-UI-43).
+    control.setVisible (studio.layout.controlBar);
+    toolbarRow.setVisible (studio.layout.toolbar);
+    control.setBounds (studio.layout.controlBar ? r.removeFromTop (size::transport) : r.withHeight (0));
+    toolbarRow.setBounds (studio.layout.toolbar ? r.removeFromTop (Toolbar::height) : r.withHeight (0));
     status.setBounds (r.removeFromBottom (StatusBar::height));
     if (banner.isVisible())
         banner.setBounds (r.removeFromTop (NoAudioBanner::height));
@@ -383,8 +410,9 @@ bool MainComponent::keyStateChanged (bool isKeyDown)
 juce::PopupMenu MainComponent::toolMenu() const
 {
     juce::PopupMenu menu;
-    for (const auto t : { Tool::pointer, Tool::pencil, Tool::scissors, Tool::glue, Tool::eraser, Tool::mute })
+    for (int i = 0; i <= static_cast<int> (lastTool); ++i)
     {
+        const auto t = static_cast<Tool> (i);
         juce::PopupMenu::Item item (toolName (t));
         item.itemID = static_cast<int> (t) + 1;
         item.isTicked = studio.tool == t;
@@ -392,6 +420,13 @@ juce::PopupMenu MainComponent::toolMenu() const
         menu.addItem (item);
     }
     return menu;
+}
+
+void MainComponent::showLibrary()
+{
+    studio.layout.sidePanel = true;
+    sidePanel.showTab (SidePanel::libraryTab);
+    studio.sendChangeMessage();
 }
 
 void MainComponent::handleUiCommand (Cmd command)
@@ -420,12 +455,81 @@ void MainComponent::handleUiCommand (Cmd command)
     }
     else if (command == Cmd::searchPlugins)
         PluginSearch::show (studio, this);
+    else if (command == Cmd::goToPosition)
+        control.positionDisplay().showEditor();
+    else if (command == Cmd::configureTrackHeader)
+        tracks().showHeaderOptions();
+    else if (command == Cmd::togglePluginWindows)
+        plugins.toggleAll();
+    else if (command == Cmd::goToMarkerNumber)
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        askForText ("Go to Marker Number", "1", [self] (juce::String text) {
+            if (self != nullptr)
+                self->studio.goToMarkerNumber (text.getIntValue());
+        });
+    }
+    else if (command == Cmd::scrollToSelection)
+    {
+        // D-W3-12: the selection's start comes into view (a tenth in from the left) and its first track's row.
+        const auto span = studio.selection.span (studio.model());
+        if (! span)
+            studio.setStatus ("Select regions first.");
+        else
+        {
+            auto& view = studio.view;
+            const auto x0 = view.tickToX (span->first), x1 = view.tickToX (span->second);
+            if (x0 < 0 || x1 > studio.timelineWidth)
+                view.originTick = std::max (0.0, span->first - studio.timelineWidth * 0.1 / view.pixelsPerTick);
+            for (const auto& id : studio.model().rows)
+            {
+                bool has = false;
+                for (const auto& rid : studio.selection.ids())
+                    if (const auto* r = studio.model().region (rid); r != nullptr && studio.model().effectiveTrackId (*r) == id)
+                        has = true;
+                if (has)
+                {
+                    tracks().revealTrack (id);
+                    break;
+                }
+            }
+            tracks().repaint();
+        }
+    }
+    else if (command == Cmd::searchTracks)
+    {
+        if (auto* search = TrackSearch::show (studio, this))
+        {
+            juce::Component::SafePointer<MainComponent> self (this);
+            search->onChosen = [self] (const Id& id) {
+                if (self != nullptr)
+                    self->tracks().revealTrack (id);
+            };
+        }
+    }
     else if (command == Cmd::pluginManager)
         PluginManager::show (studio, this);
     else if (command == Cmd::deleteTrack)
         deleteSelectedTrack();
     else if (command == Cmd::bounce)
         BounceDialog::show (studio, this);
+    else if (command == Cmd::exportTrackAudio || command == Cmd::exportAllTracksAudio)
+        BounceDialog::show (studio, this, studio.exportableTracks (command == Cmd::exportAllTracksAudio));
+    else if (command == Cmd::exportSelectionMidi)
+    {
+        if (! desktopWindows())
+            return;
+        const auto start = studio.projectRoot() / "Bounces";
+        std::error_code ec;
+        std::filesystem::create_directories (start, ec);
+        const auto suggested = start / std::filesystem::path (std::u8string (reinterpret_cast<const char8_t*> ((studio.model().info.name.empty() ? std::string ("Selection") : studio.model().info.name).c_str())));
+        importChooser = std::make_unique<juce::FileChooser> ("Export Selection as MIDI File", juce::File (pathText (suggested) + ".mid"), "*.mid");
+        importChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                                    [safe = juce::Component::SafePointer<MainComponent> (this)] (const juce::FileChooser& fc) {
+                                        if (safe != nullptr && fc.getResult() != juce::File())
+                                            safe->studio.exportSelectionAsMidi (textPath (fc.getResult().withFileExtension ("mid").getFullPathName()));
+                                    });
+    }
     else if (command == Cmd::exportRegions)
     {
         if (! desktopWindows())
@@ -497,6 +601,262 @@ void MainComponent::handleUiCommand (Cmd command)
     }
     else if (command == Cmd::audioSettings && devices != nullptr && desktopWindows())
         launchDialog (std::make_unique<AudioSetupDialog> (studio, *devices, false), "Audio & MIDI Settings", this);
+    else if (command == Cmd::bigBeatsDisplay || command == Cmd::bigTimeDisplay || command == Cmd::performanceMeter)
+        openFloating (command);
+    else if (command == Cmd::configureGlobalTracks)
+        tracksArea.globalTracksMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                                                     [safe = juce::Component::SafePointer<MainComponent> (this)] (int item) {
+                                                         if (safe != nullptr)
+                                                             safe->tracksArea.pickGlobalTracksMenu (item);
+                                                     });
+    else if (command == Cmd::createSignatureChange)
+        tracksArea.ruler().createSignatureChange();
+    else if (command == Cmd::createKeyChange)
+        tracksArea.ruler().createKeyChange();
+    else if (command == Cmd::customizeControlBar)
+        control.customizeMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                                               [safe = juce::Component::SafePointer<MainComponent> (this)] (int item) {
+                                                   if (safe != nullptr)
+                                                       safe->control.pickCustomize (item);
+                                               });
+    else if (command == Cmd::toggleNotes)
+    {
+        // Notes (D-UI-47): the side panel's Notes tab; again while it shows, the side panel closes.
+        const bool showing = studio.layout.sidePanel && sidePanel.tabs().getCurrentTabIndex() == SidePanel::notesTab;
+        studio.layout.sidePanel = ! showing;
+        if (! showing)
+            sidePanel.showTab (SidePanel::notesTab);
+        studio.sendChangeMessage();
+    }
+    else if (command == Cmd::toggleLibrary)
+    {
+        // The Library (D-UI-53): the side panel's Library tab; again while it shows, the side panel closes.
+        const bool showing = studio.layout.sidePanel && sidePanel.tabs().getCurrentTabIndex() == SidePanel::libraryTab;
+        if (showing)
+        {
+            studio.layout.sidePanel = false;
+            studio.sendChangeMessage();
+        }
+        else
+            showLibrary();
+    }
+    else if (command == Cmd::loopBrowser)
+    {
+        showLibrary();
+        sidePanel.library().setView (LibraryView::loops);
+    }
+    else if (command == Cmd::searchLibrary)
+    {
+        showLibrary();
+        sidePanel.library().focusSearch();
+    }
+    else if (command == Cmd::smartControlsWindow)
+    {
+        // D-UI-52: the Smart Controls in a window of their own.
+        if (auto* existing = windowNamed ("Smart Controls"))
+            existing->toFront (true);
+        else
+        {
+            auto content = std::make_unique<SmartControlsPanel> (studio);
+            content->setSize (760, 240);
+            openWindow ("Smart Controls", std::move (content));
+        }
+    }
+    else if (command == Cmd::keyCommands)
+    {
+        // D-UI-50: Key Commands, in a window of its own.
+        if (auto* existing = windowNamed ("Key Commands"))
+            existing->toFront (true);
+        else
+            openWindow ("Key Commands", std::make_unique<KeyCommandsPanel> (studio));
+    }
+    else if (command == Cmd::listEditors)
+    {
+        // List Editors (D-UI-48): the side panel's Lists tab; again while it shows, the side panel closes.
+        const bool showing = studio.layout.sidePanel && sidePanel.tabs().getCurrentTabIndex() == SidePanel::listsTab;
+        studio.layout.sidePanel = ! showing;
+        if (! showing)
+            sidePanel.showTab (SidePanel::listsTab);
+        studio.sendChangeMessage();
+    }
+    else if (command == Cmd::openEventList || command == Cmd::openMarkerList || command == Cmd::openTempoList || command == Cmd::openSignatureList
+             || command == Cmd::openMarkerText)
+    {
+        // D-UI-48: a list in a window of its own (the event list's is the Event Float).
+        using List = ListsPanel::List;
+        const auto list = command == Cmd::openEventList ? List::events : command == Cmd::openTempoList ? List::tempo
+                        : command == Cmd::openSignatureList                                       ? List::signatures
+                                                                                                  : List::markers;
+        const juce::String title = command == Cmd::openEventList    ? "Event List"
+                                 : command == Cmd::openTempoList     ? "Tempo List"
+                                 : command == Cmd::openSignatureList ? "Signature List"
+                                 : command == Cmd::openMarkerText    ? "Marker Text"
+                                                                     : "Marker List";
+        if (auto* existing = windowNamed (title))
+            existing->toFront (true);
+        else
+        {
+            auto content = std::make_unique<ListsPanel> (studio, list);
+            if (command == Cmd::openMarkerText)
+            {
+                content->setTextArea (true);
+                // The marker at the playhead (or the first) is the one whose text shows.
+                const auto& m = studio.model();
+                int row = -1;
+                for (int i = 0; i < content->getNumRows(); ++i)
+                    if (content->rows()[static_cast<std::size_t> (i)].pos <= studio.playhead() || row < 0)
+                        row = i;
+                if (row >= 0 && ! m.markers.empty())
+                    content->table.selectRow (row);
+                content->setSize (420, 520);
+            }
+            openWindow (title, std::move (content));
+        }
+    }
+    else if (command >= Cmd::undoHistory && command <= Cmd::closeProject)
+        windowCommand (command);
+    else if (command == Cmd::groupsWindow)
+    {
+        if (groups != nullptr)
+            groups.reset();
+        else
+            groups = std::make_unique<FloatingWindow> ("Groups", std::make_unique<GroupsPanel> (studio),
+                                                       [safe = juce::Component::SafePointer<MainComponent> (this)] (FloatingWindow*) {
+                                                           juce::MessageManager::callAsync ([safe] {
+                                                               if (safe != nullptr)
+                                                                   safe->groups.reset();
+                                                           });
+                                                       });
+    }
+    else if (command == Cmd::settings && desktopWindows())
+    {
+        auto* dialog = launchDialog (std::make_unique<SettingsDialog> (studio), "Settings", this);
+        dialog->onAudioSettings = [this] { run (Cmd::audioSettings); };
+    }
+}
+
+void MainComponent::openFloating (Cmd kind, int scale)
+{
+    std::unique_ptr<juce::Component> content;
+    juce::String title;
+    if (kind == Cmd::performanceMeter)
+    {
+        content = std::make_unique<PerformanceMeter> (studio);
+        content->setSize (content->getWidth() * std::clamp (scale, 1, 3), content->getHeight() * std::clamp (scale, 1, 3));
+        title = "Performance";
+    }
+    else
+    {
+        const auto beats = kind == Cmd::bigBeatsDisplay;
+        content = std::make_unique<BigDisplay> (studio, beats ? BigDisplay::Mode::beats : BigDisplay::Mode::time);
+        title = beats ? "Bars and Beats" : "Time";
+    }
+    openWindow (title, std::move (content));
+}
+
+FloatingWindow* MainComponent::openWindow (const juce::String& title, std::unique_ptr<juce::Component> content)
+{
+    return floating.add (new FloatingWindow (title, std::move (content), [safe = juce::Component::SafePointer<MainComponent> (this)] (FloatingWindow* w) {
+        // Deleted after the close click returns.
+        juce::MessageManager::callAsync ([safe, w] {
+            if (safe != nullptr)
+                safe->floating.removeObject (w);
+        });
+    }));
+}
+
+FloatingWindow* MainComponent::windowNamed (const juce::String& title) const
+{
+    for (auto* w : floating)
+        if (w->getName() == title)
+            return w;
+    return nullptr;
+}
+
+void MainComponent::windowCommand (Cmd command)
+{
+    // D-UI-46: panes in their own windows, and the window commands.
+    const auto pane = [this] (const juce::String& title, std::unique_ptr<juce::Component> content, int w, int h) {
+        if (auto* existing = windowNamed (title))
+        {
+            existing->toFront (true);
+            return;
+        }
+        content->setSize (w, h);
+        openWindow (title, std::move (content));
+    };
+    auto* main = findParentComponentOfClass<juce::DocumentWindow>();
+    if (command == Cmd::undoHistory)
+        pane ("Undo History", std::make_unique<UndoHistory> (studio), 300, 400);
+    else if (command == Cmd::mixerWindow)
+        pane ("Mixer", std::make_unique<MixerView> (studio), 900, 460);
+    else if (command == Cmd::pianoRollWindow)
+        pane ("Piano Roll", std::make_unique<PianoRoll> (studio), 900, 420);
+    else if (command == Cmd::audioEditorWindow)
+        pane ("Audio Editor", std::make_unique<AudioEditor> (studio), 900, 320);
+    else if (command == Cmd::projectAudioWindow)
+        pane ("Project Audio", std::make_unique<MediaList> (studio), 360, 420);
+    else if (command == Cmd::regionInspectorWindow)
+        pane ("Inspector", std::make_unique<Inspector> (studio), 260, 640);
+    else if (command == Cmd::openMainWindow)
+    {
+        if (main != nullptr)
+        {
+            main->setMinimised (false);
+            main->toFront (true);
+        }
+    }
+    else if (command == Cmd::closeWindow)
+    {
+        // The window opened last; the main window stays (Close Project closes the project).
+        if (groups != nullptr && floating.isEmpty())
+            groups.reset();
+        else if (! floating.isEmpty())
+            floating.removeObject (floating.getLast());
+        else
+            studio.setStatus ("No window to close.");
+    }
+    else if (command == Cmd::cycleWindows || command == Cmd::cycleWindowsBack)
+    {
+        std::vector<juce::Component*> all;
+        if (main != nullptr)
+            all.push_back (main);
+        for (auto* w : floating)
+            all.push_back (w);
+        if (groups != nullptr)
+            all.push_back (groups.get());
+        if (all.size() < 2)
+        {
+            studio.setStatus ("No other window.");
+            return;
+        }
+        const auto n = static_cast<int> (all.size());
+        frontWindow = ((frontWindow + (command == Cmd::cycleWindows ? 1 : n - 1)) % n + n) % n;
+        all[static_cast<std::size_t> (frontWindow)]->toFront (true);
+    }
+    else if (command == Cmd::minimizeWindow || command == Cmd::minimizeAllWindows)
+    {
+        if (command == Cmd::minimizeAllWindows)
+            for (auto* w : floating)
+                w->setMinimised (true);
+        if (main != nullptr)
+            main->setMinimised (true);
+    }
+    else if (command == Cmd::zoomWindow)
+    {
+        if (main != nullptr)
+            main->setFullScreen (! main->isFullScreen());
+    }
+    else if (command == Cmd::fullScreen)
+    {
+        if (main != nullptr)
+        {
+            auto& desktop = juce::Desktop::getInstance();
+            desktop.setKioskModeComponent (desktop.getKioskModeComponent() == main ? nullptr : main, false);
+        }
+    }
+    else if (command == Cmd::closeProject)
+        whenSaved ([this] { studio.closeProject(); });
 }
 
 void MainComponent::whenSignedIn (std::function<void()> next)
@@ -765,7 +1125,7 @@ bool MainComponent::ToolKeys::keyPressed (const juce::KeyPress& key, juce::Compo
 
 void MainComponent::pickTool (int menuItemId)
 {
-    if (menuItemId < 1 || menuItemId > static_cast<int> (Tool::mute) + 1)
+    if (menuItemId < 1 || menuItemId > static_cast<int> (lastTool) + 1)
         return;
     studio.tool = static_cast<Tool> (menuItemId - 1);
     studio.sendChangeMessage();
@@ -789,6 +1149,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         {
             add (Cmd::newProject);
             add (Cmd::openProject);
+            add (Cmd::closeProject);
             juce::PopupMenu recentMenu;
             const auto& items = studio.recentProjects().items();
             for (std::size_t i = 0; i < items.size(); ++i)
@@ -817,9 +1178,14 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::bounce);
             add (Cmd::importAudio);
             add (Cmd::exportRegions);
+            add (Cmd::exportSelectionMidi);
+            add (Cmd::exportTrackAudio);
+            add (Cmd::exportAllTracksAudio);
             menu.addSeparator();
             add (Cmd::projectSettings);
             add (Cmd::audioSettings);
+            add (Cmd::settings);
+            add (Cmd::keyCommands);
             menu.addSeparator();
             add (Cmd::quit);
             break;
@@ -831,12 +1197,65 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             for (auto c : { Cmd::cut, Cmd::copy, Cmd::paste, Cmd::deleteSelection, Cmd::selectAll, Cmd::deselectAll, Cmd::invertSelection, Cmd::selectPrevious,
                             Cmd::selectNext })
                 add (c);
+            {
+                // D-W3-12: more ways to select regions, and edits at the playhead or the cycle.
+                juce::PopupMenu more, edits;
+                const auto addTo = [] (juce::PopupMenu& to, Cmd c) {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    to.addItem (item);
+                };
+                for (auto c : { Cmd::selectAllFollowing, Cmd::selectInsideCycle, Cmd::selectMutedRegions, Cmd::selectSameColor, Cmd::selectFirst, Cmd::selectLast,
+                                Cmd::togglePreviousRegion, Cmd::toggleNextRegion, Cmd::selectPreviousTrack, Cmd::selectNextTrack, Cmd::scrollToSelection })
+                    addTo (more, c);
+                menu.addSubMenu ("Select", more);
+                for (auto c : { Cmd::moveToPlayhead, Cmd::moveToPlayheadSelectNext, Cmd::regionStartToPlayhead, Cmd::regionEndToPlayhead, Cmd::splitAtCycle })
+                    addTo (edits, c);
+                menu.addSubMenu ("Playhead and Cycle", edits);
+            }
             menu.addSeparator();
             for (auto c : { Cmd::split, Cmd::join, Cmd::muteRegions, Cmd::repeat, Cmd::crossfade, Cmd::loopRegion, Cmd::reverseRegions, Cmd::nudgeLeft, Cmd::nudgeRight,
-                            Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
+                            Cmd::lengthenNotes, Cmd::shortenNotes, Cmd::slipLeft, Cmd::slipRight, Cmd::shuffleLeft, Cmd::shuffleRight })
                 add (c);
+            {
+                // D-W3-11: what Nudge, Lengthen/Shorten and Slip move regions by.
+                juce::PopupMenu nudge;
+                const std::pair<Cmd, Studio::NudgeValue> values[] = { { Cmd::nudgeByGrid, Studio::NudgeValue::grid }, { Cmd::nudgeByBar, Studio::NudgeValue::bar },
+                                                                       { Cmd::nudgeByBeat, Studio::NudgeValue::beat }, { Cmd::nudgeByDivision, Studio::NudgeValue::division },
+                                                                       { Cmd::nudgeByTick, Studio::NudgeValue::tick } };
+                for (const auto& [c, v] : values)
+                    nudge.addItem (static_cast<int> (c) + 1, commandInfo (c).name, true, studio.nudgeValue == v);
+                menu.addSubMenu ("Nudge Value", nudge);
+            }
+            for (auto c : { Cmd::applyQuantize, Cmd::quantize, Cmd::muteNotes })
+                add (c);
+            {
+                // D-W4-16: write the region parameters into the notes.
+                juce::PopupMenu params;
+                for (auto c : { Cmd::applyRegionParameters, Cmd::applyRegionParametersExceptDelay })
+                    params.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+                menu.addSubMenu ("MIDI Region Parameters", params);
+            }
+            {
+                // Piano roll note functions (D-W4-14, D-W4-15).
+                juce::PopupMenu noteMenu;
+                for (auto c : { Cmd::selectAllFollowing, Cmd::legato, Cmd::removeOverlaps, Cmd::noteStartToPlayhead, Cmd::noteEndToPlayhead,
+                                Cmd::scaleQuantize })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    noteMenu.addItem (item);
+                }
+                menu.addSubMenu ("Note Functions", noteMenu);
+            }
             menu.addSeparator();
             add (Cmd::toolMenu);
+            add (Cmd::nextTool);
+            add (Cmd::previousTool);
             menu.addSeparator();
             add (Cmd::addComment);
             break;
@@ -845,6 +1264,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::newTrack);
             add (Cmd::newAudioTrack);
             add (Cmd::newInstrumentTrack);
+            add (Cmd::newTrackNextInput);
             add (Cmd::duplicateTrack);
             add (Cmd::duplicateTrackWithRegions);
             add (Cmd::deleteTrack);
@@ -856,24 +1276,96 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             add (Cmd::moveTrackUp);
             add (Cmd::moveTrackDown);
             menu.addSeparator();
-            for (auto c : { Cmd::muteTrack, Cmd::soloTrack, Cmd::armTrack })
+            for (auto c : { Cmd::muteTrack, Cmd::soloTrack, Cmd::armTrack, Cmd::monitorTrack, Cmd::unmuteAll, Cmd::clearRecallSolo, Cmd::soloSelectedRegions })
                 add (c);
             menu.addSeparator();
+            add (Cmd::searchTracks);
             add (Cmd::lockTrack);
+            menu.addSeparator();
+            add (Cmd::createFolderStack);
+            add (Cmd::createSummingStack);
+            add (Cmd::flattenStack);
+            add (Cmd::toggleStack);
+            menu.addSeparator();
+            add (Cmd::toggleAllTracksOff);
+            add (Cmd::configureTrackHeader);
             break;
         }
         case 3:
             add (Cmd::newBus);
             add (Cmd::toggleMixer);
+            add (Cmd::cycleMixerMode);
+            {
+                juce::PopupMenu::Item follow (commandInfo (Cmd::followStacks).name); // P-MX-10
+                follow.itemID = static_cast<int> (Cmd::followStacks) + 1;
+                follow.isTicked = studio.mixerFollowStacks;
+                menu.addItem (follow);
+                juce::PopupMenu::Item notes (commandInfo (Cmd::mixerNotes).name); // P-MX-22
+                notes.itemID = static_cast<int> (Cmd::mixerNotes) + 1;
+                notes.isTicked = studio.mixerNotes;
+                menu.addItem (notes);
+            }
             menu.addSeparator();
             add (Cmd::searchPlugins);
             add (Cmd::pluginManager);
+            add (Cmd::togglePluginWindows);
+            menu.addSeparator();
+            add (Cmd::copyChannelStrip);
+            add (Cmd::pasteChannelStrip);
+            menu.addSeparator();
+            add (Cmd::groupsWindow);
+            add (Cmd::toggleGroups);
+            add (Cmd::createGroup);
+            {
+                juce::PopupMenu hide;
+                for (int n = 1; n <= 9; ++n)
+                {
+                    const auto c = static_cast<Cmd> (static_cast<int> (Cmd::hideGroup1) + n - 1);
+                    hide.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+                }
+                menu.addSubMenu ("Hide Groups", hide);
+            }
+            add (Cmd::newVca);
             break;
         case 4:
         {
-            for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
+            for (auto c : { Cmd::playStop, Cmd::stop, Cmd::pause, Cmd::record, Cmd::recordToggle, Cmd::captureRecording, Cmd::discardRecording, Cmd::cycle, Cmd::setCycleToSelection, Cmd::goToStart, Cmd::goToEnd, Cmd::previousBar,
                             Cmd::nextBar, Cmd::addMarker, Cmd::previousMarker, Cmd::nextMarker, Cmd::renameMarker, Cmd::deleteMarker, Cmd::metronome, Cmd::autopunch, Cmd::tapTempo })
                 add (c);
+            {
+                juce::PopupMenu::Item vs (commandInfo (Cmd::toggleVarispeed).name); // D-ARCH-55
+                vs.itemID = static_cast<int> (Cmd::toggleVarispeed) + 1;
+                vs.isTicked = studio.varispeedOn();
+                menu.addItem (vs);
+            }
+            {
+                juce::PopupMenu::Item replace (commandInfo (Cmd::toggleReplace).name); // D-W1-12: MIDI and audio
+                replace.itemID = static_cast<int> (Cmd::toggleReplace) + 1;
+                replace.isTicked = studio.engine().settings().replace;
+                menu.addItem (replace);
+            }
+            // D-UI-35: the go-to, play-from and stop commands, and cycle moves.
+            const auto subMenu = [] (std::initializer_list<Cmd> cmds) {
+                juce::PopupMenu sub;
+                for (auto c : cmds)
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    sub.addItem (item);
+                }
+                return sub;
+            };
+            menu.addSubMenu ("Markers", subMenu ({ Cmd::markerForSelection, Cmd::goToMarkerNumber, Cmd::cycleToMarker, Cmd::cycleToPreviousMarker,
+                                                   Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators,
+                                                   Cmd::openMarkerList, Cmd::openMarkerText })); // D-UI-39, D-UI-48
+            menu.addSubMenu ("Go To", subMenu ({ Cmd::goToPosition, Cmd::goToCycleStart, Cmd::goToCycleEnd, Cmd::goToSelectionStart, Cmd::goToSelectionEnd,
+                                                 Cmd::goToLastLocate }));
+            menu.addSubMenu ("Play From", subMenu ({ Cmd::playFromStart, Cmd::playFromCycleStart, Cmd::playFromSelection, Cmd::playFromWindowEdge,
+                                                     Cmd::playFromPreviousBar, Cmd::playFromLastLocate }));
+            menu.addSubMenu ("Stop And", subMenu ({ Cmd::stopGoToStart, Cmd::stopGoToCycleStart, Cmd::stopGoToLastLocate }));
+            menu.addSubMenu ("Cycle Range", subMenu ({ Cmd::cycleForward, Cmd::cycleBack, Cmd::doubleCycle, Cmd::halveCycle }));
             const auto settings = studio.engine().settings();
             menu.addSeparator();
             juce::PopupMenu during;
@@ -881,11 +1373,30 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             during.addItem (clickDuringPlay, "Playback", true, settings.metronomeDuring == engine::ClickDuring::play);
             during.addItem (clickDuringBoth, "Recording and Playback", true, settings.metronomeDuring == engine::ClickDuring::both);
             menu.addSubMenu ("Click During", during);
+            juce::PopupMenu clicks;
+            clicks.addItem (clickBar, "Bar", true, settings.clickBars);
+            clicks.addItem (clickBeat, "Beat", true, settings.clickBeats);
+            clicks.addItem (clickDivision, "Division", true, settings.clickDivisions);
+            clicks.addSeparator();
+            clicks.addItem (clickOnlyCountIn, "Only During Count-in", true, settings.clickOnlyCountIn);
+            juce::PopupMenu tone;
+            static const char* const toneNames[] = { "Low", "Lower", "Normal", "Higher", "High" };
+            static_assert (std::size (toneNames) == engine::Metronome::numTones);
+            for (int t = 0; t < engine::Metronome::numTones; ++t)
+                tone.addItem (clickTone0 + t, toneNames[t], true, settings.clickTone == t);
+            clicks.addSubMenu ("Tone", tone);
+            menu.addSubMenu ("Metronome Clicks", clicks);
             // The count-in lives here as well as in the control bar, which drops its menu in a narrow window (AT-UI-11).
             juce::PopupMenu countIn;
-            countIn.addItem (countInOff, "Off", true, settings.countInBars == 0);
-            countIn.addItem (countInOne, "1 Bar", true, settings.countInBars == 1);
-            countIn.addItem (countInTwo, "2 Bars", true, settings.countInBars == 2);
+            for (std::size_t i = 0; i < model::countInChoices.size(); ++i)
+            {
+                const auto choice = model::countInChoices[i];
+                if (choice == -1)
+                    countIn.addSeparator();
+                // "1 Bar", "2 Beats": the menu's title case.
+                const auto name = choice == 0 ? juce::String ("Off") : juce::String (model::countInName (choice)).replace (" b", " B");
+                countIn.addItem (countInOff + static_cast<int> (i), name, true, settings.countInBars == choice);
+            }
             countIn.addSeparator();
             {
                 juce::PopupMenu::Item toggle ("Count-in On/Off");
@@ -899,18 +1410,112 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             midi.addItem (mergeLinear, "Merge into Existing Region", true, settings.midiMergeLinear);
             midi.addItem (mergeCycle, "Merge Cycle Passes", true, settings.midiMergeCycle);
             midi.addSeparator();
-            midi.addItem (replaceMidi, "Replace", true, settings.midiReplace);
+            midi.addItem (replaceMidi, "Replace", true, settings.replace);
             menu.addSubMenu ("MIDI Recording", midi);
             break;
         }
         case 5:
-            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
-                            Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
+            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::listEditors, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor, Cmd::toggleAudioFileEditor,
+                            Cmd::toggleSmartControls, Cmd::toggleLibrary, Cmd::loopBrowser, Cmd::searchLibrary, Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
+            {
+                // D-UI-44: which global tracks show, and the global-track commands.
+                juce::PopupMenu global;
+                for (const auto lane : globalLaneOrder)
+                {
+                    const auto cmd = lane == laneArrangement ? Cmd::toggleArrangementTrack : lane == laneMarkers ? Cmd::toggleMarkerTrack
+                                     : lane == laneTempo     ? Cmd::toggleTempoTrack
+                                     : lane == laneSignature ? Cmd::toggleSignatureTrack
+                                                             : Cmd::toggleKeyTrack;
+                    global.addItem (static_cast<int> (cmd) + 1, globalLaneName (lane) + " Track", true, studio.laneShown (lane));
+                }
+                global.addSeparator();
+                global.addItem (static_cast<int> (Cmd::showSingleGlobalTrack) + 1, commandInfo (Cmd::showSingleGlobalTrack).name, true, studio.layout.singleGlobalLane);
+                for (auto c : { Cmd::markerTrackOnly, Cmd::configureGlobalTracks, Cmd::addSection, Cmd::createSignatureChange, Cmd::createKeyChange })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    global.addItem (item);
+                }
+                menu.addSubMenu ("Global Tracks", global);
+            }
+            {
+                // D-UI-43: the control bar, the toolbar and the big displays.
+                juce::PopupMenu bars;
+                bars.addItem (static_cast<int> (Cmd::toggleControlBar) + 1, commandInfo (Cmd::toggleControlBar).name, true, studio.layout.controlBar);
+                bars.addItem (static_cast<int> (Cmd::toggleToolbar) + 1, commandInfo (Cmd::toggleToolbar).name, true, studio.layout.toolbar);
+                for (auto c : { Cmd::customizeControlBar, Cmd::bigBeatsDisplay, Cmd::bigTimeDisplay, Cmd::performanceMeter })
+                    bars.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+                menu.addSubMenu ("Control Bar and Displays", bars);
+            }
+            {
+                // D-UI-46: screensets, panes as windows and the window commands.
+                juce::PopupMenu windows, sets, tens;
+                const auto item = [] (juce::PopupMenu& to, Cmd c, bool ticked = false) {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item i (info.name);
+                    i.itemID = static_cast<int> (c) + 1;
+                    i.shortcutKeyDescription = info.shortcut;
+                    i.isTicked = ticked;
+                    to.addItem (i);
+                };
+                for (int n = 1; n <= 9; ++n)
+                {
+                    item (sets, static_cast<Cmd> (static_cast<int> (Cmd::screenset1) + n - 1), studio.screenset == n);
+                    item (tens, static_cast<Cmd> (static_cast<int> (Cmd::screensetTens1) + n - 1), studio.screenset / 10 == n);
+                }
+                sets.addSubMenu ("Screensets 11 to 99", tens);
+                windows.addSubMenu ("Screensets", sets);
+                windows.addSeparator();
+                for (auto c : { Cmd::openMainWindow, Cmd::mixerWindow, Cmd::pianoRollWindow, Cmd::audioEditorWindow, Cmd::projectAudioWindow,
+                                Cmd::regionInspectorWindow, Cmd::smartControlsWindow, Cmd::undoHistory })
+                    item (windows, c);
+                windows.addSeparator();
+                for (auto c : { Cmd::openEventList, Cmd::openMarkerList, Cmd::openTempoList, Cmd::openSignatureList, Cmd::openMarkerText })
+                    item (windows, c);
+                windows.addSeparator();
+                for (auto c : { Cmd::cycleWindows, Cmd::cycleWindowsBack, Cmd::cycleWindowViews, Cmd::cycleWindowViewsBack, Cmd::closeWindow,
+                                Cmd::minimizeWindow, Cmd::minimizeAllWindows, Cmd::zoomWindow, Cmd::fullScreen })
+                    item (windows, c);
+                menu.addSubMenu ("Windows", windows);
+            }
+            {
+                // D-W8-7: automation modes for every track, the selected track's toggles, and the used-parameter cycle.
+                juce::PopupMenu modes;
+                for (auto c : { Cmd::automationAllOff, Cmd::automationAllRead, Cmd::automationAllTouch, Cmd::automationAllLatch, Cmd::automationOffRead,
+                                Cmd::automationLatchRead, Cmd::cycleAutomationParameter })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    modes.addItem (item);
+                }
+                menu.addSubMenu ("Automation", modes);
+            }
             menu.addSeparator();
             for (auto c : { Cmd::zoomToFit, Cmd::zoomIn, Cmd::zoomOut, Cmd::followPlayhead, Cmd::snapToggle, Cmd::snapZeroCrossings, Cmd::showHiddenTracks, Cmd::keyboardMidi,
                             Cmd::toggleTheme })
                 add (c);
+            menu.addItem (static_cast<int> (Cmd::gridLines) + 1, commandInfo (Cmd::gridLines).name, true, studio.gridLines);
+            {
+                // D-UI-38: vertical zoom, saved zooms, navigation and paging.
+                juce::PopupMenu zoom;
+                for (auto c : { Cmd::zoomVerticalIn, Cmd::zoomVerticalOut, Cmd::zoomTrack, Cmd::saveZoom1, Cmd::saveZoom2, Cmd::saveZoom3, Cmd::recallZoom1,
+                                Cmd::recallZoom2, Cmd::recallZoom3, Cmd::navigateBack, Cmd::navigateForward, Cmd::pageUp, Cmd::pageDown, Cmd::pageLeft, Cmd::pageRight })
+                {
+                    const auto& info = commandInfo (c);
+                    juce::PopupMenu::Item item (info.name);
+                    item.itemID = static_cast<int> (c) + 1;
+                    item.shortcutKeyDescription = info.shortcut;
+                    if (c == Cmd::saveZoom1 || c == Cmd::recallZoom1 || c == Cmd::navigateBack || c == Cmd::pageUp)
+                        zoom.addSeparator();
+                    zoom.addItem (item);
+                }
+                menu.addSubMenu ("Zoom and Navigation", zoom);
+            }
             break;
         case 6:
         {
@@ -950,7 +1555,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
 
 void MainComponent::menuItemSelected (int itemId, int)
 {
-    if (itemId > clickDuringRecord - 1 && itemId <= replaceMidi)
+    if (itemId > clickDuringRecord - 1 && itemId <= clickToneLast)
     {
         auto settings = studio.engine().settings();
         switch (itemId)
@@ -959,13 +1564,22 @@ void MainComponent::menuItemSelected (int itemId, int)
             case clickDuringPlay: settings.metronomeDuring = engine::ClickDuring::play; break;
             case clickDuringBoth: settings.metronomeDuring = engine::ClickDuring::both; break;
             case returnToStart: settings.returnToStartOnStop = ! settings.returnToStartOnStop; break;
-            case countInOff: settings.countInBars = 0; break;
-            case countInOne: settings.countInBars = 1; break;
-            case countInTwo: settings.countInBars = 2; break;
+            case countInOff: case countInOne: case countInTwo: case countInOff + 3: case countInOff + 4: case countInOff + 5: case countInOff + 6:
+            case countInOff + 7: case countInOff + 8:
+                settings.countInBars = model::countInChoices[static_cast<std::size_t> (itemId - countInOff)];
+                break;
             case mergeLinear: settings.midiMergeLinear = ! settings.midiMergeLinear; break;
             case mergeCycle: settings.midiMergeCycle = ! settings.midiMergeCycle; break;
-            case replaceMidi: settings.midiReplace = ! settings.midiReplace; break;
-            default: return;
+            case replaceMidi: settings.replace = ! settings.replace; break;
+            case clickBar: settings.clickBars = ! settings.clickBars; break;
+            case clickBeat: settings.clickBeats = ! settings.clickBeats; break;
+            case clickDivision: settings.clickDivisions = ! settings.clickDivisions; break;
+            case clickOnlyCountIn: settings.clickOnlyCountIn = ! settings.clickOnlyCountIn; break;
+            default:
+                if (itemId >= clickTone0 && itemId <= clickToneLast)
+                    settings.clickTone = itemId - clickTone0;
+                else
+                    return;
         }
         studio.engine().setSettings (settings);
         studio.sendChangeMessage();

@@ -48,6 +48,10 @@ public:
 
     // Channel section: the selected track's strip and its output's (Master or a bus).
     std::unique_ptr<ChannelStrip> trackStrip, outputStrip;
+    /** Shift+click on the track strip's VCA slot shows that VCA's strip in place of the output's (P-INS-8),
+        until the track changes or leaves the VCA. */
+    std::unique_ptr<VcaStrip> vcaStrip;
+    Id shownVca;
     EqThumbnail eq;
     /** The scrolling area (the sections can be taller than the panel). */
     juce::Viewport viewport;
@@ -58,18 +62,36 @@ public:
     juce::Slider regionGain, fadeIn, fadeOut;
     /** Playback delay for any region (L-RGN-6). */
     juce::Slider regionDelay;
+    juce::ComboBox regionDelayUnit; // ms or ticks (D-W4-16)
+    juce::ToggleButton regionReverse { "Reverse" }; // audio
     juce::ComboBox fadeInCurve, fadeOutCurve;
+    // Audio region pitch and time (D-UI-51).
+    juce::Slider audioTranspose, fineTune, audioSpeed;
+    juce::ToggleButton speedUp { "Speed Up" }, slowDown { "Slow Down" };
     // MIDI region quantize (F-QNT-1).
     juce::ComboBox regionQuantize;
     juce::Slider quantizeStrength, quantizeSwing;
     juce::TextButton applyQuantize { "Apply Quantize" };
     // MIDI region playback parameters (L-RPR-2).
     juce::Slider regionTranspose, regionVelocity;
+    // More MIDI region parameters (D-W4-16).
+    juce::Slider quantizeRange, quantizeFlam;
+    juce::ComboBox regionDynamics, regionGate;
+    juce::ToggleButton regionClipLength { "Clip Length" };
+    /** The Dynamics and Gate Time menus: each item's value, by item index. */
+    static const std::vector<std::pair<int, juce::String>>& dynamicsValues();
+    static const std::vector<std::pair<int, juce::String>>& gateValues();
     // Note section (piano roll focus with notes selected).
     juce::Label notePitch, noteVelocity, noteLength, notePosition, noteChannel;
     // Track section.
     juce::Label trackName;
     juce::ComboBox trackColour, monitor;
+    // Track parameters, instrument tracks only (P-TRI-9..19, D-W3-13).
+    juce::ComboBox midiIn, midiInChannel, midiOutChannel, delayUnit;
+    juce::Slider trackDelay, trackTranspose, trackVelocity, keyLow, keyHigh, velocityLow, velocityHigh;
+    juce::ToggleButton noTranspose { "No Transpose" };
+    /** MIDI input names offered in the MIDI In menu (tests replace it). */
+    std::function<std::vector<std::string>()> midiDeviceNames;
 
 private:
     /** Holds the controls; its height is what the sections need, at least the panel's. */
@@ -96,10 +118,17 @@ private:
     /** Sets a field on every selected note, as one undo step. */
     void editNotes (std::string_view name, const std::function<void (model::Note&)>& change);
     void setRegionQuantize();
+    /** Changes the selected instrument track's playback parameters (one undo step, or part of a drag). */
+    void setPlayback (const std::function<void (model::TrackPlayback&)>& change);
+    void setMidiInput();
+    void refreshTrackParameters (const model::Track& t);
+    std::vector<juce::Component*> trackParameters();
 
     Studio& studio;
     bool refreshing = false;
     std::set<const juce::Slider*> mixed; // sliders whose regions differ: they read as a dash
     int regionTop = 0, trackTop = 0, noteTop = 0, channelTop = -1;
+    std::vector<std::string> midiDevices; // the MIDI In menu's devices, after "All"
+    Id devicesFor;                        // the track they were listed for
 };
 } // namespace weft::ui

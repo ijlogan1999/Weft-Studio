@@ -6,9 +6,11 @@
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <set>
 #include <map>
+#include <tuple>
 
 namespace weft::commands
 {
@@ -28,6 +30,8 @@ Path sendsPath (const Id& track) { return doc::path ({ keys::tracks, track, "str
 Path tempoPointPath (const Id& id) { return doc::path ({ keys::tempoMap, "points", id }); }
 Path signaturePointPath (const Id& id) { return doc::path ({ keys::signatureMap, "points", id }); }
 Path markerPath (const Id& id) { return doc::path ({ keys::markers, id }); }
+Path keyChangePath (const Id& id) { return doc::path ({ keys::keyChanges, id }); }
+Path sectionPath (const Id& id) { return doc::path ({ keys::sections, id }); }
 
 EditResult ok() { return {}; }
 EditResult wrote (bool success) { return success ? ok() : EditResult::fail ("The document rejected the edit."); }
@@ -62,7 +66,13 @@ std::pair<model::Fade, model::Fade> fitFades (model::Fade in, model::Fade out, S
     return { in, out };
 }
 
-Value fadeValue (const model::Fade& f) { return Value::map().set ("length", f.length).set ("curve", f.curve); }
+Value fadeValue (const model::Fade& f)
+{
+    auto v = Value::map().set ("length", f.length).set ("curve", f.curve);
+    if (f.speed)
+        v.set ("speed", true);
+    return v;
+}
 } // namespace
 
 // Project ---------------------------------------------------------------------
@@ -92,8 +102,8 @@ EditResult Session::setSampleRate (int rate)
 
 EditResult Session::setMetronomeDefaults (const model::MetronomeSettings& settings)
 {
-    if (settings.countInBars < 0 || settings.countInBars > 8)
-        return reject ("Count-in is 0 to 8 bars.");
+    if (settings.countInBars < model::minCountIn || settings.countInBars > model::maxCountIn)
+        return reject ("Count-in is none, 1 to 6 bars, or 1 or 2 beats.");
     if (settings.during != "record" && settings.during != "play" && settings.during != "both")
         return reject ("The metronome plays during record, play or both.");
     return run ("Set Metronome Defaults", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "metronomeDefaults" }), settings.toValue())); });
@@ -237,8 +247,18 @@ EditResult Session::setTrackVolume (const Id& trackId, double volumeDb)
     // anything below -inf dB is silence and stores as -inf.
     if (std::isnan (volumeDb) || volumeDb > 6.0 + 1e-9)
         return reject ("Volume is -inf to +6 dB.");
+    const double target = std::clamp (volumeDb, minusInfinityDb, 6.0);
+    // Group members keep their levels relative to this one (P-GRP-9); from or to -inf they all follow.
+    const double before = projection.tracks.at (trackId)->strip.volumeDb;
+    const bool fromSilence = before <= minusInfinityDb || target <= minusInfinityDb;
+    std::vector<std::pair<Id, double>> others;
+    for (const auto& id : linkedTracks (trackId, &model::Group::linkVolume))
+        others.emplace_back (id, fromSilence ? target : std::clamp (projection.tracks.at (id)->strip.volumeDb + (target - before), minusInfinityDb, 6.0));
     return run ("Volume", [&] (TxnWriter& w) {
-        return wrote (w.put (trackPath (trackId) / "strip" / "volumeDb", Value (std::clamp (volumeDb, minusInfinityDb, 6.0))));
+        bool good = w.put (trackPath (trackId) / "strip" / "volumeDb", Value (target));
+        for (const auto& [id, db] : others)
+            good = good && w.put (trackPath (id) / "strip" / "volumeDb", Value (db));
+        return wrote (good);
     });
 }
 
@@ -248,14 +268,30 @@ EditResult Session::setTrackPan (const Id& trackId, double pan)
         return reject ("That track no longer exists.");
     if (std::isnan (pan) || std::abs (pan) > 1.0 + 1e-9)
         return reject ("Pan is -1 (left) to +1 (right).");
-    return run ("Pan", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "strip" / "pan", Value (std::clamp (pan, -1.0, 1.0)))); });
+    const double target = std::clamp (pan, -1.0, 1.0);
+    const double delta = target - projection.tracks.at (trackId)->strip.pan; // members keep their offsets (P-GRP-12)
+    std::vector<std::pair<Id, double>> others;
+    for (const auto& id : linkedTracks (trackId, &model::Group::linkPan))
+        others.emplace_back (id, std::clamp (projection.tracks.at (id)->strip.pan + delta, -1.0, 1.0));
+    return run ("Pan", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "strip" / "pan", Value (target));
+        for (const auto& [id, p] : others)
+            good = good && w.put (trackPath (id) / "strip" / "pan", Value (p));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackMute (const Id& trackId, bool mute)
 {
     if (! projection.tracks.contains (trackId))
         return reject ("That track no longer exists.");
-    return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "mute", Value (mute))); });
+    const auto others = linkedTracks (trackId, &model::Group::linkMute);
+    return run (mute ? "Mute Track" : "Unmute Track", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "mute", Value (mute));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "mute", Value (mute));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackOff (const Id& trackId, bool off)
@@ -277,13 +313,82 @@ EditResult Session::setTrackHidden (const Id& trackId, bool hidden)
         return reject ("The master can't be hidden.");
     if (t->hidden == hidden)
         return reject (hidden ? "That track is already hidden." : "That track isn't hidden.");
-    return run (hidden ? "Hide Track" : "Unhide Track", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "hidden", Value (hidden))); });
+    const auto others = linkedTracks (trackId, &model::Group::linkHide);
+    return run (hidden ? "Hide Track" : "Unhide Track", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "hidden", Value (hidden));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "hidden", Value (hidden));
+        return wrote (good);
+    });
+}
+
+EditResult Session::setProjectNotes (const std::string& text)
+{
+    if (projection.info.notes == text)
+        return reject ("The notes haven't changed.");
+    return run ("Project Notes", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "notes" }), text.empty() ? Value() : Value (text))); });
+}
+
+EditResult Session::setTrackNotes (const Id& trackId, const std::string& text)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (t->notes == text)
+        return reject ("The notes haven't changed.");
+    return run ("Track Notes", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "notes", text.empty() ? Value() : Value (text))); });
+}
+
+EditResult Session::setSmartControls (const Id& trackId, std::optional<model::SmartControls> controls)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (controls)
+    {
+        if (std::find (std::begin (model::SmartControls::layouts), std::end (model::SmartControls::layouts), controls->layout) == std::end (model::SmartControls::layouts))
+            return reject ("Smart Controls have 4, 8 or 12 knobs.");
+        controls->controls.resize (static_cast<std::size_t> (controls->layout));
+        for (auto& c : controls->controls)
+        {
+            if (c.cc < -1 || c.cc > 127 || c.ccChannel < 0 || c.ccChannel > 16)
+                return reject ("A controller is 0 to 127 on channel 1 to 16.");
+            for (auto& m : c.mappings)
+            {
+                m.min = std::clamp (m.min, 0.0, 1.0);
+                m.max = std::clamp (m.max, 0.0, 1.0);
+            }
+        }
+    }
+    const auto next = controls ? controls->toValue() : Value();
+    const auto now = t->smartControls ? t->smartControls->toValue() : Value();
+    if (next == now)
+        return reject ("The Smart Controls haven't changed.");
+    return run ("Smart Controls", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "smartControls", next)); });
 }
 
 EditResult Session::setShowHiddenTracks (bool show)
 {
     return run (show ? "Show Hidden Tracks" : "Hide Hidden Tracks",
                 [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "showHiddenTracks" }), Value (show))); });
+}
+
+EditResult Session::setPanLaw (double centreDb)
+{
+    if (! model::isValidPanLaw (centreDb))
+        return reject ("The pan law is 0, -3, -4.5 or -6 dB.");
+    if (model::panLawIndex (model().info.panLawDb) == model::panLawIndex (centreDb))
+        return reject ("The project already uses that pan law.");
+    return run ("Set Pan Law", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "panLaw" }), Value (centreDb))); });
+}
+
+EditResult Session::setMidiInputFilter (int filter)
+{
+    if (filter < 0 || (filter & ~model::midiFilter::all) != 0)
+        return reject ("That isn't a MIDI input filter.");
+    if (model().info.midiInputFilter == filter)
+        return reject ("The project already filters that MIDI input.");
+    return run ("Set MIDI Input Filter", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ "midiInputFilter" }), Value (filter))); });
 }
 
 EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
@@ -293,7 +398,45 @@ EditResult Session::setTrackMonitor (const Id& trackId, const std::string& mode)
         return reject ("That track no longer exists.");
     if (mode != "auto" && mode != "on" && mode != "off")
         return reject ("Monitoring is auto, on or off.");
-    return run ("Input Monitoring", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "monitor", Value (mode))); });
+    std::vector<Id> others;
+    for (const auto& id : linkedTracks (trackId, &model::Group::linkInput))
+        if (projection.tracks.at (id)->kind == t->kind)
+            others.push_back (id);
+    return run ("Input Monitoring", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "monitor", Value (mode));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "monitor", Value (mode));
+        return wrote (good);
+    });
+}
+
+EditResult Session::setTrackPlayback (const Id& trackId, const model::TrackPlayback& p)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (t->kind != TrackKind::instrument)
+        return reject ("Track parameters apply to instrument tracks.");
+    const double maxDelay = p.delayInTicks ? model::TrackPlayback::maxDelayTicks : model::TrackPlayback::maxDelayMs;
+    if (p.transpose < -96 || p.transpose > 96 || p.velocityOffset < -99 || p.velocityOffset > 99 || p.keyLow < 0 || p.keyHigh > 127
+        || p.keyLow > p.keyHigh || p.velocityLow < 1 || p.velocityHigh > 127 || p.velocityLow > p.velocityHigh || std::isnan (p.delay)
+        || std::abs (p.delay) > maxDelay || p.outChannel < 0 || p.outChannel > 16)
+        return reject ("Those track parameters are out of range.");
+    return run ("Track Parameters", [&] (TxnWriter& w) {
+        const auto path = trackPath (trackId) / "playback";
+        const auto existing = w.doc().get (path);
+        if (! existing || ! existing->isMap())
+            return wrote (w.put (path, p.toValue()));
+        // Field by field, so two people changing different parameters both keep theirs.
+        const auto now = p.toValue();
+        const auto before = t->playback.toValue();
+        bool good = true;
+        for (const auto* key : { "transpose", "velocityOffset", "keyLow", "keyHigh", "velocityLow", "velocityHigh", "delay", "delayInTicks", "noTranspose",
+                                 "outChannel" })
+            if (! (now[key] == before[key]))
+                good = good && w.put (path / key, now[key]);
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackAutomationMode (const Id& trackId, const std::string& mode)
@@ -302,7 +445,13 @@ EditResult Session::setTrackAutomationMode (const Id& trackId, const std::string
         return reject ("That track no longer exists.");
     if (mode != "off" && mode != "read" && mode != "touch" && mode != "latch" && mode != "write")
         return reject ("Automation mode is off, read, touch, latch or write.");
-    return run ("Automation Mode", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "automationMode", Value (mode))); });
+    const auto others = linkedTracks (trackId, &model::Group::linkAutomationMode);
+    return run ("Automation Mode", [&] (TxnWriter& w) {
+        bool good = w.put (trackPath (trackId) / "automationMode", Value (mode));
+        for (const auto& id : others)
+            good = good && w.put (trackPath (id) / "automationMode", Value (mode));
+        return wrote (good);
+    });
 }
 
 EditResult Session::setTrackInput (const Id& trackId, const model::InputAssignment& input)
@@ -330,6 +479,8 @@ EditResult Session::setTrackOutput (const Id& trackId, const Id& busId)
         const auto* bus = projection.track (busId);
         if (bus == nullptr || bus->kind != TrackKind::bus)
             return reject ("Outputs can only go to the master or a bus.");
+        if (bus->isFolderStack())
+            return reject ("A folder stack's main track carries no sound.");
         if (wouldCycle (trackId, busId, model::RoutingEdge { trackId, {}, {} }.key()))
             return reject ("That output would create a feedback loop.");
     }
@@ -474,16 +625,19 @@ EditResult Session::trimRegionStart (const Id& regionId, Ticks newStart)
     }
     auto delta = static_cast<Samples> (
         std::llround (projection.tempo.tickToSample (static_cast<double> (newStart)) - projection.tempo.tickToSample (static_cast<double> (r->start))));
+    // The source moves by the timeline distance at the region's speed and stretch (D-UI-51).
+    auto sourceDelta = r->audio.sourceLength (delta);
     // Dragging past the start of the file stops there (W-3d step 3).
-    if (r->audio.sourceOffset + delta < 0)
+    if (r->audio.sourceOffset + sourceDelta < 0)
     {
-        delta = -r->audio.sourceOffset;
+        sourceDelta = -r->audio.sourceOffset;
+        delta = r->audio.timelineLength (sourceDelta);
         newStart = static_cast<Ticks> (std::llround (
             projection.tempo.sampleToTick (projection.tempo.tickToSample (static_cast<double> (r->start)) + static_cast<double> (delta))));
         if (newStart < 0)
             return reject ("Regions can't start before the project start.");
     }
-    const auto newOffset = r->audio.sourceOffset + delta;
+    const auto newOffset = r->audio.sourceOffset + sourceDelta;
     const auto newLength = r->length - delta;
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
@@ -506,7 +660,7 @@ EditResult Session::trimAudioStartSamples (const Id& regionId, Samples newOffset
     if (r->isMidi)
         return reject ("Only audio regions trim by samples.");
     newOffset = std::max<Samples> (newOffset, 0);
-    const auto delta = newOffset - r->audio.sourceOffset;
+    const auto delta = r->audio.timelineLength (newOffset - r->audio.sourceOffset);
     const auto newLength = r->length - delta;
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
@@ -521,6 +675,21 @@ EditResult Session::trimAudioStartSamples (const Id& regionId, Samples newOffset
                  && w.put (base / "audio" / "sourceOffset", Value (newOffset));
         if (fadeIn.length != r->audio.fadeIn.length || fadeOut.length != r->audio.fadeOut.length)
             good = good && w.put (base / "audio" / "fadeIn", fadeValue (fadeIn)) && w.put (base / "audio" / "fadeOut", fadeValue (fadeOut));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::slipRegion (const Id& regionId, std::int64_t newOffset)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (! r->isMidi && newOffset < 0)
+        return reject ("The region is at the start of its file.");
+    const auto base = regionPath (regionId);
+    return run ("Slip Region", [&] (TxnWriter& w) {
+        bool good = r->isMidi ? w.put (base / "midi" / "sequenceOffset", Value (newOffset)) : w.put (base / "audio" / "sourceOffset", Value (newOffset));
         stamp (w, regionId);
         return wrote (good);
     });
@@ -545,8 +714,9 @@ EditResult Session::trimRegionLength (const Id& regionId, std::int64_t newLength
     if (newLength < model::minAudioRegionLength)
         return reject ("The region would be too short.");
     // Extending past the end of the file stops at its end (W-3d step 3, AT-ARR-8).
-    if (const auto* m = projection.mediaRef (r->audio.media); m != nullptr && r->audio.sourceOffset + newLength > m->lengthSamples)
-        newLength = std::max<std::int64_t> (m->lengthSamples - r->audio.sourceOffset, model::minAudioRegionLength);
+    if (const auto* m = projection.mediaRef (r->audio.media); m != nullptr && r->audio.sourceOffset + r->audio.sourceLength (newLength) > m->lengthSamples)
+        newLength = std::max<std::int64_t> (static_cast<Samples> (std::floor (static_cast<double> (m->lengthSamples - r->audio.sourceOffset) / r->audio.sourcePerSample())),
+                                            model::minAudioRegionLength);
     const auto [fadeIn, fadeOut] = fitFades (r->audio.fadeIn, r->audio.fadeOut, newLength);
     return run ("Trim Region", [&] (TxnWriter& w) {
         bool good = w.put (base / "length", Value (newLength));
@@ -629,7 +799,7 @@ std::optional<Id> Session::splitRegion (const Id& regionId, Ticks at)
         return std::nullopt;
     }
     right.length = r->length - leftLength;
-    right.audio.sourceOffset = r->audio.sourceOffset + leftLength;
+    right.audio.sourceOffset = r->audio.sourceOffset + r->audio.sourceLength (leftLength);
     right.audio.fadeIn.length = 0;
     right.audio.fadeOut.length = std::min (r->audio.fadeOut.length, right.length);
     const auto leftFadeIn = std::min (r->audio.fadeIn.length, leftLength);
@@ -716,7 +886,10 @@ EditResult Session::joinRegions (const std::vector<Id>& regionIds)
         const auto* b = rs[i];
         const auto aEnd = std::llround (projection.tempo.tickToSample (static_cast<double> (a->start))) + a->length;
         const auto bStart = std::llround (projection.tempo.tickToSample (static_cast<double> (b->start)));
-        if (b->audio.media != first->audio.media || b->audio.sourceOffset != a->audio.sourceOffset + a->length || std::llabs (bStart - aEnd) > 1)
+        const bool samePlayback = b->audio.transpose == a->audio.transpose && b->audio.fineTune == a->audio.fineTune
+                               && std::abs (b->audio.speed - a->audio.speed) < 1e-9 && std::abs (b->audio.stretch - a->audio.stretch) < 1e-9;
+        if (b->audio.media != first->audio.media || ! samePlayback
+            || std::llabs (b->audio.sourceOffset - (a->audio.sourceOffset + a->audio.sourceLength (a->length))) > 1 || std::llabs (bStart - aEnd) > 1)
             return reject ("Only touching regions from the same audio file can be joined.");
         total += b->length;
     }
@@ -831,11 +1004,11 @@ EditResult Session::setRegionQuantize (const Id& regionId, std::optional<model::
         return reject ("That region no longer exists.");
     if (! r->isMidi)
         return reject ("Quantize applies to MIDI regions.");
-    if (q && (q->grid <= 0 || q->strength < 0 || q->strength > 1 || q->swing < 0 || q->swing > 1))
+    if (q && (q->grid <= 0 || q->strength < 0 || q->strength > 1 || q->swing < 0 || q->swing > 1 || std::abs (q->range) > 3840 || std::abs (q->flam) > 960))
         return reject ("Quantize settings are out of range.");
     Value v;
     if (q)
-        v = Value::map().set ("grid", q->grid).set ("strength", q->strength).set ("swing", q->swing);
+        v = q->toValue();
     return run ("Region Quantize", [&] (TxnWriter& w) {
         bool good = w.put (regionPath (regionId) / "midi" / "quantize", v);
         stamp (w, regionId);
@@ -859,6 +1032,97 @@ EditResult Session::setRegionTranspose (const Id& regionId, int semitones)
     });
 }
 
+EditResult Session::setAudioRegionPitch (const Id& regionId, int semitones, int cents)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (r->isMidi)
+        return reject ("Use the MIDI transpose for MIDI regions.");
+    if (semitones < -24 || semitones > 24)
+        return reject ("Transpose is -24 to +24 semitones.");
+    if (cents < -50 || cents > 50)
+        return reject ("Fine Tune is -50 to +50 cents.");
+    const auto base = regionPath (regionId) / "audio";
+    return run ("Transpose", [&] (TxnWriter& w) {
+        bool good = w.put (base / "transpose", Value (semitones)) && w.put (base / "fineTune", Value (cents));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+namespace
+{
+/** The region's length as `audio` plays it, kept to at least the shortest region; its fades scaled and fitted. */
+struct Rescaled
+{
+    Samples length;
+    model::Fade fadeIn, fadeOut;
+};
+Rescaled rescale (const model::Region& r, double factor)
+{
+    Rescaled out;
+    out.length = std::max<Samples> (model::minAudioRegionLength, static_cast<Samples> (std::llround (static_cast<double> (r.length) * factor)));
+    auto in = r.audio.fadeIn, fadeOut = r.audio.fadeOut;
+    in.length = static_cast<Samples> (std::llround (static_cast<double> (in.length) * factor));
+    fadeOut.length = static_cast<Samples> (std::llround (static_cast<double> (fadeOut.length) * factor));
+    std::tie (out.fadeIn, out.fadeOut) = fitFades (in, fadeOut, out.length);
+    return out;
+}
+} // namespace
+
+EditResult Session::setAudioRegionSpeed (const Id& regionId, double speed)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (r->isMidi)
+        return reject ("Speed applies to audio regions.");
+    if (std::isnan (speed) || speed < model::AudioRegionData::minRate - 1e-9 || speed > model::AudioRegionData::maxRate + 1e-9)
+        return reject ("Speed is 25% to 400%.");
+    speed = std::clamp (speed, model::AudioRegionData::minRate, model::AudioRegionData::maxRate);
+    const auto scaled = rescale (*r, r->audio.speed / speed);
+    const auto base = regionPath (regionId);
+    return run ("Region Speed", [&] (TxnWriter& w) {
+        bool good = w.put (base / "audio" / "speed", Value (speed)) && w.put (base / "length", Value (scaled.length))
+                 && w.put (base / "audio" / "fadeIn", fadeValue (scaled.fadeIn)) && w.put (base / "audio" / "fadeOut", fadeValue (scaled.fadeOut));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::stretchAudioRegion (const Id& regionId, Samples newLength, bool keepEnd)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr)
+        return reject ("That region no longer exists.");
+    if (r->isMidi)
+        return reject ("Time stretch applies to audio regions.");
+    if (r->length <= 0)
+        return reject ("The region is empty.");
+    // The stretch stays within its range; the length follows it.
+    const auto ratio = static_cast<double> (newLength) / static_cast<double> (r->length);
+    const auto stretch = std::clamp (r->audio.stretch * ratio, model::AudioRegionData::minRate, model::AudioRegionData::maxRate);
+    const auto scaled = rescale (*r, stretch / r->audio.stretch);
+    auto newStart = r->start;
+    if (keepEnd)
+    {
+        const auto endSample = projection.tempo.tickToSample (static_cast<double> (r->start)) + static_cast<double> (r->length);
+        newStart = static_cast<Ticks> (std::llround (projection.tempo.sampleToTick (endSample - static_cast<double> (scaled.length))));
+        if (newStart < 0)
+            return reject ("Regions can't start before the project start.");
+    }
+    const auto base = regionPath (regionId);
+    return run ("Time Stretch", [&] (TxnWriter& w) {
+        bool good = w.put (base / "audio" / "stretch", Value (stretch)) && w.put (base / "length", Value (scaled.length))
+                 && w.put (base / "audio" / "fadeIn", fadeValue (scaled.fadeIn)) && w.put (base / "audio" / "fadeOut", fadeValue (scaled.fadeOut));
+        if (newStart != r->start)
+            good = good && w.put (base / "start", Value (newStart));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
 EditResult Session::setRegionDelay (const Id& regionId, double delayMs)
 {
     if (projection.region (regionId) == nullptr)
@@ -866,7 +1130,60 @@ EditResult Session::setRegionDelay (const Id& regionId, double delayMs)
     if (std::isnan (delayMs) || delayMs < -500.0 || delayMs > 500.0)
         return reject ("Delay is -500 to +500 ms.");
     return run ("Region Delay", [&] (TxnWriter& w) {
-        bool good = w.put (regionPath (regionId) / "delayMs", Value (delayMs));
+        bool good = w.put (regionPath (regionId) / "delayMs", Value (delayMs)) && w.put (regionPath (regionId) / "delayInTicks", Value (false));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionDelayTicks (const Id& regionId, Ticks ticks)
+{
+    if (projection.region (regionId) == nullptr)
+        return reject ("That region no longer exists.");
+    if (ticks < -model::Region::maxDelayTicks || ticks > model::Region::maxDelayTicks)
+        return reject ("Delay is -960 to +960 ticks.");
+    return run ("Region Delay", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "delayTicks", Value (ticks)) && w.put (regionPath (regionId) / "delayInTicks", Value (true));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionDynamics (const Id& regionId, int percent)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return reject ("Dynamics applies to MIDI regions.");
+    if (percent < 0 || percent > model::MidiRegionData::maxDynamics)
+        return reject ("Dynamics is 0 to 300%.");
+    return run ("Region Dynamics", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "dynamics", Value (percent));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionGate (const Id& regionId, int gate)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return reject ("Gate time applies to MIDI regions.");
+    if (gate < model::MidiRegionData::gateLegato || gate > model::MidiRegionData::maxGate)
+        return reject ("Gate time is Fixed, Legato or 1 to 200%.");
+    return run ("Region Gate Time", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "gate", Value (gate));
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
+EditResult Session::setRegionClipLength (const Id& regionId, bool clip)
+{
+    const auto* r = projection.region (regionId);
+    if (r == nullptr || ! r->isMidi)
+        return reject ("Clip Length applies to MIDI regions.");
+    return run ("Region Clip Length", [&] (TxnWriter& w) {
+        bool good = w.put (regionPath (regionId) / "midi" / "clipLength", Value (clip));
         stamp (w, regionId);
         return wrote (good);
     });
@@ -893,6 +1210,35 @@ EditResult Session::addMedia (const model::MediaRef& media)
     if (media.hash.empty())
         return reject ("Media needs a content hash.");
     return run ("Add Audio File", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ keys::media, media.hash }), media.toValue())); });
+}
+
+EditResult Session::renameMedia (const std::string& hash, const std::string& name)
+{
+    if (projection.mediaRef (hash) == nullptr)
+        return reject ("That audio file isn't in the project.");
+    if (name.empty())
+        return reject ("Audio files need a name.");
+    return run ("Rename Audio File", [&] (TxnWriter& w) { return wrote (w.put (doc::path ({ keys::media, hash, "originalName" }), Value (name))); });
+}
+
+EditResult Session::removeMedia (const std::vector<std::string>& hashes)
+{
+    if (hashes.empty())
+        return reject ("Select audio files.");
+    for (const auto& h : hashes)
+    {
+        if (projection.mediaRef (h) == nullptr)
+            return reject ("That audio file isn't in the project.");
+        for (const auto& [id, r] : projection.regions)
+            if (! r->isMidi && r->audio.media == h)
+                return reject ("A region still plays that file.");
+    }
+    return run (hashes.size() == 1 ? "Delete File" : "Delete Files", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto& h : hashes)
+            good = good && w.remove (doc::path ({ keys::media, h }));
+        return wrote (good);
+    });
 }
 
 // Notes --------------------------------------------------------------------------
@@ -1064,7 +1410,7 @@ std::optional<Id> Session::addSend (const Id& trackId, const Id& busId, double l
     const auto* bus = projection.track (busId);
     if (t == nullptr || ! projection.tracks.contains (trackId) || t->kind == TrackKind::master)
         error = "That track can't have sends.";
-    else if (bus == nullptr || bus->kind != TrackKind::bus)
+    else if (bus == nullptr || bus->kind != TrackKind::bus || bus->isFolderStack())
         error = "Sends go to a bus.";
     else if (t->strip.sends.size() >= static_cast<std::size_t> (model::maxSends))
         error = "A channel strip holds up to " + std::to_string (model::maxSends) + " sends.";
@@ -1089,8 +1435,24 @@ EditResult Session::setSendLevel (const Id& trackId, const Id& sendId, double le
     const auto* t = projection.track (trackId);
     if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
         return reject ("That send no longer exists.");
+    const double target = std::clamp (levelDb, minusInfinityDb, 6.0);
+    // Linked send slots keep their levels relative to this one (P-GRP-15).
+    const auto slot = std::find_if (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; });
+    const double before = slot->levelDb;
+    const bool fromSilence = before <= minusInfinityDb || target <= minusInfinityDb;
+    std::vector<std::tuple<Id, Id, double>> others;
+    for (const auto& id : linkedSendTracks (trackId, static_cast<int> (slot - t->strip.sends.begin())))
+    {
+        const auto& sends = projection.tracks.at (id)->strip.sends;
+        const auto index = static_cast<std::size_t> (slot - t->strip.sends.begin());
+        if (index < sends.size())
+            others.emplace_back (id, sends[index].id, fromSilence ? target : std::clamp (sends[index].levelDb + (target - before), minusInfinityDb, 6.0));
+    }
     return run ("Send Level", [&] (TxnWriter& w) {
-        return wrote (w.put (sendsPath (trackId) / PathSegment::id (sendId) / "levelDb", Value (std::clamp (levelDb, minusInfinityDb, 6.0))));
+        bool good = w.put (sendsPath (trackId) / PathSegment::id (sendId) / "levelDb", Value (target));
+        for (const auto& [id, send, db] : others)
+            good = good && w.put (sendsPath (id) / PathSegment::id (send) / "levelDb", Value (db));
+        return wrote (good);
     });
 }
 
@@ -1100,7 +1462,7 @@ EditResult Session::setSendTarget (const Id& trackId, const Id& sendId, const Id
     if (t == nullptr || std::none_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.id == sendId; }))
         return reject ("That send no longer exists.");
     const auto* bus = projection.track (busId);
-    if (bus == nullptr || bus->kind != TrackKind::bus)
+    if (bus == nullptr || bus->kind != TrackKind::bus || bus->isFolderStack())
         return reject ("Sends go to a bus.");
     if (std::any_of (t->strip.sends.begin(), t->strip.sends.end(), [&] (const auto& s) { return s.targetBusId == busId && s.id != sendId; }))
         return reject ("This channel already sends to " + bus->name + ".");
@@ -1631,6 +1993,16 @@ EditResult Session::renameMarker (const Id& markerId, const std::string& name)
     return run ("Rename Marker", [&] (TxnWriter& w) { return wrote (w.put (markerPath (markerId) / "name", Value (name))); });
 }
 
+EditResult Session::setMarkerText (const Id& markerId, const std::string& text)
+{
+    const auto it = projection.markers.find (markerId);
+    if (it == projection.markers.end())
+        return reject ("That marker no longer exists.");
+    if (it->second->text == text)
+        return reject ("The text hasn't changed.");
+    return run ("Marker Text", [&] (TxnWriter& w) { return wrote (w.put (markerPath (markerId) / "text", text.empty() ? Value() : Value (text))); });
+}
+
 EditResult Session::setMarkerColor (const Id& markerId, std::optional<model::Color> color)
 {
     if (! projection.markers.contains (markerId))
@@ -1645,6 +2017,271 @@ EditResult Session::deleteMarker (const Id& markerId)
     if (! projection.markers.contains (markerId))
         return reject ("That marker no longer exists.");
     return run ("Delete Marker", [&] (TxnWriter& w) { return wrote (w.remove (markerPath (markerId))); });
+}
+
+// Key track (D-UI-44) -----------------------------------------------------------------
+
+std::optional<Id> Session::addKeyChange (Ticks pos, const model::KeySignature& key)
+{
+    if (pos <= 0)
+    {
+        error = "The key at the project start is the project key: set it in Project Settings or the key display.";
+        return std::nullopt;
+    }
+    if (key.tonic < 0 || key.tonic > 11)
+    {
+        error = "The key's tonic is a pitch class from 0 (C) to 11 (B).";
+        return std::nullopt;
+    }
+    for (const auto& [id, k] : projection.keyChanges)
+        if (k->pos == pos)
+        {
+            error = "There is already a key change there.";
+            return std::nullopt;
+        }
+    model::KeyChange k;
+    k.id = newId();
+    k.pos = pos;
+    k.key = key;
+    return runCreate ("Add Key Change", k.id, [&] (TxnWriter& w) {
+        // Projects from before the Key track have no collection yet.
+        if (! w.doc().get (doc::path ({ keys::keyChanges })) && ! w.put (doc::path ({ keys::keyChanges }), Value::map()))
+            return wrote (false);
+        return wrote (w.put (keyChangePath (k.id), k.toValue()));
+    });
+}
+
+EditResult Session::setKeyChange (const Id& changeId, Ticks pos, const model::KeySignature& key)
+{
+    const auto it = projection.keyChanges.find (changeId);
+    if (it == projection.keyChanges.end())
+        return reject ("That key change no longer exists.");
+    if (pos <= 0)
+        return reject ("A key change goes after the project start.");
+    if (key.tonic < 0 || key.tonic > 11)
+        return reject ("The key's tonic is a pitch class from 0 (C) to 11 (B).");
+    for (const auto& [id, k] : projection.keyChanges)
+        if (id != changeId && k->pos == pos)
+            return reject ("There is already a key change there.");
+    model::KeyChange k = *it->second;
+    k.pos = pos;
+    k.key = key;
+    return run ("Key Change", [&] (TxnWriter& w) { return wrote (w.put (keyChangePath (changeId), k.toValue())); });
+}
+
+EditResult Session::deleteKeyChange (const Id& changeId)
+{
+    if (! projection.keyChanges.contains (changeId))
+        return reject ("That key change no longer exists.");
+    return run ("Delete Key Change", [&] (TxnWriter& w) { return wrote (w.remove (keyChangePath (changeId))); });
+}
+
+EditResult Session::setKeyAt (Ticks t, const model::KeySignature& key)
+{
+    const auto* change = projection.keyChangeAt (t);
+    if (change == nullptr)
+        return setKey (key);
+    if (change->key == key)
+        return reject ("The key there is already " + key.name() + ".");
+    return setKeyChange (change->id, change->pos, key);
+}
+
+// Arrangement track (D-UI-45) ----------------------------------------------------------
+
+namespace
+{
+bool overlapsSection (const model::ProjectModel& m, const Id& except, Ticks start, Ticks end)
+{
+    for (const auto& [id, s] : m.sections)
+        if (id != except && start < s->end() && s->start < end)
+            return true;
+    return false;
+}
+} // namespace
+
+std::optional<Id> Session::addSection (Ticks start, Ticks length, const std::string& name)
+{
+    if (start < 0 || length <= 0)
+    {
+        error = "A section starts at or after the project start and has a length.";
+        return std::nullopt;
+    }
+    if (overlapsSection (projection, {}, start, start + length))
+    {
+        error = "Sections can't overlap.";
+        return std::nullopt;
+    }
+    model::Section s;
+    s.id = newId();
+    s.start = start;
+    s.length = length;
+    static const char* const names[] = { "Intro", "Verse", "Chorus", "Bridge", "Outro" };
+    s.name = name.empty() ? names[std::min<std::size_t> (projection.sections.size(), std::size (names) - 1)] : name;
+    return runCreate ("Add Section", s.id, [&] (TxnWriter& w) {
+        if (! w.doc().get (doc::path ({ keys::sections })) && ! w.put (doc::path ({ keys::sections }), Value::map()))
+            return wrote (false);
+        return wrote (w.put (sectionPath (s.id), s.toValue()));
+    });
+}
+
+EditResult Session::renameSection (const Id& sectionId, const std::string& name)
+{
+    if (! projection.sections.contains (sectionId))
+        return reject ("That section no longer exists.");
+    if (name.empty())
+        return reject ("A section needs a name.");
+    return run ("Rename Section", [&] (TxnWriter& w) { return wrote (w.put (sectionPath (sectionId) / "name", Value (name))); });
+}
+
+EditResult Session::setSectionColor (const Id& sectionId, std::optional<model::Color> color)
+{
+    if (! projection.sections.contains (sectionId))
+        return reject ("That section no longer exists.");
+    if (color && color->rgb.empty() && (color->palette < 0 || color->palette > 23))
+        return reject ("Pick one of the palette colors.");
+    return run ("Section Color", [&] (TxnWriter& w) { return wrote (w.put (sectionPath (sectionId) / "color", color ? color->toValue() : Value())); });
+}
+
+EditResult Session::setSectionRange (const Id& sectionId, Ticks start, Ticks length)
+{
+    const auto it = projection.sections.find (sectionId);
+    if (it == projection.sections.end())
+        return reject ("That section no longer exists.");
+    if (start < 0 || length <= 0)
+        return reject ("A section starts at or after the project start and has a length.");
+    if (overlapsSection (projection, sectionId, start, start + length))
+        return reject ("Sections can't overlap.");
+    return run ("Resize Section", [&] (TxnWriter& w) {
+        return wrote (w.put (sectionPath (sectionId) / "start", Value (start)) && w.put (sectionPath (sectionId) / "length", Value (length)));
+    });
+}
+
+EditResult Session::deleteSection (const Id& sectionId)
+{
+    if (! projection.sections.contains (sectionId))
+        return reject ("That section no longer exists.");
+    return run ("Delete Section", [&] (TxnWriter& w) { return wrote (w.remove (sectionPath (sectionId))); });
+}
+
+EditResult Session::moveSection (const Id& sectionId, Ticks to, bool copy)
+{
+    const auto it = projection.sections.find (sectionId);
+    if (it == projection.sections.end())
+        return reject ("That section no longer exists.");
+    const auto original = *it->second; // by value: the edits below re-read the model
+    const auto a = original.start, b = original.end(), len = b - a;
+    bool insideOne = to < 0;
+    for (const auto& [id, other] : projection.sections)
+        insideOne = insideOne || (to > other->start && to < other->end());
+    if (insideOne)
+        return reject ("Drop the section at the start or end of another section.");
+    if (! copy && (to == a || to == b))
+        return {};
+    const auto allRegions = [this] {
+        std::vector<Id> out;
+        for (const auto& [id, r] : projection.regions)
+            out.push_back (id);
+        return out;
+    };
+    const auto regionsStarting = [this] (Ticks from, Ticks until) {
+        std::vector<Id> out;
+        for (const auto& [id, r] : projection.regions)
+            if (r->start >= from && r->start < until)
+                out.push_back (id);
+        return out;
+    };
+    beginGesture (copy ? "Copy Section" : "Move Section");
+    // Nothing crosses an edge of the section or the drop point.
+    for (const auto at : { a, b, to })
+        if (! projection.regions.empty())
+            splitRegionsAt (allRegions(), at);
+    // Where each region, marker, key change and section starting at t goes.
+    const auto shifted = [&] (Ticks t) -> Ticks {
+        if (copy)
+            return t >= to ? t + len : t;
+        if (t >= a && t < b)
+            return t + (to > b ? to - b : to - a);
+        if (to > b && t >= b && t < to)
+            return t - len;
+        if (to < a && t >= to && t < a)
+            return t + len;
+        return t;
+    };
+    bool ok = true;
+    std::string failure;
+    const auto step = [&] (EditResult r) {
+        if (! r)
+        {
+            ok = false;
+            failure = r.error;
+        }
+    };
+    const auto moveRange = [&] (Ticks from, Ticks until, Ticks delta) {
+        if (const auto moving = regionsStarting (from, until); ok && ! moving.empty() && delta != 0)
+            step (moveRegions (moving, delta, 0));
+    };
+    // The section's own regions, as they were before any shift (copies are made from them).
+    const auto inside = regionsStarting (a, b);
+    if (copy)
+        moveRange (to, std::numeric_limits<Ticks>::max(), len);
+    else if (to > b)
+    {
+        const auto between = regionsStarting (b, to);
+        if (! inside.empty())
+            step (moveRegions (inside, to - b, 0));
+        if (ok && ! between.empty())
+            step (moveRegions (between, -len, 0));
+    }
+    else
+    {
+        const auto between = regionsStarting (to, a);
+        if (! inside.empty())
+            step (moveRegions (inside, to - a, 0));
+        if (ok && ! between.empty())
+            step (moveRegions (between, len, 0));
+    }
+    if (ok && copy && ! inside.empty())
+    {
+        // The originals may have shifted with everything after the drop point.
+        const auto from = a >= to ? a + len : a;
+        if (copyRegions (inside, to - from, 0).empty())
+        {
+            ok = false;
+            failure = error;
+        }
+    }
+    if (ok)
+    {
+        // Markers, key changes and the sections themselves, all at once (no overlaps on the way).
+        const auto result = run (copy ? "Copy Section" : "Move Section", [&] (TxnWriter& w) {
+            bool good = true;
+            for (const auto& [id, m] : projection.markers)
+                if (const auto t = shifted (m->pos); t != m->pos)
+                    good = good && w.put (markerPath (id) / "pos", Value (t));
+            for (const auto& [id, k] : projection.keyChanges)
+                if (const auto t = shifted (k->pos); t != k->pos)
+                    good = good && w.put (keyChangePath (id) / "pos", Value (t));
+            for (const auto& [id, s] : projection.sections)
+                if (const auto t = shifted (s->start); t != s->start)
+                    good = good && w.put (sectionPath (id) / "start", Value (t));
+            if (copy)
+            {
+                auto twin = original;
+                twin.id = newId();
+                twin.start = to;
+                good = good && w.put (sectionPath (twin.id), twin.toValue());
+            }
+            return wrote (good);
+        });
+        step (result);
+    }
+    if (! ok)
+    {
+        cancelGesture();
+        return reject (failure.empty() ? "The section couldn't move." : failure);
+    }
+    endGesture();
+    return {};
 }
 
 // Transport displays (F-TRN-9, 10, 20) ------------------------------------------------

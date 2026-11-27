@@ -103,6 +103,8 @@ enum class Type
     monoCounter // 20, Medium: the transport counter
 };
 juce::Font font (Type);
+/** A type style at a height of its own, for displays that grow with their window (the big displays). */
+juce::Font fontAtHeight (Type, float height);
 /** Upper-cases and letter-spaces a caption the way `Type::caption` is meant to read. */
 juce::String captionText (const juce::String&);
 
@@ -133,6 +135,9 @@ juce::Path record();
 juce::Path cycle();
 juce::Path metronome();
 juce::Path lock();
+/** A track kind's icon (Track Icons, D-UI-37): 0 audio (a waveform), 1 instrument (keys), 2 bus (merging lines),
+    3 master (a level bar). */
+juce::Path track (int kind);
 } // namespace icon
 
 /** WCAG 2 contrast ratio of two opaque colours (1..21). */
@@ -214,6 +219,8 @@ public:
     /** Switches theme and repaints everything (no restart). */
     void setDark (bool shouldBeDark);
     juce::LookAndFeel& lookAndFeel();
+    /** Settings › View › Wide playhead (D-UI-41). */
+    bool widePlayhead = false;
 
 private:
     Theme();

@@ -46,4 +46,11 @@ MediaPool::Audio MediaPool::find (const std::string& hash) const
     const auto it = pool.find (hash);
     return it == pool.end() ? nullptr : it->second;
 }
+std::vector<std::string> MediaPool::keys() const
+{
+    std::vector<std::string> out;
+    for (const auto& [key, audio] : pool)
+        out.push_back (key);
+    return out;
+}
 } // namespace weft::engine

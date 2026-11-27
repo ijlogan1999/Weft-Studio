@@ -43,6 +43,14 @@ std::string describe (const Path& p)
         return "an automation lane";
     if (c == model::keys::markers)
         return "a marker";
+    if (c == model::keys::keyChanges)
+        return "a key change";
+    if (c == model::keys::sections)
+        return "a section";
+    if (c == model::keys::groups)
+        return "a group";
+    if (c == model::keys::vcas)
+        return "a VCA";
     if (c == model::keys::tempoMap)
         return "a tempo change";
     if (c == model::keys::signatureMap)
@@ -117,6 +125,10 @@ std::optional<Session> Session::createNew (const NewProjectOptions& options, Use
                      .set (model::keys::signatureMap,
                            Value::map().set ("points", Value::map().set ("initial", Value::map().set ("bar", 0).set ("numerator", 4).set ("denominator", 4))))
                      .set (model::keys::markers, Value::map())
+                     .set (model::keys::keyChanges, Value::map())
+                     .set (model::keys::sections, Value::map())
+                     .set (model::keys::groups, Value::map())
+                     .set (model::keys::vcas, Value::map())
                      .set ("cycle", model::TimeRange {}.toValue())
                      .set ("punch", model::TimeRange {}.toValue())
                      .set ("endMarker", Value())
@@ -387,6 +399,22 @@ void Session::cancelGesture()
     gesture.reset();
     doc.rollback();
     refreshFor (txn);
+}
+
+std::vector<std::string> Session::undoNames() const
+{
+    std::vector<std::string> out;
+    for (const auto& t : undoStack)
+        out.push_back (t.name);
+    return out;
+}
+
+std::vector<std::string> Session::redoNames() const
+{
+    std::vector<std::string> out;
+    for (const auto& t : redoStack)
+        out.push_back (t.name);
+    return out;
 }
 
 UndoResult Session::undo() { return invert (undoStack, redoStack, "Undo"); }

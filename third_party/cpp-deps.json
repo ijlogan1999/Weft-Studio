@@ -61,5 +61,21 @@
     "license_files": ["LICENSE.txt"],
     "ships": true,
     "purpose": "Typeface for time, tempo and level readouts, embedded in the app"
+  },
+  "SignalsmithLinear": {
+    "git": "https://github.com/Signalsmith-Audio/linear.git",
+    "tag": "0.6.4",
+    "license": "MIT",
+    "license_files": ["LICENSE.txt"],
+    "ships": true,
+    "purpose": "FFT and vector maths used by Signalsmith Stretch (headers only)"
+  },
+  "SignalsmithStretch": {
+    "git": "https://github.com/Signalsmith-Audio/signalsmith-stretch",
+    "tag": "1.4.0",
+    "license": "MIT",
+    "license_files": ["LICENSE.txt"],
+    "ships": true,
+    "purpose": "Pitch shifting and time stretching of audio regions (headers only)"
   }
 }

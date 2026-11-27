@@ -71,6 +71,28 @@ public:
     }
 
     const Cmd command;
+    /** Right-click opens this menu instead of running the command (D-UI-35); empty: right-click clicks. */
+    std::function<juce::PopupMenu()> popupMenu;
+    std::function<void (int)> popupPicked;
+    void showPopup()
+    {
+        if (! popupMenu)
+            return;
+        juce::Component::SafePointer<CommandButton> self (this);
+        popupMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [self] (int item) {
+            if (self != nullptr && item != 0 && self->popupPicked)
+                self->popupPicked (item);
+        });
+    }
+    /** The last click came from the popup-menu button (right-click, or Ctrl+click on a Mac). */
+    bool popupClick = false;
+
+    using juce::TextButton::clicked;
+    void clicked (const juce::ModifierKeys& mods) override
+    {
+        popupClick = mods.isPopupMenu();
+        juce::TextButton::clicked (mods);
+    }
 
 private:
     juce::Path icon;
@@ -91,7 +113,7 @@ public:
     /** The pointer is over `other` during a drag from this button. Tests call it directly. */
     void swipeOver (SwipeButton* other)
     {
-        if (other == nullptr || other == this || ! setTrackState || roleOf (*other) != roleOf (*this) || ! other->isEnabled() || ! other->isVisible())
+        if (other == nullptr || other == this || ! setTrackState || roleOf (*other) != roleOf (*this) || other->getButtonText() != getButtonText() || ! other->isEnabled() || ! other->isVisible())
             return;
         for (const auto& done : swiped)
             if (done == other)
@@ -158,4 +180,17 @@ inline void setSilencedBySolo (juce::Button& b, bool silenced)
     }
 }
 inline bool silencedBySolo (const juce::Button& b) { return static_cast<bool> (b.getProperties()["weftImplied"]); }
+/** A small modal box with one text field; `done` gets the text when OK is pressed. */
+inline void askForText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)
+{
+    auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("text", current);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done = std::move (done)] (int result) {
+                            if (result == 1)
+                                done (w->getTextEditorContents ("text"));
+                        }),
+                        true);
+}
 } // namespace weft::ui

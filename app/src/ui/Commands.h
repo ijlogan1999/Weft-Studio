@@ -5,6 +5,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -57,7 +58,60 @@ enum class Cmd
     // Search and Add Plug-in (D-W6-11)
     searchPlugins,
     // Delete Unused Tracks (D-UI-32)
-    deleteUnusedTracks
+    deleteUnusedTracks,
+    // D-UI-34: a track like the selected one on the next input; find a track by name
+    newTrackNextInput, searchTracks,
+    // Piano roll note functions (D-W4-14, D-W4-15)
+    selectAllFollowing, legato, removeOverlaps, noteStartToPlayhead, noteEndToPlayhead, lengthenNotes, shortenNotes, scaleQuantize,
+    // Transport go-to and play-from commands (D-UI-35)
+    goToCycleStart, goToCycleEnd, goToSelectionStart, goToSelectionEnd, goToLastLocate, goToPosition, playFromStart, playFromCycleStart, playFromSelection, playFromWindowEdge, playFromPreviousBar, playFromLastLocate, stopGoToStart, stopGoToCycleStart, stopGoToLastLocate, cycleForward, cycleBack, doubleCycle, halveCycle,
+    // D-UI-36
+    nextTool, previousTool,
+    // D-W3-11: nudge value, slip, shuffle, grid lines
+    nudgeByGrid, nudgeByBar, nudgeByBeat, nudgeByDivision, nudgeByTick, slipLeft, slipRight, shuffleLeft, shuffleRight, gridLines,
+    // D-UI-37: track header options, all tracks on/off
+    configureTrackHeader, toggleAllTracksOff,
+    // D-W6-12
+    togglePluginWindows,
+    // D-W6-13: mixer commands
+    unmuteAll, clearRecallSolo, soloSelectedRegions, monitorTrack, copyChannelStrip, pasteChannelStrip,
+    // D-W6-14
+    cycleMixerMode,
+    // D-UI-38: zoom and navigation
+    zoomVerticalIn, zoomVerticalOut, saveZoom1, saveZoom2, saveZoom3, recallZoom1, recallZoom2, recallZoom3, navigateBack, navigateForward,
+    pageUp, pageDown, pageLeft, pageRight, zoomTrack,
+    // D-W3-12: region selection and edit commands
+    selectPreviousTrack, selectNextTrack, selectInsideCycle, selectMutedRegions, selectSameColor, selectFirst, selectLast, togglePreviousRegion, toggleNextRegion,
+    scrollToSelection, moveToPlayhead, moveToPlayheadSelectNext, regionStartToPlayhead, regionEndToPlayhead, splitAtCycle,
+    // D-W8-7: automation mode commands and lanes
+    automationAllOff, automationAllRead, automationAllTouch, automationAllLatch, automationOffRead, automationLatchRead, cycleAutomationParameter,
+    // D-UI-39: marker commands
+    markerForSelection, cycleToMarker, cycleToPreviousMarker, cycleToNextMarker, previousMarkerSetLocators, nextMarkerSetLocators, goToMarkerNumber,
+    applyRegionParameters, applyRegionParametersExceptDelay, settings,
+    // D-UI-43: control bar, toolbar and big displays
+    toggleControlBar, toggleToolbar, customizeControlBar, bigBeatsDisplay, bigTimeDisplay, performanceMeter,
+    // D-UI-44, D-UI-45: global tracks
+    configureGlobalTracks, showSingleGlobalTrack, toggleArrangementTrack, toggleMarkerTrack, toggleTempoTrack, toggleSignatureTrack, toggleKeyTrack,
+    markerTrackOnly, createSignatureChange, createKeyChange, addSection,
+    // D-W9-9, D-W9-10: exports
+    exportSelectionMidi, exportTrackAudio, exportAllTracksAudio,
+    // D-W1-12, D-W1-13: recording
+    recordToggle, toggleReplace, captureRecording,
+    // D-W6-15, D-W6-16: groups and VCA faders
+    toggleGroups, groupsWindow, createGroup, hideGroup1, hideGroup2, hideGroup3, hideGroup4, hideGroup5, hideGroup6, hideGroup7, hideGroup8,
+    hideGroup9, newVca,
+    // D-W6-17: track stacks
+    createFolderStack, createSummingStack, flattenStack, toggleStack, followStacks,
+    // D-UI-46: windows and screensets
+    screenset1, screenset2, screenset3, screenset4, screenset5, screenset6, screenset7, screenset8, screenset9,
+    screensetTens1, screensetTens2, screensetTens3, screensetTens4, screensetTens5, screensetTens6, screensetTens7, screensetTens8, screensetTens9,
+    undoHistory, openMainWindow, mixerWindow, pianoRollWindow, audioEditorWindow, projectAudioWindow, regionInspectorWindow, closeWindow,
+    cycleWindows, cycleWindowsBack, minimizeWindow, minimizeAllWindows, zoomWindow, fullScreen, closeProject, cycleWindowViews,
+    cycleWindowViewsBack,
+    // D-UI-47: notes
+    toggleNotes, mixerNotes, listEditors, openEventList, openMarkerList, openTempoList, openSignatureList, openMarkerText,
+    toggleAudioFileEditor, keyCommands, toggleSmartControls, smartControlsWindow,
+    toggleLibrary, loopBrowser, searchLibrary, toggleVarispeed
 };
 
 struct CommandInfo
@@ -73,4 +127,21 @@ const CommandInfo& commandInfo (Cmd id);
 /** "Play/Stop (Space)", or just the name when there's no shortcut (F-UI-10). */
 juce::String tooltipFor (Cmd id);
 std::optional<Cmd> commandForKey (const juce::KeyPress& key);
+
+// Key Commands (D-UI-50): this computer's own keys, in place of a command's defaults. Menus and tooltips follow.
+/** Gives a command these keys (none clears it); a key another command had is taken from it. */
+void setCommandKeys (Cmd id, std::vector<juce::KeyPress> keys);
+const std::vector<juce::KeyPress>& defaultKeys (Cmd id);
+/** Every command back to its default keys. */
+void resetAllKeys();
+/** The command a key runs now, other than `except`. */
+std::optional<Cmd> commandUsingKey (const juce::KeyPress& key, std::optional<Cmd> except = std::nullopt);
+/** "Ctrl+Alt+K", as menus show a key; and back. */
+juce::String keyDescription (const juce::KeyPress& key);
+std::optional<juce::KeyPress> parseKeyDescription (const juce::String& text);
+/** The assignments that differ from the defaults, as JSON ({"Metronome": ["Ctrl+K"]}); and back (unknown names are skipped). */
+juce::String keyAssignmentsToString();
+void keyAssignmentsFromString (const juce::String& json);
+/** Called after any change, so the app can save the assignments. */
+std::function<void()>& onKeyAssignmentsChanged();
 } // namespace weft::ui

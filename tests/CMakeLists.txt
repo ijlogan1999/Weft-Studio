@@ -9,6 +9,8 @@ add_executable(weft_unit_tests
     unit/MediaImportTests.cpp
     unit/TimeTests.cpp
     unit/TrackTests.cpp
+    unit/GroupTests.cpp
+    unit/StackTests.cpp
     unit/TransportTests.cpp
     unit/UndoTests.cpp
     unit/AutomationTests.cpp
@@ -43,6 +45,7 @@ add_executable(weft_engine_tests
     engine/StreamingTests.cpp
     engine/TrackEngineTests.cpp
     engine/TransportEngineTests.cpp
+    engine/VarispeedTests.cpp
 )
 target_link_libraries(weft_engine_tests PRIVATE weft::engine weft::codec Catch2::Catch2WithMain)
 # Real-time deadline tests ([rt]) run on their own: under a parallel ctest the machine's load,

@@ -20,28 +20,17 @@ juce::Colour regionColour (const model::ProjectModel& m, const model::Region& r)
     return colourFor (c.palette, c.rgb);
 }
 
-/** The playhead: a 1 px line with a dark halo, readable over any region colour. */
+/** The playhead: a 1 px line (3 px when wide, D-UI-41) with a dark halo, readable over any region colour. */
 void drawPlayheadLine (juce::Graphics& g, float x, float top, float bottom)
 {
     const auto px = static_cast<float> (juce::roundToInt (x));
+    const float half = Theme::get().widePlayhead ? 1.0f : 0.0f;
     g.setColour (depth::shade (0.45f, 0.15f));
-    g.fillRect (px - 1.0f, top, 3.0f, bottom - top);
+    g.fillRect (px - 1.0f - half, top, 3.0f + 2 * half, bottom - top);
     g.setColour (colour (Token::playhead));
-    g.fillRect (px, top, 1.0f, bottom - top);
+    g.fillRect (px - half, top, 1.0f + 2 * half, bottom - top);
 }
 
-void askForText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)
-{
-    auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon);
-    w->addTextEditor ("text", current);
-    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done = std::move (done)] (int result) {
-                            if (result == 1)
-                                done (w->getTextEditorContents ("text"));
-                        }),
-                        true);
-}
 } // namespace
 
 // Ruler -----------------------------------------------------------------------------------
@@ -82,14 +71,16 @@ float Ruler::tempoY (double bpm) const
 {
     const auto [lo, hi] = tempoRange();
     const auto inner = static_cast<double> (tempoLane - 10);
-    return static_cast<float> (tempoTop + 5 + (hi - bpm) / std::max (1.0, hi - lo) * inner);
+    const auto top = laneBounds (laneTempo).value_or (juce::Rectangle<int> (0, tempoTop, 0, tempoLane)).getY();
+    return static_cast<float> (top + 5 + (hi - bpm) / std::max (1.0, hi - lo) * inner);
 }
 
 double Ruler::bpmAtY (float y) const
 {
     const auto [lo, hi] = tempoRange();
     const auto inner = static_cast<double> (tempoLane - 10);
-    const auto bpm = hi - (static_cast<double> (y) - tempoTop - 5) / inner * (hi - lo);
+    const auto top = laneBounds (laneTempo).value_or (juce::Rectangle<int> (0, tempoTop, 0, tempoLane)).getY();
+    const auto bpm = hi - (static_cast<double> (y) - top - 5) / inner * (hi - lo);
     return std::clamp (std::round (bpm * 100.0) / 100.0, TempoMap::minBpm, TempoMap::maxBpm);
 }
 
@@ -168,6 +159,78 @@ std::vector<std::pair<int, double>> Ruler::barLabels (const model::ProjectModel&
     return out;
 }
 
+int Ruler::laneHeight (GlobalLane lane) noexcept
+{
+    switch (lane)
+    {
+        case laneArrangement: return arrangementLane;
+        case laneMarkers: return markerLane;
+        case laneTempo: return tempoLane;
+        case laneSignature: return signatureLane;
+        case laneKey: return keyLane;
+        default: return 0;
+    }
+}
+
+std::vector<std::pair<GlobalLane, juce::Rectangle<int>>> Ruler::lanes() const
+{
+    std::vector<std::pair<GlobalLane, juce::Rectangle<int>>> out;
+    int y = rulerHeight;
+    for (const auto lane : globalLaneOrder)
+        if (studio.laneShown (lane))
+        {
+            out.emplace_back (lane, juce::Rectangle<int> (0, y, getWidth(), laneHeight (lane)));
+            y += laneHeight (lane);
+        }
+    return out;
+}
+
+std::optional<juce::Rectangle<int>> Ruler::laneBounds (GlobalLane lane) const
+{
+    for (const auto& [l, r] : lanes())
+        if (l == lane)
+            return r;
+    return std::nullopt;
+}
+
+std::optional<GlobalLane> Ruler::laneAt (float y) const
+{
+    for (const auto& [l, r] : lanes())
+        if (y >= static_cast<float> (r.getY()) && y < static_cast<float> (r.getBottom()))
+            return l;
+    return std::nullopt;
+}
+
+int Ruler::preferredHeight() const
+{
+    int h = rulerHeight;
+    for (const auto lane : globalLaneOrder)
+        if (studio.laneShown (lane))
+            h += laneHeight (lane);
+    return h;
+}
+
+const model::Section* Ruler::sectionAt (double x) const
+{
+    const auto t = studio.view.xToTick (x);
+    for (const auto* section : studio.model().sectionsInOrder())
+        if (t >= static_cast<double> (section->start) && t < static_cast<double> (section->end()))
+            return section;
+    return nullptr;
+}
+
+const model::KeyChange* Ruler::keyChangeAt (double x) const
+{
+    const model::KeyChange* best = nullptr;
+    for (const auto* k : studio.model().keyChangesInOrder())
+    {
+        const auto kx = studio.view.tickToX (static_cast<double> (k->pos));
+        if (x >= kx - 3 && x <= kx + 56)
+            best = k;
+    }
+    return best;
+}
+
 const model::Marker* Ruler::markerAt (double x) const
 {
     const model::Marker* best = nullptr;
@@ -183,7 +246,7 @@ const model::Marker* Ruler::markerAt (double x) const
 std::vector<std::pair<const model::Marker*, juce::Rectangle<float>>> Ruler::markerFlags() const
 {
     std::vector<std::pair<const model::Marker*, juce::Rectangle<float>>> out;
-    if (studio.layout.globalTracks)
+    if (studio.laneShown (laneMarkers))
         return out;
     const auto f = font (Type::caption);
     for (const auto* marker : arrange::markersInOrder (studio.model()))
@@ -272,70 +335,119 @@ void Ruler::paint (juce::Graphics& g)
     }
     g.setColour (colour (Token::border));
     g.fillRect (0, rulerHeight - 1, getWidth(), 1);
-    // Markers: raised chips with their colour on the left edge.
-    if (studio.layout.globalTracks)
+    // The global tracks showing (D-UI-44), each in its band.
+    for (const auto& [lane, laneArea] : lanes())
     {
-        const auto lane = juce::Rectangle<int> (0, rulerHeight, getWidth(), markerLane);
+        const auto top = laneArea.getY();
         g.setColour (colour (Token::surface));
-        g.fillRect (lane);
-        g.setFont (font (Type::body));
-        for (const auto* marker : arrange::markersInOrder (m))
+        g.fillRect (laneArea);
+        if ((studio.protectedLanes & lane) != 0)
         {
-            const auto x = static_cast<float> (v.tickToX (static_cast<double> (marker->pos)));
-            const auto c = marker->color ? colourFor (marker->color->palette, marker->color->rgb) : colour (Token::textDim);
-            const auto chip = juce::Rectangle<float> (x, lane.getY() + 3.0f, 72.0f, markerLane - 6.0f);
-            depth::raised (g, chip, radius::r1);
-            g.setColour (c);
-            g.fillRect (chip.withWidth (3.0f));
-            g.setColour (colour (Token::text));
-            g.drawText (juce::String (marker->name), chip.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
+            g.setColour (colour (Token::textDim).withAlpha (0.06f)); // protected: a faint veil
+            g.fillRect (laneArea);
         }
-        for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
-            drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
+        if (lane == laneArrangement)
+        {
+            // Sections: coloured blocks spanning their bars, named.
+            g.setFont (font (Type::body));
+            for (const auto* section : m.sectionsInOrder())
+            {
+                const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (section->start)));
+                const auto x2 = static_cast<float> (v.tickToX (static_cast<double> (section->end())));
+                const auto block = juce::Rectangle<float> (x1, top + 2.0f, std::max (2.0f, x2 - x1 - 1.0f), arrangementLane - 4.0f);
+                const auto c = section->color ? colourFor (section->color->palette, section->color->rgb) : colour (Token::accent);
+                depth::tinted (g, block, radius::r1, c.withMultipliedAlpha (0.55f));
+                g.setColour (colour (Token::text));
+                g.drawText (juce::String (section->name), block.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
+            }
+            if (sectionDrop)
+            {
+                g.setColour (colour (Token::accent));
+                g.fillRect (static_cast<float> (v.tickToX (static_cast<double> (*sectionDrop))) - 1.0f, static_cast<float> (top), 3.0f, static_cast<float> (arrangementLane));
+            }
+        }
+        else if (lane == laneMarkers)
+        {
+            // Markers: raised chips with their colour on the left edge.
+            g.setFont (font (Type::body));
+            for (const auto* marker : arrange::markersInOrder (m))
+            {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (marker->pos)));
+                const auto c = marker->color ? colourFor (marker->color->palette, marker->color->rgb) : colour (Token::textDim);
+                const auto chip = juce::Rectangle<float> (x, top + 3.0f, 72.0f, markerLane - 6.0f);
+                depth::raised (g, chip, radius::r1);
+                g.setColour (c);
+                g.fillRect (chip.withWidth (3.0f));
+                g.setColour (colour (Token::text));
+                g.drawText (juce::String (marker->name), chip.withTrimmedLeft (space::s1).withTrimmedRight (space::half), juce::Justification::centredLeft, true);
+            }
+            for (const auto* c : commands::commentThreads (m, commands::CommentFilter::all, studio.session().user()))
+                drawCommentPin (g, pinBounds (*c), userColour (studio, c->author), c->resolved);
+        }
+        else if (lane == laneTempo)
+        {
+            // Tempo lane: the map as a step graph, a handle and value at each change (W-11).
+            const auto& points = m.tempo.points();
+            juce::Path steps;
+            for (std::size_t i = 0; i < points.size(); ++i)
+            {
+                const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (points[i].pos)));
+                const auto x2 = i + 1 < points.size() ? static_cast<float> (v.tickToX (static_cast<double> (points[i + 1].pos))) : static_cast<float> (getWidth());
+                const auto y = tempoY (points[i].bpm);
+                if (i == 0)
+                    steps.startNewSubPath (std::min (x1, 0.0f), y);
+                else
+                    steps.lineTo (x1, y);
+                steps.lineTo (x2, y);
+            }
+            g.setColour (colour (Token::accent));
+            g.strokePath (steps, juce::PathStrokeType (1.5f));
+            g.setFont (font (Type::monoSmall));
+            for (const auto& p : points)
+            {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (p.pos)));
+                const auto y = tempoY (p.bpm);
+                g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::accent));
+                g.fillRect (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ x, y }));
+                g.setColour (colour (Token::textDim));
+                const auto above = y - static_cast<float> (top) > 16.0f;
+                g.drawText (bpmText (p.bpm), juce::roundToInt (x) + 6, juce::roundToInt (above ? y - 15.0f : y + 2.0f), 56, 13, juce::Justification::left);
+            }
+        }
+        else if (lane == laneSignature)
+        {
+            // Signature lane: the meter at each change, at its bar start.
+            g.setFont (font (Type::monoValue));
+            for (const auto& p : m.signatures.points())
+            {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (m.signatures.barStart (p.bar))));
+                g.setColour (colour (Token::border));
+                g.fillRect (x, static_cast<float> (top), 1.0f, static_cast<float> (signatureLane));
+                g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::text));
+                g.drawText (juce::String (p.numerator) + "/" + juce::String (p.denominator), juce::roundToInt (x) + space::half, top, 40, signatureLane,
+                            juce::Justification::centredLeft);
+            }
+        }
+        else if (lane == laneKey)
+        {
+            // Key lane: the project key at the start, then each change.
+            g.setFont (font (Type::small));
+            const auto drawKey = [&] (Ticks at, const model::KeySignature& key) {
+                const auto x = static_cast<float> (v.tickToX (static_cast<double> (at)));
+                g.setColour (colour (Token::border));
+                g.fillRect (x, static_cast<float> (top), 1.0f, static_cast<float> (keyLane));
+                g.setColour (colour (Token::text));
+                g.drawText (juce::String (key.name()), juce::roundToInt (x) + space::half, top, 96, keyLane, juce::Justification::centredLeft);
+            };
+            drawKey (0, m.info.key);
+            for (const auto* k : m.keyChangesInOrder())
+                drawKey (k->pos, k->key);
+        }
         g.setColour (colour (Token::lineSubtle));
-        g.fillRect (0, tempoTop - 1, getWidth(), 1);
-
-        // Tempo lane: the map as a step graph, a handle and value at each change (W-11).
-        const auto& points = m.tempo.points();
-        juce::Path steps;
-        for (std::size_t i = 0; i < points.size(); ++i)
-        {
-            const auto x1 = static_cast<float> (v.tickToX (static_cast<double> (points[i].pos)));
-            const auto x2 = i + 1 < points.size() ? static_cast<float> (v.tickToX (static_cast<double> (points[i + 1].pos))) : static_cast<float> (getWidth());
-            const auto y = tempoY (points[i].bpm);
-            if (i == 0)
-                steps.startNewSubPath (std::min (x1, 0.0f), y);
-            else
-                steps.lineTo (x1, y);
-            steps.lineTo (x2, y);
-        }
-        g.setColour (colour (Token::accent));
-        g.strokePath (steps, juce::PathStrokeType (1.5f));
-        g.setFont (font (Type::monoSmall));
-        for (const auto& p : points)
-        {
-            const auto x = static_cast<float> (v.tickToX (static_cast<double> (p.pos)));
-            const auto y = tempoY (p.bpm);
-            g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::accent));
-            g.fillRect (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ x, y }));
-            g.setColour (colour (Token::textDim));
-            const auto above = y - static_cast<float> (tempoTop) > 16.0f;
-            g.drawText (bpmText (p.bpm), juce::roundToInt (x) + 6, juce::roundToInt (above ? y - 15.0f : y + 2.0f), 56, 13, juce::Justification::left);
-        }
-        g.setColour (colour (Token::lineSubtle));
-        g.fillRect (0, signatureTop - 1, getWidth(), 1);
-
-        // Signature lane: the meter at each change, at its bar start.
-        g.setFont (font (Type::monoValue));
-        for (const auto& p : m.signatures.points())
-        {
-            const auto x = static_cast<float> (v.tickToX (static_cast<double> (m.signatures.barStart (p.bar))));
-            g.setColour (colour (Token::border));
-            g.fillRect (x, static_cast<float> (signatureTop), 1.0f, static_cast<float> (signatureLane));
-            g.setColour (p.conflicted ? colour (Token::warning) : colour (Token::text));
-            g.drawText (juce::String (p.numerator) + "/" + juce::String (p.denominator), juce::roundToInt (x) + space::half, signatureTop, 40, signatureLane,
-                        juce::Justification::centredLeft);
-        }
+        g.fillRect (0, laneArea.getBottom() - 1, getWidth(), 1);
+    }
+    if (! lanes().empty())
+    {
         g.setColour (colour (Token::border));
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
     }
@@ -365,12 +477,13 @@ void Ruler::paint (juce::Graphics& g)
 juce::Rectangle<float> Ruler::pinBounds (const model::Comment& thread) const
 {
     const auto x = static_cast<float> (studio.view.tickToX (static_cast<double> (thread.pos)));
-    return { x - 1.0f, rulerHeight + 3.0f, 14.0f, markerLane - 5.0f };
+    const auto top = laneBounds (laneMarkers).value_or (juce::Rectangle<int> (0, rulerHeight, 0, markerLane)).getY();
+    return { x - 1.0f, top + 3.0f, 14.0f, markerLane - 5.0f };
 }
 
 const model::Comment* Ruler::commentAt (juce::Point<float> p) const
 {
-    if (! studio.layout.globalTracks)
+    if (! studio.laneShown (laneMarkers))
         return nullptr;
     const auto threads = commands::commentThreads (studio.model(), commands::CommentFilter::all, studio.session().user());
     for (auto it = threads.rbegin(); it != threads.rend(); ++it)
@@ -395,7 +508,10 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         dragFrom = t;
         return;
     }
-    if (mods.isPopupMenu() && p.y >= rulerHeight && studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (lane)
+        studio.layout.singleLane = *lane; // what Show Single Global Track keeps
+    if (mods.isPopupMenu() && lane)
     {
         juce::Component::SafePointer<Ruler> self (this);
         contextMenu (p).showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [self, p] (int item) {
@@ -404,12 +520,63 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         });
         return;
     }
-    if (p.y >= signatureTop && studio.layout.globalTracks)
+    if (lane == laneSignature)
         return;
-    if (p.y >= tempoTop && studio.layout.globalTracks)
+    if (lane == laneArrangement)
+    {
+        // An edge resizes the section; a click inside selects its regions and goes to its start (D-UI-45).
+        for (const auto* section : studio.model().sectionsInOrder())
+        {
+            const auto x1 = studio.view.tickToX (static_cast<double> (section->start)), x2 = studio.view.tickToX (static_cast<double> (section->end()));
+            const bool nearStart = std::abs (p.x - x1) <= 4.0, nearEnd = std::abs (p.x - x2) <= 4.0;
+            if ((nearStart || nearEnd) && ! studio.laneProtected (laneArrangement))
+            {
+                drag = nearEnd ? Drag::sectionEnd : Drag::sectionStart;
+                draggedSection = section->id;
+                studio.session().beginGesture ("Resize Section");
+                return;
+            }
+        }
+        if (const auto* section = sectionAt (p.x))
+        {
+            std::vector<Id> inside;
+            for (const auto& [id, r] : studio.model().regions)
+                if (r->start >= section->start && r->start < section->end())
+                    inside.push_back (id);
+            studio.selection.set (inside);
+            studio.locate (section->start);
+            // Dragging the section moves it and what's in it to another section edge; Ctrl copies (D-UI-45).
+            if ((studio.protectedLanes & laneArrangement) == 0)
+            {
+                drag = Drag::sectionMove;
+                draggedSection = section->id;
+                dragStart = p;
+                copySection = mods.isCommandDown();
+                sectionDrop.reset();
+            }
+        }
+        return;
+    }
+    if (lane == laneKey)
+    {
+        if (const auto* change = keyChangeAt (p.x))
+        {
+            studio.locate (change->pos);
+            if (! studio.laneProtected (laneKey))
+            {
+                drag = Drag::keyChange;
+                draggedKey = change->id;
+                studio.session().beginGesture ("Move Key Change");
+            }
+        }
+        return;
+    }
+    if (lane == laneTempo)
     {
         if (const auto* point = tempoPointAt (p.x))
         {
+            if (studio.laneProtected (laneTempo))
+                return;
             dragRange = tempoRange();
             drag = Drag::tempo;
             draggedTempo = point->id;
@@ -421,7 +588,7 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
             studio.session().beginGesture (copyTempo ? "Copy Tempo Change" : "Tempo Change");
             return;
         }
-        if (mods.isCommandDown() || studio.tool == Tool::pencil)
+        if ((mods.isCommandDown() || studio.tool == Tool::pencil) && ! studio.laneProtected (laneTempo))
         {
             if (studio.session().addTempoPoint (t, bpmAtY (p.y)))
                 studio.edited();
@@ -430,7 +597,7 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         }
         return;
     }
-    if (p.y >= rulerHeight && studio.layout.globalTracks)
+    if (lane == laneMarkers)
     {
         if (const auto* c = commentAt (p))
         {
@@ -440,6 +607,8 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         if (const auto* marker = markerAt (p.x))
         {
             studio.locate (marker->pos);
+            if ((studio.protectedLanes & laneMarkers) != 0)
+                return; // protected: it only goes there
             drag = Drag::marker;
             draggedMarker = marker->id;
             dragFrom = marker->pos;
@@ -447,6 +616,8 @@ void Ruler::pointerDown (juce::Point<float> p, juce::ModifierKeys mods)
         }
         return;
     }
+    if (p.y >= rulerHeight)
+        return; // below the last lane
     // A click on a marker's flag goes to the marker itself, whatever the snap.
     for (const auto& [marker, flag] : markerFlags())
         if (flag.contains (p))
@@ -480,6 +651,56 @@ void Ruler::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
             break;
         }
         case Drag::marker: studio.check (studio.session().moveMarker (draggedMarker, t)); break;
+        case Drag::keyChange:
+            if (const auto it = studio.model().keyChanges.find (draggedKey); it != studio.model().keyChanges.end())
+            {
+                const auto key = it->second->key;
+                studio.session().setKeyChange (draggedKey, std::max<Ticks> (1, t), key); // a clash with another change just stays put
+            }
+            break;
+        case Drag::sectionMove:
+        {
+            if (std::abs (p.x - dragStart.x) < 4.0f)
+            {
+                sectionDrop.reset();
+                break;
+            }
+            const auto* dragged = studio.model().sections.contains (draggedSection) ? studio.model().sections.at (draggedSection).get() : nullptr;
+            if (dragged == nullptr)
+                break;
+            std::optional<Ticks> best;
+            double bestDistance = 0;
+            std::vector<Ticks> edges { 0 };
+            for (const auto* other : studio.model().sectionsInOrder())
+            {
+                edges.push_back (other->start);
+                edges.push_back (other->end());
+            }
+            for (const auto e : edges)
+            {
+                if (e > dragged->start && e < dragged->end())
+                    continue;
+                if (const auto d = std::abs (studio.view.tickToX (static_cast<double> (e)) - p.x); ! best || d < bestDistance)
+                {
+                    best = e;
+                    bestDistance = d;
+                }
+            }
+            sectionDrop = best;
+            repaint();
+            break;
+        }
+        case Drag::sectionStart:
+        case Drag::sectionEnd:
+            if (const auto it = studio.model().sections.find (draggedSection); it != studio.model().sections.end())
+            {
+                const auto start = it->second->start, end = it->second->end();
+                if (drag == Drag::sectionStart && t < end)
+                    studio.session().setSectionRange (draggedSection, t, end - t);
+                else if (drag == Drag::sectionEnd && t > start)
+                    studio.session().setSectionRange (draggedSection, start, t - start);
+            }
+            break;
         case Drag::tempo:
         {
             // Vertical: BPM in 0.01 steps over the lane's range at the drag start; horizontal (past a few
@@ -527,7 +748,22 @@ void Ruler::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
 
 void Ruler::pointerUp()
 {
-    if (drag == Drag::marker || drag == Drag::tempo || drag == Drag::punchStart || drag == Drag::punchEnd || drag == Drag::punch)
+    if (drag == Drag::sectionMove)
+    {
+        drag = Drag::none;
+        const auto target = std::exchange (sectionDrop, std::nullopt);
+        if (target)
+        {
+            if (studio.session().moveSection (draggedSection, *target, copySection))
+                studio.edited();
+            else
+                studio.setStatus (juce::String (studio.session().lastError()));
+        }
+        repaint();
+        return;
+    }
+    if (drag == Drag::marker || drag == Drag::tempo || drag == Drag::punchStart || drag == Drag::punchEnd || drag == Drag::punch || drag == Drag::keyChange
+        || drag == Drag::sectionStart || drag == Drag::sectionEnd)
     {
         studio.session().endGesture();
         studio.edited();
@@ -548,17 +784,40 @@ void Ruler::mouseUp (const juce::MouseEvent& e)
 juce::PopupMenu Ruler::contextMenu (juce::Point<float> p) const
 {
     juce::PopupMenu menu;
-    if (p.y < rulerHeight || ! studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (! lane)
         return menu;
-    const bool editable = ! studio.previewing();
-    if (p.y >= signatureTop)
+    const bool editable = ! studio.previewing() && (studio.protectedLanes & *lane) == 0;
+    if (lane == laneArrangement)
+    {
+        if (const auto* section = sectionAt (p.x))
+        {
+            menu.addItem (contextRename, "Rename Section...", editable);
+            auto colours = colourMenu (contextColour, section->color && section->color->rgb.empty() ? section->color->palette : -1);
+            colours.addSeparator();
+            colours.addItem (contextColour, "No Color", true, ! section->color.has_value());
+            menu.addSubMenu ("Color", colours, editable);
+            menu.addSeparator();
+            menu.addItem (contextDelete, "Delete Section", editable);
+        }
+        else
+            menu.addItem (contextAdd, "Add Section Here", editable);
+    }
+    else if (lane == laneKey)
+    {
+        const auto* change = keyChangeAt (p.x);
+        menu.addItem (contextEdit, change != nullptr ? "Edit Key..." : "Add Key Change Here...", editable);
+        if (change != nullptr)
+            menu.addItem (contextDelete, "Delete Key Change", editable);
+    }
+    else if (lane == laneSignature)
     {
         const auto* sig = signatureAt (p.x);
         menu.addItem (contextEdit, sig != nullptr ? "Edit Time Signature..." : "Add Time Signature Here...", editable);
         if (sig != nullptr)
             menu.addItem (contextDelete, "Delete Time Signature", editable && sig->bar > 0);
     }
-    else if (p.y >= tempoTop)
+    else if (lane == laneTempo)
     {
         if (const auto* point = tempoPointAt (p.x))
         {
@@ -585,11 +844,78 @@ juce::PopupMenu Ruler::contextMenu (juce::Point<float> p) const
 
 void Ruler::pickContext (int item, juce::Point<float> p)
 {
-    if (item <= 0 || p.y < rulerHeight || ! studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (item <= 0 || ! lane || studio.laneProtected (*lane))
         return;
     auto& s = studio.session();
     const auto at = std::max<Ticks> (0, studio.snapped (static_cast<Ticks> (studio.view.xToTick (p.x))));
-    if (p.y >= signatureTop)
+    if (lane == laneArrangement)
+    {
+        const auto* section = sectionAt (p.x);
+        if (section == nullptr)
+        {
+            if (item == contextAdd)
+            {
+                // From the bar here to the next section, at most 8 bars.
+                const auto& sig = studio.model().signatures;
+                const auto start = sig.barStart (sig.barAt (at).bar);
+                auto end = start + 8 * sig.barLength (sig.barAt (start).bar);
+                for (const auto* other : studio.model().sectionsInOrder())
+                    if (other->start > start)
+                        end = std::min (end, other->start);
+                if (s.addSection (start, end - start))
+                    studio.edited();
+                else
+                    studio.setStatus (juce::String (s.lastError()));
+            }
+            return;
+        }
+        const auto id = section->id;
+        if (item == contextDelete)
+            studio.check (s.deleteSection (id));
+        else if (item == contextRename)
+            promptForText ("Rename section", juce::String (section->name), [this, id] (juce::String name) {
+                if (name.trim().isNotEmpty())
+                    studio.check (studio.session().renameSection (id, name.trim().toStdString()));
+            });
+        else if (item == contextColour)
+            studio.check (s.setSectionColor (id, std::nullopt));
+        else if (item > contextColour && item <= contextColour + paletteSize)
+            studio.check (s.setSectionColor (id, model::Color { item - contextColour - 1, {} }));
+        return;
+    }
+    if (lane == laneKey)
+    {
+        const auto* change = keyChangeAt (p.x);
+        if (item == contextDelete && change != nullptr)
+            studio.check (s.deleteKeyChange (change->id));
+        else if (item == contextEdit)
+        {
+            const auto id = change != nullptr ? change->id : Id();
+            const auto pos = change != nullptr ? change->pos : std::max<Ticks> (1, at);
+            const auto now = studio.model().keyAt (pos);
+            promptForText ("Key at bar " + juce::String (studio.model().signatures.barAt (pos).bar + 1), juce::String (now.name()),
+                           [this, id, pos] (juce::String text) {
+                               const auto key = model::KeySignature::parse (text.toStdString());
+                               if (! key)
+                               {
+                                   studio.setStatus ("Type a key like C, F# minor or Bbm.");
+                                   return;
+                               }
+                               if (id.empty())
+                               {
+                                   if (studio.session().addKeyChange (pos, *key))
+                                       studio.edited();
+                                   else
+                                       studio.setStatus (juce::String (studio.session().lastError()));
+                               }
+                               else
+                                   studio.check (studio.session().setKeyChange (id, pos, *key));
+                           });
+        }
+        return;
+    }
+    if (lane == laneSignature)
     {
         const auto* sig = signatureAt (p.x);
         if (item == contextDelete && sig != nullptr)
@@ -598,12 +924,12 @@ void Ruler::pickContext (int item, juce::Point<float> p)
         {
             const auto bar = sig != nullptr ? sig->bar : nearestBar (p.x);
             const auto& now = studio.model().signatures.signatureAtBar (bar);
-            askForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
-                        [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+            promptForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
+                           [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
         }
         return;
     }
-    if (p.y >= tempoTop)
+    if (lane == laneTempo)
     {
         const auto* point = tempoPointAt (p.x);
         if (item == contextAdd && point == nullptr)
@@ -619,7 +945,7 @@ void Ruler::pickContext (int item, juce::Point<float> p)
         {
             const auto id = point->id;
             const auto pos = point->pos;
-            askForText ("Tempo (BPM)", bpmText (point->bpm), [this, id, pos] (juce::String text) {
+            promptForText ("Tempo (BPM)", bpmText (point->bpm), [this, id, pos] (juce::String text) {
                 studio.check (studio.session().setTempoPoint (id, pos, std::round (text.getDoubleValue() * 100.0) / 100.0));
             });
         }
@@ -652,7 +978,7 @@ void Ruler::renameMarker (const Id& id)
     const auto it = markers.find (id);
     if (it == markers.end())
         return;
-    askForText ("Rename marker", juce::String (it->second->name), [this, id] (juce::String name) {
+    promptForText ("Rename marker", juce::String (it->second->name), [this, id] (juce::String name) {
         if (name.isNotEmpty())
             studio.check (studio.session().renameMarker (id, name.toStdString()));
     });
@@ -662,14 +988,56 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 {
     // Double-click is the quick way to the menu's first entry: edit what's there, or add a marker.
     const auto p = e.position;
-    if (p.y < rulerHeight || ! studio.layout.globalTracks)
+    const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
+    if (! lane)
         return;
-    if (p.y >= signatureTop)
+    // D-UI-48: Shift+double-click opens the lane's list; Alt+double-click a marker opens its text.
+    if (e.mods.isShiftDown() && (lane == laneSignature || lane == laneKey || lane == laneTempo))
+    {
+        studio.perform (lane == laneTempo ? Cmd::openTempoList : Cmd::openSignatureList);
+        return;
+    }
+    if (e.mods.isAltDown() && lane == laneMarkers)
+        if (const auto* marker = markerAt (p.x))
+        {
+            studio.locate (marker->pos);
+            studio.perform (Cmd::openMarkerText);
+            return;
+        }
+    if (lane == laneSignature || lane == laneTempo || lane == laneKey)
         pickContext (contextEdit, p);
-    else if (p.y >= tempoTop)
-        pickContext (contextEdit, p);
+    else if (lane == laneArrangement)
+        pickContext (sectionAt (p.x) != nullptr ? contextRename : contextAdd, p);
     else
         pickContext (markerAt (p.x) != nullptr ? contextRename : contextAdd, p);
+}
+
+void Ruler::createSignatureChange()
+{
+    // At the bar after the playhead's (or bar 2 at the start), with the meter in effect there.
+    const auto& sig = studio.model().signatures;
+    const auto bar = sig.barAt (studio.playhead()).bar + (sig.barAt (studio.playhead()).offset > 0 || studio.playhead() == 0 ? 1 : 0);
+    const auto& now = sig.signatureAtBar (bar);
+    promptForText ("Time signature at bar " + juce::String (bar + 1), juce::String (now.numerator) + "/" + juce::String (now.denominator),
+                   [this, bar] (juce::String text) { setSignatureFromText (bar, text); });
+}
+
+void Ruler::createKeyChange()
+{
+    const auto pos = std::max<Ticks> (1, studio.playhead());
+    const auto now = studio.model().keyAt (pos);
+    promptForText ("Key from here", juce::String (now.name()), [this, pos] (juce::String text) {
+        const auto key = model::KeySignature::parse (text.toStdString());
+        if (! key)
+        {
+            studio.setStatus ("Type a key like C, F# minor or Bbm.");
+            return;
+        }
+        if (studio.session().addKeyChange (pos, *key))
+            studio.edited();
+        else
+            studio.setStatus (juce::String (studio.session().lastError()));
+    });
 }
 
 // Track header ------------------------------------------------------------------------------
@@ -701,6 +1069,26 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
     setRole (mute, ButtonRole::mute);
     setRole (solo, ButtonRole::solo);
     setRole (arm, ButtonRole::record);
+    // The optional buttons (D-UI-37): the same click, Ctrl/Alt-click and swipe as Mute.
+    describe (onOff, "On/Off", "Turn the track on or off (Ctrl+click: only this one on; Alt+click: all; drag across tracks to set them too)");
+    describe (monitor, "Input monitoring", "Input monitoring on, or back to auto (Alt+click: all; drag across tracks to set them too)");
+    describe (hide, "Hide", "Hide the track (View > Show Hidden Tracks brings it back)");
+    for (auto [b, which] : { std::pair { &onOff, TrackSwitch::on }, std::pair { &monitor, TrackSwitch::monitor } })
+    {
+        b->setClickingTogglesState (false);
+        b->onClick = [this, which] { studio.clickTrackSwitch (which, trackId, juce::ModifierKeys::currentModifiers); };
+        b->setTrackState = [this, which] (bool on) { studio.setTrackSwitch (which, trackId, on); };
+        b->onSwipeStart = [this, which] { studio.beginSwitchSwipe (which); };
+        b->onSwipeEnd = [this] { studio.endSwitchSwipe(); };
+    }
+    hide.onClick = [this] { pickMenu (itemHide); };
+    for (juce::Button* b : { static_cast<juce::Button*> (&onOff), static_cast<juce::Button*> (&monitor), static_cast<juce::Button*> (&hide) })
+    {
+        b->setWantsKeyboardFocus (true);
+        b->setMouseClickGrabsKeyboardFocus (false);
+        b->setHasFocusOutline (true);
+        addChildComponent (b);
+    }
     for (auto* b : { &mute, &solo, &arm })
     {
         b->setWantsKeyboardFocus (true);
@@ -790,7 +1178,13 @@ TrackHeader::TrackHeader (Studio& s, const Id& id, int n) : trackId (id), studio
         static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
         const auto i = mode.getSelectedItemIndex();
         if (i >= 0 && i < 5)
-            studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
+        {
+            // Alt while choosing: every track takes the mode (D-W8-7).
+            if (juce::ModifierKeys::currentModifiers.isAltDown())
+                studio.setAllAutomationModes (modes[i]);
+            else
+                studio.check (studio.session().setTrackAutomationMode (trackId, modes[i]));
+        }
     };
     addChildComponent (mode);
     lock.setShape (icon::lock(), false, true, false);
@@ -841,6 +1235,8 @@ juce::PopupMenu TrackHeader::menu() const
         m.addItem (itemBreakLock, "Break Lock (" + lockText + ")...");
     m.addSeparator();
     m.addItem (itemComment, "Add Comment", ! studio.previewing());
+    m.addSeparator();
+    m.addSubMenu ("Configure Track Header", studio.headerOptionsMenu (itemHeaderOption));
     return m;
 }
 
@@ -861,9 +1257,9 @@ void TrackHeader::pickMenu (int item)
         case itemHide:
             if (const auto* t = studio.model().track (trackId))
             {
-                const bool hide = ! t->hidden;
-                studio.check (studio.session().setTrackHidden (trackId, hide));
-                if (hide && ! studio.model().info.showHiddenTracks)
+                const bool hiding = ! t->hidden;
+                studio.check (studio.session().setTrackHidden (trackId, hiding));
+                if (hiding && ! studio.model().info.showHiddenTracks)
                     studio.setStatus ("Track hidden. View > Show Hidden Tracks brings it back.");
             }
             break;
@@ -881,7 +1277,9 @@ void TrackHeader::pickMenu (int item)
             break;
         }
         default:
-            if (item > itemColour && item <= itemColour + paletteSize)
+            if (item > itemHeaderOption)
+                studio.toggleHeaderOption (item - itemHeaderOption);
+            else if (item > itemColour && item <= itemColour + paletteSize)
                 studio.check (studio.session().setTrackColor (trackId, model::Color { item - itemColour - 1, {} }));
             break;
     }
@@ -903,6 +1301,7 @@ void TrackHeader::rebuildAutomation()
         shownChoices = built;
         parameters.clear();
         addLane.clear();
+        removeLane.clear();
         for (std::size_t i = 0; i < lanes.size(); ++i)
         {
             auto box = std::make_unique<juce::ComboBox>();
@@ -926,6 +1325,12 @@ void TrackHeader::rebuildAutomation()
             plus->onClick = [this] { studio.addShownLane (trackId); };
             addAndMakeVisible (*plus);
             addLane.push_back (std::move (plus));
+            auto close = std::make_unique<juce::TextButton> (juce::String (juce::CharPointer_UTF8 ("\xc3\x97")));
+            describe (*close, "Close automation lane", "Close this lane; its automation stays");
+            makeFocusable (*close);
+            close->onClick = [this, i] { studio.removeShownLane (trackId, i); };
+            addAndMakeVisible (*close);
+            removeLane.push_back (std::move (close));
         }
     }
     static const char* const modes[] = { "off", "read", "touch", "latch", "write" };
@@ -947,6 +1352,14 @@ void TrackHeader::refresh()
     solo.setToggleState (studio.localView().soloed.contains (trackId), juce::dontSendNotification);
     arm.setToggleState (studio.localView().armed.contains (trackId), juce::dontSendNotification);
     arm.setVisible (commands::LocalView::canArm (*t));
+    const auto& options = studio.header;
+    const bool switchable = t->kind == model::TrackKind::audio || t->kind == model::TrackKind::instrument;
+    onOff.setVisible (options.onOff && switchable);
+    onOff.setToggleState (! t->off, juce::dontSendNotification);
+    monitor.setVisible (options.monitor && t->kind == model::TrackKind::audio);
+    monitor.setToggleState (t->monitor == "on", juce::dontSendNotification);
+    hide.setVisible (options.hide && t->kind != model::TrackKind::master);
+    hide.setToggleState (t->hidden, juce::dontSendNotification);
     if (! volume.isMouseButtonDown())
         volume.setValue (std::clamp (t->strip.volumeDb, fader::minDb, fader::maxDb), juce::dontSendNotification);
     if (! pan.isMouseButtonDown())
@@ -961,10 +1374,12 @@ void TrackHeader::refresh()
     lock.setColours (lockColour, lockColour.brighter (0.3f), lockColour.darker (0.2f));
     lock.setTooltip (lockTip.isEmpty() ? juce::String() : lockTip + (locked ? juce::String() : juce::String (" (click to unlock)")));
     name.setEditable (false, ! locked, true);
-    std::vector<juce::Component*> shared { &name, &mute, &mode, &volume, &pan };
+    std::vector<juce::Component*> shared { &name, &mute, &mode, &volume, &pan, &onOff, &monitor, &hide };
     for (auto& p : parameters)
         shared.push_back (p.get());
     for (auto& b : addLane)
+        shared.push_back (b.get());
+    for (auto& b : removeLane)
         shared.push_back (b.get());
     for (auto* c : shared)
     {
@@ -1004,7 +1419,8 @@ void TrackHeader::paint (juce::Graphics& g)
     }
     depth::highlight (g, trackPart, 0.0f);
     // The track's colour runs down the left edge; selection adds an accent rule beside it.
-    if (t != nullptr)
+    const auto& options = studio.header;
+    if (t != nullptr && options.colorBars)
     {
         g.setColour (colourFor (t->color.palette, t->color.rgb));
         g.fillRect (trackPart.withWidth (static_cast<float> (space::half)));
@@ -1016,12 +1432,36 @@ void TrackHeader::paint (juce::Graphics& g)
     }
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::monoSmall));
-    g.drawText (juce::String (number), space::s1, space::s1, space::s3 - space::half, size::control, juce::Justification::centredRight);
-    if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible())
+    const auto row = juce::Rectangle<int> (0, name.getY(), 0, size::control);
+    if (options.numbers)
+        g.drawText (juce::String (number), space::s1, row.getY(), space::s3 - space::half, size::control, juce::Justification::centredRight);
+    if (t != nullptr && options.icons)
     {
+        // Track Icons (D-UI-37): the kind's glyph, left of the name.
+        const auto box = juce::Rectangle<float> (static_cast<float> (nameLeft() - size::icon - space::half), static_cast<float> (row.getY() + (size::control - size::icon) / 2),
+                                                 static_cast<float> (size::icon), static_cast<float> (size::icon));
+        const auto glyph = icon::track (static_cast<int> (t->kind));
+        g.setColour (colourFor (t->color.palette, t->color.rgb));
+        g.fillPath (glyph, glyph.getTransformToScaleToFit (box.reduced (1.0f), true));
+    }
+    if (const auto box = disclosureArea(); ! box.isEmpty())
+    {
+        // Open: pointing down; closed: pointing right.
+        const auto c = box.toFloat().getCentre();
+        juce::Path tri;
+        if (t->stackOpen)
+            tri.addTriangle (c.x - 4.0f, c.y - 2.0f, c.x + 4.0f, c.y - 2.0f, c.x, c.y + 3.0f);
+        else
+            tri.addTriangle (c.x - 2.0f, c.y - 4.0f, c.x - 2.0f, c.y + 4.0f, c.x + 3.0f, c.y);
+        g.setColour (colour (Token::text));
+        g.fillPath (tri);
+    }
+    if (t != nullptr && trackPart.getHeight() >= 48.0f && ! volume.isVisible() && ! pan.isVisible())
+    {
+        g.setColour (colour (Token::textDim));
         g.setFont (font (Type::body));
-        const auto kind = t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
-        g.drawText (kind, space::s4, space::s1 + size::control, 120, 16, juce::Justification::centredLeft);
+        const auto kind = t->isFolderStack() ? "Folder Stack" : t->isStackMain() ? "Summing Stack" : t->kind == model::TrackKind::bus ? "Bus" : t->kind == model::TrackKind::master ? "Master" : t->kind == model::TrackKind::instrument ? "Instrument" : "Audio";
+        g.drawText (kind, nameLeft(), space::s1 + size::control, 120, 16, juce::Justification::centredLeft);
     }
     // Collaborators working on this track (04 §6.1): a badge each, red while they record on it.
     auto badge = juce::Rectangle<float> (static_cast<float> (getWidth() - space::s1 - 16), static_cast<float> (space::s1 + size::control + 2), 16.0f, 16.0f);
@@ -1069,35 +1509,63 @@ std::vector<const collab::RemotePresence*> TrackHeader::badges() const
     return out;
 }
 
+int TrackHeader::nameLeft() const
+{
+    // Number, then the icon, then the name (D-UI-37); with neither, the name keeps clear of the colour bar.
+    const auto& options = studio.header;
+    int left = options.numbers ? space::s4 : space::s1 + space::half;
+    if (options.icons)
+        left += size::icon + space::half;
+    // Track stacks (D-W6-17): members sit indented under their main; the main has its disclosure triangle.
+    if (studio.model().stackMain (trackId) != nullptr)
+        left += space::s2;
+    if (const auto* t = studio.model().track (trackId); t != nullptr && t->isStackMain())
+        left += size::icon;
+    return left;
+}
+
+juce::Rectangle<int> TrackHeader::disclosureArea() const
+{
+    const auto* t = studio.model().track (trackId);
+    if (t == nullptr || ! t->isStackMain())
+        return {};
+    return { nameLeft() - size::icon - (studio.header.icons ? size::icon + space::half : 0), name.getY(), size::icon, size::control };
+}
+
 void TrackHeader::resized()
 {
     // Colour edge and number on the left; name, then M S R on the top line (8 px grid).
     const auto trackPart = getLocalBounds().withHeight (studio.trackHeight (trackId));
-    auto r = trackPart.withTrimmedLeft (space::s4).withTrimmedRight (space::s1);
+    auto r = trackPart.withTrimmedLeft (nameLeft()).withTrimmedRight (space::s1);
     auto row = r.withTrimmedTop (std::min (space::s1, std::max (0, (trackPart.getHeight() - size::control) / 2))).withHeight (size::control);
     if (lock.isVisible())
     {
         lock.setBounds (row.removeFromRight (size::icon).withSizeKeepingCentre (size::icon, size::icon));
         row.removeFromRight (space::half);
     }
-    for (auto* b : { &arm, &solo, &mute })
+    // Right to left: Hide, I, R, S, M, On (D-UI-37); a button that doesn't apply leaves no gap.
+    for (juce::Button* b : { static_cast<juce::Button*> (&hide), static_cast<juce::Button*> (&monitor), static_cast<juce::Button*> (&arm),
+                             static_cast<juce::Button*> (&solo), static_cast<juce::Button*> (&mute), static_cast<juce::Button*> (&onOff) })
     {
-        if (b == &arm && ! arm.isVisible())
+        if (! b->isVisible())
             continue;
-        b->setBounds (row.removeFromRight (size::control));
+        b->setBounds (row.removeFromRight (b == &onOff ? size::control + space::half : size::control));
         row.removeFromRight (space::half);
     }
     name.setBounds (row.withTrimmedRight (space::half));
     // Second line: volume, then pan; collaborator badges keep the right end (painted).
     const auto second = juce::Rectangle<int> (r.getX(), space::s1 + size::control + 2, r.getWidth(), 16);
     const bool roomy = trackPart.getHeight() >= 48;
-    volume.setVisible (roomy);
-    pan.setVisible (roomy);
+    volume.setVisible (roomy && studio.header.volume);
+    pan.setVisible (roomy && studio.header.pan);
     if (roomy)
     {
         auto line = second.withTrimmedRight (static_cast<int> (badges().size()) * 20);
-        pan.setBounds (line.removeFromRight (18).withSizeKeepingCentre (18, 18));
-        line.removeFromRight (space::half);
+        if (pan.isVisible())
+        {
+            pan.setBounds (line.removeFromRight (18).withSizeKeepingCentre (18, 18));
+            line.removeFromRight (space::half);
+        }
         volume.setBounds (line.withSizeKeepingCentre (line.getWidth(), 12));
     }
     // Automation lanes: the parameter and "+" on each; the track's mode on the first (W-8 step 1).
@@ -1109,6 +1577,8 @@ void TrackHeader::resized()
                         .withTrimmedLeft (space::s3);
         auto top = lane.removeFromTop (size::control);
         addLane[i]->setBounds (top.removeFromRight (size::control));
+        top.removeFromRight (space::half);
+        removeLane[i]->setBounds (top.removeFromRight (size::control));
         top.removeFromRight (space::half);
         parameters[i]->setBounds (top);
         if (i == 0)
@@ -1134,6 +1604,12 @@ void TrackHeader::mouseDown (const juce::MouseEvent& e)
         });
         return;
     }
+    if (disclosureArea().expanded (2).contains (e.getPosition()))
+    {
+        // Alt+click opens or closes every stack (M-MIX-31).
+        studio.toggleStack (trackId, e.mods.isAltDown());
+        return;
+    }
     const auto bottom = studio.trackHeight (trackId);
     resizeFrom = e.y >= bottom - 4 && e.y <= bottom ? bottom : -1;
     studio.selectTrack (trackId);
@@ -1143,7 +1619,11 @@ void TrackHeader::mouseDrag (const juce::MouseEvent& e)
 {
     if (resizeFrom > 0)
     {
-        studio.setTrackHeight (trackId, resizeFrom + e.getDistanceFromDragStartY());
+        // Ctrl+drag sets every track's height (D-UI-38).
+        if (e.mods.isCommandDown())
+            studio.setAllTrackHeights (resizeFrom + e.getDistanceFromDragStartY());
+        else
+            studio.setTrackHeight (trackId, resizeFrom + e.getDistanceFromDragStartY());
         return;
     }
     // Dragging a header reorders the tracks (F-TRK-7); the master stays where it is.
@@ -1681,7 +2161,8 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
         if (! wave.empty())
         {
             const auto rate = static_cast<double> (m.info.sampleRate);
-            const double framesPerPixel = rate / (m.tempo.bpmAt (r.start) / 60.0 * ticksPerQuarter) / studio.view.pixelsPerTick;
+            // Speed and stretch draw the file faster or slower across the region (D-UI-51).
+            const double framesPerPixel = rate / (m.tempo.bpmAt (r.start) / 60.0 * ticksPerQuarter) / studio.view.pixelsPerTick * r.audio.sourcePerSample();
             WaveformStyle style;
             style.peak = content.withMultipliedAlpha (0.55f);
             style.rms = content;
@@ -1693,10 +2174,20 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
         // Fades.
         auto fadeX = [&] (Samples s) { return static_cast<float> (s) / static_cast<float> (r.length) * box.getWidth(); };
         g.setColour (colour (Token::regionText).withAlpha (0.8f));
+        // A speed fade (Speed Up, Slow Down) is dashed.
+        auto fadeLine = [&g] (juce::Line<float> line, bool speed) {
+            if (! speed)
+                g.drawLine (line, 1.0f);
+            else
+            {
+                const float dashes[] = { 3.0f, 3.0f };
+                g.drawDashedLine (line, dashes, 2, 1.5f);
+            }
+        };
         if (r.audio.fadeIn.length > 0)
-            g.drawLine (box.getX(), body.getBottom(), box.getX() + fadeX (r.audio.fadeIn.length), body.getY(), 1.0f);
+            fadeLine ({ box.getX(), body.getBottom(), box.getX() + fadeX (r.audio.fadeIn.length), body.getY() }, r.audio.fadeIn.speed);
         if (r.audio.fadeOut.length > 0)
-            g.drawLine (box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom(), 1.0f);
+            fadeLine ({ box.getRight() - fadeX (r.audio.fadeOut.length), body.getY(), box.getRight(), body.getBottom() }, r.audio.fadeOut.speed);
     }
     // Audio still on its way (F-COL-10): the part not here yet is hatched, with how far it got.
     juce::String transfer;
@@ -1707,7 +2198,9 @@ void Timeline::paintRegion (juce::Graphics& g, const model::Region& r, juce::Rec
             const auto total = ref != nullptr ? static_cast<double> (ref->lengthSamples) : 0.0;
             // Where the downloaded prefix ends, in the region's own coordinates.
             const auto have = d->fraction * total - static_cast<double> (r.audio.sourceOffset);
-            const auto split = total > 0 && r.length > 0 ? std::clamp (static_cast<float> (have / static_cast<double> (r.length)), 0.0f, 1.0f) : 0.0f;
+            const auto split = total > 0 && r.length > 0
+                                 ? std::clamp (static_cast<float> (have / static_cast<double> (r.audio.sourceLength (r.length))), 0.0f, 1.0f)
+                                 : 0.0f;
             const auto missing = body.withTrimmedLeft (body.getWidth() * split);
             const juce::Graphics::ScopedSaveState save (g);
             g.reduceClipRegion (missing.toNearestInt());
@@ -1772,7 +2265,8 @@ void Timeline::paint (juce::Graphics& g)
             g.fillRect (lane);
         }
     }
-    paintGrid (g, getLocalBounds().toFloat());
+    if (studio.gridLines) // View › Grid Lines (D-W3-11)
+        paintGrid (g, getLocalBounds().toFloat());
     // Lane separators over the grid.
     g.setColour (colour (Token::background).withAlpha (0.8f));
     for (int row = 0; row < rows(); ++row)
@@ -1852,7 +2346,19 @@ void Timeline::paint (juce::Graphics& g)
         g.drawText (juce::String (formatBarsBeats (regionDrag->anchorStart(), m.signatures)) + (regionDrag->copying() ? "  (copy)" : ""),
                     juce::Rectangle<float> (lastAt.x + 12, lastAt.y - 22, 160, 18), juce::Justification::left);
     }
-    if (drag == Drag::rubberBand)
+    if (const auto outline = stretchOutline())
+    {
+        // Time stretch: where the region will end up, and by how much.
+        g.setColour (colour (Token::accent));
+        g.drawRect (*outline, 2.0f);
+        if (const auto* r = m.region (dragRegion); r != nullptr && r->length > 0)
+        {
+            g.setFont (font (Type::monoValue));
+            const auto percent = static_cast<double> (*stretchLength) / static_cast<double> (r->length) * r->audio.stretch * 100.0;
+            g.drawText ("Stretch " + juce::String (percent, 1) + "%", juce::Rectangle<float> (lastAt.x + 12, lastAt.y - 22, 160, 18), juce::Justification::left);
+        }
+    }
+    if (drag == Drag::rubberBand || drag == Drag::zoomBox)
     {
         g.setColour (colour (Token::accent).withAlpha (0.15f));
         const auto band = juce::Rectangle<float> (downAt, lastAt);
@@ -2057,7 +2563,11 @@ std::optional<juce::Point<float>> Timeline::collaboratorPointer (const std::stri
 
 void Timeline::mouseExit (const juce::MouseEvent&) { studio.setPointer (std::nullopt); }
 
-void Timeline::resized() { studio.timelineWidth = getWidth(); }
+void Timeline::resized()
+{
+    studio.timelineWidth = getWidth();
+    studio.timelineHeight = getHeight();
+}
 
 void Timeline::startRegionDrag (const model::Region& r, Zone zone, juce::Point<float> p, juce::ModifierKeys mods)
 {
@@ -2078,10 +2588,12 @@ void Timeline::startRegionDrag (const model::Region& r, Zone zone, juce::Point<f
         case Zone::none:
         case Zone::takes: break;
     }
+    stretching = (drag == Drag::trimStart || drag == Drag::trimEnd) && ! r.isMidi && mods.isCommandDown();
+    stretchLength.reset();
     if (drag != Drag::move && drag != Drag::none)
     {
         static const char* names[] = { "", "", "Trim Region", "Trim Region", "Fade", "Fade", "Loop Region" };
-        s.beginGesture (names[static_cast<int> (drag)]);
+        s.beginGesture (stretching ? "Time Stretch" : names[static_cast<int> (drag)]);
         gestureOpen = true;
     }
     juce::ignoreUnused (p);
@@ -2133,10 +2645,19 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
 
     if (clicks >= 2 && r != nullptr)
     {
-        // Double-click opens the matching editor (spec 04 §7).
+        // Double-click opens the matching editor (spec 04 §7); Alt+double-click opens it in its own window (D-UI-46).
         studio.editorRegion = r->id;
-        studio.layout.bottom = r->isMidi ? BottomTab::pianoRoll : BottomTab::audioEditor;
+        const bool midi = r->isMidi;
         studio.selection.click (r->id, false);
+        if (mods.isAltDown())
+        {
+            // An audio region opens in the Audio File Editor (D-UI-49).
+            if (! midi)
+                studio.audioFileMode = true;
+            studio.perform (midi ? Cmd::pianoRollWindow : Cmd::audioEditorWindow);
+        }
+        else
+            studio.layout.bottom = midi ? BottomTab::pianoRoll : BottomTab::audioEditor;
         studio.sendChangeMessage();
         return;
     }
@@ -2175,6 +2696,57 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
                 studio.check (studio.tool == Tool::eraser ? s.deleteRegions (targets) : s.toggleRegionsMuted (targets));
             }
             return;
+        case Tool::text:
+            if (r != nullptr)
+                renameRegion (r->id);
+            return;
+        case Tool::zoom:
+            // D-UI-36: drag a box to fit it; click zooms in around the pointer, Alt+click out.
+            if (mods.isAltDown())
+            {
+                studio.view.zoomAround (0.5, p.x);
+                studio.sendChangeMessage();
+                return;
+            }
+            drag = Drag::zoomBox;
+            return;
+        case Tool::fade:
+            if (r != nullptr && ! r->isMidi)
+            {
+                // The half of the region clicked: its fade in or fade out, set by the drag.
+                if (! studio.selection.contains (r->id))
+                    studio.selection.click (r->id, false);
+                startRegionDrag (*r, p.x < regionBounds (*r).getCentreX() ? Zone::fadeIn : Zone::fadeOut, p, mods);
+                pointerDrag (p, mods);
+                studio.sendChangeMessage();
+            }
+            return;
+        case Tool::gain:
+            if (r != nullptr && ! r->isMidi)
+            {
+                // Dragging up or down changes the gain of the region, or of every selected audio region when it's one of them.
+                const auto targets = studio.selection.contains (r->id) ? studio.selection.ids() : std::vector<Id> { r->id };
+                gainFrom.clear();
+                for (const auto& id : targets)
+                    if (const auto* t = m.region (id); t != nullptr && ! t->isMidi)
+                        gainFrom[id] = t->audio.gainDb;
+                dragRegion = r->id;
+                drag = Drag::gain;
+                s.beginGesture ("Region Gain");
+                gestureOpen = true;
+            }
+            return;
+        case Tool::quantize:
+            if (r != nullptr && r->isMidi)
+            {
+                const auto targets = studio.selection.contains (r->id) ? studio.selection.ids() : std::vector<Id> { r->id };
+                std::vector<Id> midi;
+                for (const auto& id : targets)
+                    if (const auto* t = m.region (id); t != nullptr && t->isMidi)
+                        midi.push_back (id);
+                studio.check (s.quantizeNotes (midi, {}, studio.piano.quantizeGrid, studio.piano.strength / 100.0, studio.piano.swing));
+            }
+            return;
         case Tool::pointer: break;
     }
 
@@ -2200,7 +2772,10 @@ void Timeline::pointerDown (juce::Point<float> p, juce::ModifierKeys mods, int c
             return;
     }
     else if (! studio.selection.contains (r->id))
+    {
         studio.selection.click (r->id, false);
+        studio.linkSelection();
+    }
     startRegionDrag (*r, zone, p, mods);
     studio.sendChangeMessage();
 }
@@ -2242,11 +2817,20 @@ void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
             break;
         }
         case Drag::trimStart:
-            if (r != nullptr)
-                s.trimRegionStart (r->id, t);
-            break;
         case Drag::trimEnd:
-            if (r != nullptr)
+            if (r != nullptr && stretching)
+            {
+                const auto startSample = m.tempo.tickToSample (static_cast<double> (r->start));
+                const auto edge = m.tempo.tickToSample (static_cast<double> (t));
+                const auto len = drag == Drag::trimEnd ? edge - startSample : startSample + static_cast<double> (r->length) - edge;
+                // Within the stretch's range (0.25 to 4 times the audio's own length).
+                const auto natural = static_cast<double> (r->length) / r->audio.stretch;
+                stretchLength = static_cast<Samples> (std::llround (std::clamp (len, natural * model::AudioRegionData::minRate, natural * model::AudioRegionData::maxRate)));
+                break;
+            }
+            if (r != nullptr && drag == Drag::trimStart)
+                s.trimRegionStart (r->id, t);
+            else if (r != nullptr)
             {
                 if (r->isMidi)
                     s.trimRegionLength (r->id, std::max<Ticks> (t - r->start, 1));
@@ -2265,17 +2849,31 @@ void Timeline::pointerDrag (juce::Point<float> p, juce::ModifierKeys mods)
                 const auto frac = drag == Drag::fadeIn ? (p.x - box.getX()) / box.getWidth() : (box.getRight() - p.x) / box.getWidth();
                 const auto len = static_cast<Samples> (std::clamp (frac, 0.0f, 1.0f) * static_cast<float> (r->length));
                 if (drag == Drag::fadeIn)
-                    s.setRegionFades (r->id, model::Fade { std::min (len, r->length - r->audio.fadeOut.length), r->audio.fadeIn.curve }, std::nullopt);
+                    s.setRegionFades (r->id, model::Fade { std::min (len, r->length - r->audio.fadeOut.length), r->audio.fadeIn.curve, r->audio.fadeIn.speed }, std::nullopt);
                 else
-                    s.setRegionFades (r->id, std::nullopt, model::Fade { std::min (len, r->length - r->audio.fadeIn.length), r->audio.fadeOut.curve });
+                    s.setRegionFades (r->id, std::nullopt, model::Fade { std::min (len, r->length - r->audio.fadeIn.length), r->audio.fadeOut.curve, r->audio.fadeOut.speed });
             }
             break;
         case Drag::loop:
             if (r != nullptr)
                 s.setRegionLoop (r->id, t);
             break;
+        case Drag::zoomBox: break;
+        case Drag::gain:
+        {
+            // 0.25 dB a pixel, up is louder; -60 dB and below is silence, +24 dB at most.
+            const auto delta = static_cast<double> (downAt.y - p.y) * 0.25;
+            for (const auto& [id, from] : gainFrom)
+            {
+                auto to = std::min (24.0, from + delta);
+                if (to <= -60.0)
+                    to = -200.0;
+                s.setRegionGain (id, to);
+            }
+            break;
+        }
     }
-    if (drag != Drag::move && drag != Drag::rubberBand && drag != Drag::none)
+    if (drag != Drag::move && drag != Drag::rubberBand && drag != Drag::none && drag != Drag::zoomBox)
         studio.edited();
     repaint();
 }
@@ -2300,6 +2898,22 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
         }
         regionDrag.reset();
     }
+    if (drag == Drag::zoomBox)
+    {
+        const auto band = juce::Rectangle<float> (downAt, p);
+        if (band.getWidth() >= 4.0f)
+            studio.view.fit (studio.view.xToTick (band.getX()), studio.view.xToTick (band.getRight()), getWidth(), 1.0);
+        else
+            studio.view.zoomAround (2.0, p.x);
+        studio.sendChangeMessage();
+    }
+    if (stretching)
+    {
+        if (stretchLength)
+            studio.check (studio.session().stretchAudioRegion (dragRegion, *stretchLength, drag == Drag::trimStart));
+        stretching = false;
+        stretchLength.reset();
+    }
     if (gestureOpen)
     {
         studio.session().endGesture();
@@ -2308,6 +2922,37 @@ void Timeline::pointerUp (juce::Point<float> p, juce::ModifierKeys mods)
     }
     drag = Drag::none;
     repaint();
+}
+
+std::optional<juce::Rectangle<float>> Timeline::stretchOutline() const
+{
+    const auto* r = studio.model().region (dragRegion);
+    if (! stretching || ! stretchLength || r == nullptr)
+        return std::nullopt;
+    const auto& tempo = studio.model().tempo;
+    auto box = regionBounds (*r);
+    const auto startSample = tempo.tickToSample (static_cast<double> (r->start));
+    if (drag == Drag::trimEnd)
+        box.setRight (static_cast<float> (studio.view.tickToX (tempo.sampleToTick (startSample + static_cast<double> (*stretchLength)))));
+    else
+        box.setLeft (static_cast<float> (studio.view.tickToX (tempo.sampleToTick (startSample + static_cast<double> (r->length - *stretchLength)))));
+    return box;
+}
+
+void Timeline::renameRegion (const Id& regionId)
+{
+    const auto* r = studio.model().region (regionId);
+    if (r == nullptr)
+        return;
+    juce::Component::SafePointer<Timeline> self (this);
+    auto done = [self, regionId] (juce::String name) {
+        if (self != nullptr && name.trim().isNotEmpty())
+            self->studio.check (self->studio.session().setRegionName (regionId, name.trim().toStdString()));
+    };
+    if (promptForText)
+        promptForText ("Rename region", juce::String (r->name), std::move (done));
+    else
+        askForText ("Rename region", juce::String (r->name), std::move (done));
 }
 
 bool Timeline::cancelDrag()
@@ -2325,6 +2970,8 @@ bool Timeline::cancelDrag()
         regionDrag->cancel();
         regionDrag.reset();
     }
+    stretching = false;
+    stretchLength.reset();
     if (gestureOpen)
     {
         studio.session().cancelGesture();
@@ -2435,7 +3082,7 @@ void Timeline::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
 
 // Tracks area -------------------------------------------------------------------------------
 
-juce::PopupMenu TracksArea::headerAreaMenu()
+juce::PopupMenu TracksArea::headerAreaMenu() const
 {
     juce::PopupMenu menu;
     const auto add = [&menu] (Cmd c) {
@@ -2449,13 +3096,32 @@ juce::PopupMenu TracksArea::headerAreaMenu()
         add (c);
     menu.addSeparator();
     add (Cmd::deleteUnusedTracks);
+    menu.addSeparator();
+    add (Cmd::toggleAllTracksOff);
+    menu.addSubMenu ("Configure Track Header", studio.headerOptionsMenu (headerOptionBase));
     return menu;
 }
 
 void TracksArea::pickHeaderAreaMenu (int item)
 {
-    if (item > 0)
+    if (item > headerOptionBase)
+        studio.toggleHeaderOption (item - headerOptionBase);
+    else if (item > 0)
         studio.perform (static_cast<Cmd> (item - 1));
+}
+
+void TracksArea::showHeaderOptions()
+{
+    juce::Component::SafePointer<TracksArea> self (this);
+    const auto at = headerColumn.getScreenBounds().withHeight (size::control).withWidth (headerWidth());
+    studio.headerOptionsMenu (headerOptionBase)
+        .showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (at), [self] (int item) {
+            if (self != nullptr && item > headerOptionBase)
+            {
+                self->studio.toggleHeaderOption (item - headerOptionBase);
+                self->showHeaderOptions(); // stays open while options are ticked, like a popover
+            }
+        });
 }
 
 TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
@@ -2464,6 +3130,9 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
     addAndMakeVisible (lanes);
     addAndMakeVisible (headerColumn);
     headerColumn.setTitle ("Track headers");
+    addAndMakeVisible (resizer);
+    resizer.setTitle ("Track header width");
+    resizer.setHelpText ("Drag to resize the track headers; double-click for the default width");
     // The headers take their own clicks, so this is the empty space under the last track (04 §6.1).
     headerColumn.onDoubleClick = [this] { studio.perform (Cmd::newTrack); };
     headerColumn.onPopupMenu = [this] {
@@ -2474,7 +3143,9 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
         });
     };
     addTrack.setMouseClickGrabsKeyboardFocus (false);
-    addTrack.onClick = [this] { studio.perform (Cmd::newTrack); };
+    // Alt+click adds a track like the selected one on the next input, without the dialog (D-UI-34).
+    addTrack.onClick = [this] { studio.perform (juce::ModifierKeys::currentModifiers.isAltDown() ? Cmd::newTrackNextInput : Cmd::newTrack); };
+    addTrack.setTooltip (addTrack.getTooltip() + "; Alt+click: " + commandInfo (Cmd::newTrackNextInput).name);
     addAndMakeVisible (addTrack);
     addAndMakeVisible (vertical);
     addAndMakeVisible (horizontal);
@@ -2483,12 +3154,63 @@ TracksArea::TracksArea (Studio& s) : studio (s), rulerComponent (s), lanes (s)
     vertical.setTitle ("Vertical scroll");
     horizontal.setTitle ("Horizontal scroll");
     lanes.onScroll = [this] { resized(); };
+    // Page Up/Down and the saved zooms reach the vertical scroll through these (D-UI-38).
+    studio.verticalScroll = [this] { return lanes.scrollY; };
+    studio.setVerticalScroll = [this] (int y) {
+        lanes.scrollY = std::clamp (y, 0, std::max (0, lanes.contentHeight() + defaultTrackHeight - lanes.getHeight()));
+        resized();
+        repaint();
+    };
+    // The zoom sliders in the corner (D-UI-38): horizontal on a log scale, vertical as every track's height.
+    for (auto* sl : { &horizontalZoom, &verticalZoom })
+    {
+        sl->setSliderStyle (juce::Slider::LinearHorizontal);
+        sl->setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        sl->onDragStart = [this] { studio.rememberView(); };
+        makeFocusable (*sl);
+        addAndMakeVisible (*sl);
+    }
+    describe (horizontalZoom, "Horizontal zoom");
+    describe (verticalZoom, "Vertical zoom", "Every track's height");
+    horizontalZoom.setRange (0.0, 1.0);
+    verticalZoom.setRange (minTrackHeight, maxTrackHeight, 1.0);
+    horizontalZoom.onValueChange = [this] {
+        studio.view.pixelsPerTick = pixelsPerTickFor (horizontalZoom.getValue());
+        resized();
+        repaint();
+    };
+    verticalZoom.onValueChange = [this] { studio.setAllTrackHeights (juce::roundToInt (verticalZoom.getValue())); };
     studio.addChangeListener (this);
     rebuildHeaders();
     startTimerHz (30);
 }
 
-TracksArea::~TracksArea() { studio.removeChangeListener (this); }
+double TracksArea::pixelsPerTickFor (double position)
+{
+    const auto lo = std::log (arrange::TimelineView::minPixelsPerTick), hi = std::log (arrange::TimelineView::maxPixelsPerTick);
+    return std::exp (lo + std::clamp (position, 0.0, 1.0) * (hi - lo));
+}
+
+double TracksArea::positionFor (double pixelsPerTick)
+{
+    const auto lo = std::log (arrange::TimelineView::minPixelsPerTick), hi = std::log (arrange::TimelineView::maxPixelsPerTick);
+    return std::clamp ((std::log (pixelsPerTick) - lo) / (hi - lo), 0.0, 1.0);
+}
+
+void TracksArea::syncZoomSliders()
+{
+    if (! horizontalZoom.isMouseButtonDown())
+        horizontalZoom.setValue (positionFor (studio.view.pixelsPerTick), juce::dontSendNotification);
+    if (! verticalZoom.isMouseButtonDown() && ! studio.model().trackOrder.empty())
+        verticalZoom.setValue (studio.trackHeight (studio.model().trackOrder.front()), juce::dontSendNotification);
+}
+
+TracksArea::~TracksArea()
+{
+    studio.removeChangeListener (this);
+    studio.verticalScroll = nullptr;
+    studio.setVerticalScroll = nullptr;
+}
 
 void TracksArea::rebuildHeaders()
 {
@@ -2512,11 +3234,12 @@ void TracksArea::rebuildHeaders()
 void TracksArea::layoutHeaders()
 {
     for (std::size_t i = 0; i < trackHeaders.size(); ++i)
-        trackHeaders[i]->setBounds (lanes.rowBounds (static_cast<int> (i)).withX (0).withWidth (static_cast<float> (headerWidth)).toNearestInt());
+        trackHeaders[i]->setBounds (lanes.rowBounds (static_cast<int> (i)).withX (0).withWidth (static_cast<float> (headerWidth())).toNearestInt());
 }
 
 void TracksArea::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    syncZoomSliders();
     rebuildHeaders();
     resized();
     repaint();
@@ -2542,6 +3265,22 @@ void TracksArea::timerCallback()
     hadCollaborators = ! studio.collaborators().empty();
 }
 
+void TracksArea::revealTrack (const Id& trackId)
+{
+    const auto& order = studio.model().rows;
+    const auto it = std::find (order.begin(), order.end(), trackId);
+    if (it == order.end())
+        return;
+    const auto row = lanes.rowBounds (static_cast<int> (it - order.begin()));
+    if (row.getY() < 0.0f)
+        lanes.scrollY += juce::roundToInt (row.getY());
+    else if (row.getBottom() > static_cast<float> (lanes.getHeight()))
+        lanes.scrollY += juce::roundToInt (std::min (row.getY(), row.getBottom() - static_cast<float> (lanes.getHeight())));
+    lanes.scrollY = std::max (0, lanes.scrollY);
+    resized();
+    repaint();
+}
+
 void TracksArea::scrollBarMoved (juce::ScrollBar* bar, double start)
 {
     if (bar == &vertical)
@@ -2556,32 +3295,98 @@ void TracksArea::paint (juce::Graphics& g)
 {
     g.fillAll (colour (Token::surface));
     // The corner over the track headers: the panel's caption, level with the ruler.
-    const auto corner = juce::Rectangle<int> (0, 0, headerWidth, rulerComponent.getHeight());
+    const auto corner = juce::Rectangle<int> (0, 0, headerWidth(), rulerComponent.getHeight());
     g.setGradientFill (juce::ColourGradient::vertical (colour (Token::surfaceRaised), 0.0f, colour (Token::surface), static_cast<float> (Ruler::rulerHeight)));
     g.fillRect (corner);
     depth::highlight (g, corner.toFloat(), 0.0f);
     g.setColour (colour (Token::textDim));
     g.setFont (font (Type::caption));
     g.drawText (captionText ("Tracks"), corner.withHeight (Ruler::rulerHeight).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
-    if (studio.layout.globalTracks)
+    // The global tracks' names, level with their lanes, each with its protect lock (D-UI-44).
+    g.setFont (font (Type::small));
+    for (const auto& [lane, area] : rulerComponent.lanes())
     {
-        // The global tracks' names, level with their lanes.
-        g.setFont (font (Type::small));
-        const auto label = [&] (const char* text, int top, int height) {
-            g.drawText (text, corner.withY (top).withHeight (height).reduced (space::s1 + space::half, 0), juce::Justification::centredLeft);
-        };
-        label ("Markers", Ruler::rulerHeight, Ruler::markerLane);
-        label ("Tempo", Ruler::tempoTop, Ruler::tempoLane);
-        label ("Signature", Ruler::signatureTop, Ruler::signatureLane);
+        g.setColour (colour (Token::textDim));
+        g.drawText (globalLaneName (lane), corner.withY (area.getY()).withHeight (area.getHeight()).reduced (space::s1 + space::half, 0),
+                    juce::Justification::centredLeft);
+        const auto lock = protectButtonBounds (lane).toFloat();
+        const bool on = (studio.protectedLanes & lane) != 0;
+        g.setColour (on ? colour (Token::text) : colour (Token::textDim).withAlpha (0.5f));
+        const auto body = juce::Rectangle<float> (lock.getX() + 2.0f, lock.getCentreY() - 1.0f, lock.getWidth() - 4.0f, 6.0f);
+        g.fillRoundedRectangle (body, 1.0f);
+        juce::Path shackle;
+        shackle.addCentredArc (body.getCentreX(), body.getY(), body.getWidth() / 2.0f - 1.0f, 3.5f, 0.0f, on ? -juce::MathConstants<float>::halfPi : -juce::MathConstants<float>::pi * 0.85f,
+                               juce::MathConstants<float>::halfPi, true);
+        g.strokePath (shackle, juce::PathStrokeType (1.4f));
     }
     g.setColour (colour (Token::border));
     g.fillRect (corner.withTop (corner.getBottom() - 1));
 }
 
+juce::Rectangle<int> TracksArea::protectButtonBounds (GlobalLane lane) const
+{
+    const auto area = rulerComponent.laneBounds (lane);
+    if (! area)
+        return {};
+    return { headerWidth() - space::s1 - 14, area->getCentreY() - 7, 14, 14 };
+}
+
+juce::PopupMenu TracksArea::globalTracksMenu() const
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Show");
+    for (const auto lane : globalLaneOrder)
+        menu.addItem (globalShowBase + lane, globalLaneName (lane), true, studio.layout.globalTracks && (studio.layout.globalLanes & lane) != 0);
+    menu.addSeparator();
+    menu.addItem (static_cast<int> (Cmd::showSingleGlobalTrack) + 1, commandInfo (Cmd::showSingleGlobalTrack).name, true, studio.layout.singleGlobalLane);
+    menu.addItem (static_cast<int> (Cmd::markerTrackOnly) + 1, "Marker Track Only", true,
+                  studio.layout.globalTracks && studio.layout.globalLanes == laneMarkers && ! studio.layout.singleGlobalLane);
+    menu.addSeparator();
+    juce::PopupMenu protect;
+    for (const auto lane : globalLaneOrder)
+        protect.addItem (globalProtectBase + lane, globalLaneName (lane), true, (studio.protectedLanes & lane) != 0);
+    menu.addSubMenu ("Protect", protect);
+    menu.addSeparator();
+    for (const auto c : { Cmd::addSection, Cmd::createSignatureChange, Cmd::createKeyChange })
+        menu.addItem (static_cast<int> (c) + 1, commandInfo (c).name);
+    return menu;
+}
+
+void TracksArea::pickGlobalTracksMenu (int item)
+{
+    if (item > globalProtectBase && item <= globalProtectBase + allGlobalLanes)
+        studio.toggleLaneProtect (static_cast<GlobalLane> (item - globalProtectBase));
+    else if (item > globalShowBase && item <= globalShowBase + allGlobalLanes)
+    {
+        const auto lane = static_cast<GlobalLane> (item - globalShowBase);
+        studio.setLaneShown (lane, ! (studio.layout.globalTracks && (studio.layout.globalLanes & lane) != 0));
+    }
+    else if (item > 0 && item < globalShowBase)
+        studio.perform (static_cast<Cmd> (item - 1));
+}
+
+void TracksArea::mouseDown (const juce::MouseEvent& e)
+{
+    const auto p = e.getPosition();
+    if (p.x >= headerWidth() || p.y < Ruler::rulerHeight || p.y >= rulerComponent.getHeight())
+        return;
+    if (e.mods.isPopupMenu())
+    {
+        globalTracksMenu().showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe = juce::Component::SafePointer<TracksArea> (this)] (int item) {
+            if (safe != nullptr)
+                safe->pickGlobalTracksMenu (item);
+        });
+        return;
+    }
+    for (const auto& [lane, area] : rulerComponent.lanes())
+        if (protectButtonBounds (lane).expanded (2).contains (p))
+            studio.toggleLaneProtect (lane);
+}
+
 void TracksArea::paintOverChildren (juce::Graphics& g)
 {
     // The header column sits above the canvas: a short shadow falls onto the lanes.
-    const auto x = static_cast<float> (headerWidth);
+    const auto x = static_cast<float> (headerWidth());
     const auto a = depth::shade (0.3f, 0.1f);
     g.setGradientFill (juce::ColourGradient::horizontal (a, x, a.withAlpha (0.0f), x + 5.0f));
     g.fillRect (x, static_cast<float> (rulerComponent.getY()), 5.0f, static_cast<float> (getHeight()));
@@ -2593,13 +3398,22 @@ void TracksArea::resized()
 {
     auto r = getLocalBounds();
     auto top = r.removeFromTop (rulerComponent.preferredHeight());
-    top.removeFromLeft (headerWidth);
+    top.removeFromLeft (headerWidth());
     const auto bar = getLookAndFeel().getDefaultScrollbarWidth();
     rulerComponent.setBounds (top.withTrimmedRight (bar));
-    horizontal.setBounds (r.removeFromBottom (bar).withTrimmedLeft (headerWidth).withTrimmedRight (bar));
+    horizontal.setBounds (r.removeFromBottom (bar).withTrimmedLeft (headerWidth()).withTrimmedRight (bar));
     vertical.setBounds (r.removeFromRight (bar));
-    headerColumn.setBounds (r.removeFromLeft (headerWidth));
-    addTrack.setBounds (headerWidth - space::s1 - size::control, (Ruler::rulerHeight - size::control) / 2, size::control, size::control);
+    headerColumn.setBounds (r.removeFromLeft (headerWidth()));
+    resizer.setBounds (headerWidth() - space::half, headerColumn.getY(), space::s1, headerColumn.getHeight());
+    addTrack.setBounds (headerWidth() - space::s1 - size::control, (Ruler::rulerHeight - size::control) / 2, size::control, size::control);
+    // The zoom sliders share the caption row, between "Tracks" and +.
+    {
+        auto zoomRow = juce::Rectangle<int> (64, (Ruler::rulerHeight - 16) / 2, addTrack.getX() - space::half - 64, 16);
+        const auto each = std::max (0, (zoomRow.getWidth() - space::half) / 2);
+        horizontalZoom.setBounds (zoomRow.removeFromLeft (each));
+        zoomRow.removeFromLeft (space::half);
+        verticalZoom.setBounds (zoomRow.removeFromLeft (each));
+    }
     lanes.setBounds (r);
     layoutHeaders();
     vertical.setRangeLimits (0.0, std::max<double> (lanes.contentHeight() + defaultTrackHeight, lanes.getHeight()), juce::dontSendNotification);

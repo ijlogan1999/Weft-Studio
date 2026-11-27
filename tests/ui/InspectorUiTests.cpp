@@ -259,3 +259,90 @@ TEST_CASE ("Screenshot of the inspector", "[.screenshot-inspector]")
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
 }
+
+TEST_CASE ("AT-TRK-24 Inspector track parameters for instrument tracks", "[UI][AT-TRK-24]")
+{
+    Ui ui;
+    auto& in = inspector (ui);
+    in.midiDeviceNames = [] { return std::vector<std::string> { "USB Keys", "Pads" }; };
+    const auto audio = ui.m().trackOrder.front();
+    const auto keys = ui.studio.session().createTrack (model::TrackKind::instrument, "Keys").value();
+    ui.studio.edited();
+
+    // Audio tracks don't show them.
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    CHECK_FALSE (in.trackTranspose.isVisible());
+    CHECK_FALSE (in.midiIn.isVisible());
+
+    ui.studio.selectTrack (keys);
+    ui.settle();
+    REQUIRE (in.trackTranspose.isVisible());
+    CHECK (in.midiIn.getNumItems() == 3); // All, USB Keys, Pads
+    CHECK (in.midiIn.getText() == "All");
+    CHECK (in.keyLow.getTextFromValue (in.keyLow.getValue()) == juce::String (commands::noteName (0)));
+    CHECK (in.velocityHigh.getValue() == 127.0);
+    CHECK (in.trackTranspose.getY() > in.midiIn.getY());
+
+    // A drag is one undo step.
+    in.trackTranspose.onDragStart();
+    in.trackTranspose.setValue (5, juce::sendNotificationSync);
+    in.trackTranspose.setValue (7, juce::sendNotificationSync);
+    in.trackTranspose.onDragEnd();
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.transpose == 7);
+    CHECK (ui.studio.session().undoName() == "Track Parameters");
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.transpose == 0);
+    CHECK (in.trackTranspose.getValue() == 0.0);
+
+    // Limits pushed past their partner take it along.
+    in.keyHigh.setValue (40, juce::sendNotificationSync);
+    in.keyLow.setValue (60, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.keyLow == 60);
+    CHECK (ui.m().track (keys)->playback.keyHigh == 60);
+    in.velocityLow.setValue (90, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.velocityLow == 90);
+
+    // Delay in ticks; switching the unit sets the delay to zero.
+    in.trackDelay.setValue (25.5, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.delay == 25.5);
+    in.delayUnit.setSelectedId (2, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.delayInTicks);
+    CHECK (ui.m().track (keys)->playback.delay == 0.0);
+    CHECK (in.trackDelay.getMaximum() == model::TrackPlayback::maxDelayTicks);
+    in.trackDelay.setValue (240, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.delay == 240.0);
+    CHECK (in.trackDelay.getTextFromValue (240) == "240");
+
+    // Out channel, No Transpose.
+    in.midiOutChannel.setSelectedId (11, juce::sendNotificationSync); // channel 10
+    in.noTranspose.setToggleState (true, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->playback.outChannel == 10);
+    CHECK (ui.m().track (keys)->playback.noTranspose);
+
+    // MIDI input device and channel set the track's input.
+    in.midiIn.setSelectedId (3, juce::sendNotificationSync); // Pads
+    in.midiInChannel.setSelectedId (3, juce::sendNotificationSync); // channel 2
+    ui.settle();
+    CHECK (ui.m().track (keys)->input.kind == model::InputAssignment::Kind::midi);
+    CHECK (ui.m().track (keys)->input.device == "Pads");
+    CHECK (ui.m().track (keys)->input.channel == 2);
+
+    // A device that went away stays listed while the track uses it.
+    in.midiDeviceNames = [] { return std::vector<std::string> { "USB Keys" }; };
+    ui.studio.selectTrack (audio);
+    ui.settle();
+    ui.studio.selectTrack (keys);
+    ui.settle();
+    CHECK (in.midiIn.getText() == "Pads");
+    CHECK (in.midiInChannel.getText() == "2");
+}

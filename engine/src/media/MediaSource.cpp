@@ -36,6 +36,7 @@ std::shared_ptr<MediaSource> MediaSource::open (const std::filesystem::path& fil
     std::shared_ptr<MediaSource> source (new MediaSource());
     if (! source->reader.open (file, error))
         return nullptr;
+    source->path = file;
     const auto& info = source->reader.info();
     source->rate = info.sampleRate;
     source->channels = info.channels;
@@ -99,6 +100,37 @@ void MediaSource::extend()
     while (b < ready && (isLoaded (b) || load (b)))
         ++b;
     playable.store (b >= blocks ? frames : b * blockFrames, std::memory_order_release);
+}
+
+std::optional<media::AudioData> MediaSource::readAll() const
+{
+    if (isPartial)
+        return std::nullopt;
+    media::AudioData out;
+    out.sampleRate = rate;
+    out.channels.assign (static_cast<std::size_t> (channels), std::vector<float> (static_cast<std::size_t> (frames)));
+    if (isResident)
+    {
+        for (std::int64_t b = 0; b < blocks; ++b)
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                const float* data = block (ch, b);
+                if (data == nullptr)
+                    return std::nullopt;
+                const auto start = b * blockFrames;
+                std::copy_n (data, std::min (blockFrames, frames - start), out.channels[static_cast<std::size_t> (ch)].begin() + start);
+            }
+        return out;
+    }
+    media::WavReader file;
+    if (! file.open (path))
+        return std::nullopt;
+    std::vector<float*> dest;
+    for (auto& c : out.channels)
+        dest.push_back (c.data());
+    if (file.read (0, frames, dest.data()) != frames)
+        return std::nullopt;
+    return out;
 }
 
 MediaSource::~MediaSource()

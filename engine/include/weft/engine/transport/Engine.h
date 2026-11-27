@@ -7,6 +7,7 @@
 #include "weft/engine/record/RecordWriter.h"
 #include "weft/engine/rt/SpscQueue.h"
 #include "weft/engine/transport/Metronome.h"
+#include "weft/engine/transport/Varispeed.h"
 #include "weft/model/ProjectModel.h"
 
 #include <array>
@@ -51,12 +52,17 @@ struct TransportSettings
     bool metronomeOn = true;
     double metronomeLevelDb = 0.0;
     ClickDuring metronomeDuring = ClickDuring::record;
-    int countInBars = 1; // 0, 1 or 2
+    int countInBars = 1; // 0 none, 1 to 6 bars, -1 or -2 beats (model::countInChoices)
     /** MIDI recording over an existing region: merge into it, or a new region on top (F-REC-7). */
     bool midiMergeLinear = false;
     bool midiMergeCycle = true;
-    /** MIDI Recording › Replace (L-MREC-6): a pass deletes what was on the track where it recorded. */
-    bool midiReplace = false;
+    /** Replace (L-MREC-6, D-W1-12): a pass deletes what was on the track where it recorded, MIDI and audio. */
+    bool replace = false;
+    /** Navigate › Metronome (D-W1-11): which clicks sound, whether only the count-in clicks, and the tone. */
+    bool clickBars = true, clickBeats = true, clickDivisions = false, clickOnlyCountIn = false;
+    int clickTone = Metronome::middleTone; // 0 (low) to Metronome::numTones - 1 (high)
+    /** Varispeed (D-ARCH-55): the rate everything plays at, 0.5 to 2; 1 is off. Bounces ignore it. */
+    double varispeed = 1.0;
 
     static TransportSettings fromDefaults (const model::MetronomeSettings& m);
 };
@@ -134,6 +140,14 @@ public:
     /** Starts recording at the playhead (or `from`), with the count-in from the settings. */
     RecordResult record();
     RecordResult record (Ticks from);
+    /** Record Toggle (D-W1-12): while playing, starts recording right where the playhead is, with no
+        count-in; while recording, stops recording and keeps playing; stopped, records as usual. */
+    RecordResult recordToggle();
+    /** Capture as Recording (D-W1-13): the MIDI played since the transport last started (and not
+        captured yet) becomes a recording on `trackId`, as if it had been recorded. */
+    RecordingOutcome captureRecording (commands::Session& session, const Id& trackId);
+    /** MIDI waiting to be captured (D-W1-13). */
+    bool canCapture() const noexcept;
     /** Ends the recording pass but keeps playing (R while recording, D-W1-2). */
     void stopRecording();
     void locate (Ticks to);
@@ -176,7 +190,8 @@ public:
 
     /** Live MIDI input (keyboard, MIDI devices). `deviceFrame` is the device frame it arrived at,
         or -1 for the next block. Call from one thread only. */
-    bool sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame = -1) noexcept;
+    /** source: the sending device's midiSourceId (0 for the computer keyboard, which every track hears). */
+    bool sendMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, std::int64_t deviceFrame = -1, std::uint32_t source = 0) noexcept;
     /** Plays one note on a track's instrument outside the timeline (F-PRL-11): note-on now,
         note-off after `seconds` (at most 1 s). False when the track has no instrument. */
     bool audition (const Id& trackId, int channel, int pitch, int velocity, double seconds = 0.5);
@@ -219,6 +234,9 @@ public:
     void preview (std::shared_ptr<const media::AudioData> audio);
     void stopPreview() { preview (nullptr); }
     bool previewing() const noexcept { return published.previewing.load (std::memory_order_relaxed); }
+    /** The preview's volume (D-W6-12), applied from the next block; the playing preview follows it. */
+    void setPreviewGain (float gain) noexcept { previewGain.store (gain, std::memory_order_relaxed); }
+    float previewGainNow() const noexcept { return previewGain.load (std::memory_order_relaxed); }
     std::size_t pendingRetired() const noexcept { return retired.size(); }
 
     // Real-time bounce (W-9) ------------------------------------------------------------
@@ -257,8 +275,11 @@ private:
         std::int64_t a = 0, b = 0; // play/locate/record: position (or fromPlayhead); record: b = count-in bars; stop: a = 1 stays put
         RecordPass* pass = nullptr;
         // settings
-        bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
+        bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true, clickOnlyCountIn = false;
         float clickGain = 1;
+        Metronome::Pattern clickPattern {};
+        int clickTone = Metronome::middleTone;
+        double speed = 1.0;
     };
 
     static constexpr std::int64_t fromPlayhead = INT64_MIN;
@@ -277,11 +298,17 @@ private:
                               float* right, int frames) noexcept;
     bool monitoring (const ChannelPlan& channel) const noexcept;
     void renderClicks (const EngineSnapshot& snap, std::int64_t from, int offset, int frames, bool audible) noexcept;
+    /** One block on the timeline into mix: the transport, the channels, the master and a real-time bounce. */
+    void renderBlock (const EngineSnapshot& snap, const float* const* inputs, int frames) noexcept;
+    /** Varispeed (D-ARCH-55): renders as many timeline frames as the rate needs and resamples them to the device. */
+    void processVarispeed (const EngineSnapshot& snap, const float* const* inputs, float* const* outputs, int numFrames) noexcept;
     void flushAllNotes (const EngineSnapshot* snap) noexcept;
     void finishCapture() noexcept;
     void captureSpan (const float* const* inputs, std::int64_t from, int offset, int frames) noexcept;
     void captureWrap (std::int64_t at) noexcept;
-    void takeLiveMidi (int numFrames) noexcept;
+    void captureLive (std::int64_t from, int offset, int frames) noexcept;
+    RecordResult startRecording (Ticks from, bool onTheFly);
+    void takeLiveMidi (int numFrames, int filter) noexcept;
 
     MediaPool& mediaPool;
     InstrumentRack& rack;
@@ -319,6 +346,13 @@ private:
         std::unique_ptr<RecordWriter> writer;
     };
     std::vector<Pass> passes; // oldest first; the audio thread fills the newest
+    // Capture as Recording (D-W1-13): the audio thread keeps the live MIDI it plays while not
+    // recording; it starts over each time the transport starts.
+    std::unique_ptr<RecordPass::MidiLane> liveLane;
+    std::atomic<std::uint64_t> liveGeneration { 0 };
+    std::atomic<std::int64_t> liveStart { 0 }, liveEnd { 0 }; // timeline samples it covers
+    std::uint64_t capturedGeneration = 0; // message thread: what was captured already
+    std::size_t capturedCount = 0;
     std::atomic<bool> running { false };
     double rate = 48000;
     int maxBlock = 0;
@@ -347,12 +381,14 @@ private:
     std::vector<Preview> previews; // message thread: kept alive until the audio thread moves past them
     std::atomic<const media::AudioData*> previewNext { nullptr };
     std::atomic<std::uint64_t> previewSerial { 0 }, previewAcked { 0 };
+    std::atomic<float> previewGain { 1.0f };
     MediaStreamer streamer;
     bool diskThread = true;
     struct LiveMidiIn
     {
         std::int64_t frame = -1;
         std::uint8_t status = 0, data1 = 0, data2 = 0;
+        std::uint32_t source = 0;
     };
     rt::SpscQueue<LiveMidiIn, 1024> midiIn;
 
@@ -364,9 +400,12 @@ private:
     std::optional<LiveMidiIn> laterMidi; // popped, but for a later block
     static constexpr int maxLiveEvents = 512;
     std::array<MidiEvent, maxLiveEvents> liveEvents {}; // this block's live MIDI, offsets in the block
+    std::array<std::uint32_t, maxLiveEvents> liveSources {}; // the device each came from
     int numLive = 0;
-    bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true;
+    bool returnToStart = true, clickOn = true, clickInPlay = false, clickInRecord = true, clickOnlyCountIn = false;
     float clickGain = 1;
+    Metronome::Pattern clickPattern {};
+    int clickTone = Metronome::middleTone;
     double loadAverage = 0;
     const media::AudioData* previewAudio = nullptr;
     std::uint64_t previewSeen = 0;
@@ -388,7 +427,23 @@ private:
     static constexpr int maxClicksPerSpan = 64;
     std::array<Metronome::Click, maxClicksPerSpan> clickScratch {};
     std::array<int, maxClicksPerSpan> clickOffsets {};
-    std::array<bool, maxClicksPerSpan> clickAccents {};
+    std::array<Metronome::Level, maxClicksPerSpan> clickLevels {};
     Metronome metronome;
+
+    // Varispeed (audio thread; buffers sized in prepare). The timeline's output goes into a ring, read at
+    // the rate; the device input goes into another, read at 1 / rate for monitoring and recording.
+    static constexpr int vsReach = 17; // sinc taps each side at the lowest cutoff (rate 2)
+    double vsTarget = 1.0, vsRate = 1.0;
+    bool vsActive = false, vsRendering = false;
+    std::array<std::vector<float>, 2> vsRing;
+    std::array<std::array<float, vsReach>, 2> vsHistory {}; // the plain path's last frames: Varispeed starts without a gap
+    std::vector<std::vector<float>> vsIn, vsInChunk;
+    std::vector<const float*> vsInPtrs;
+    std::vector<float> vsClick;
+    std::int64_t vsCapacity = 0, vsWritten = 0, vsInWritten = 0, vsChunkStart = 0;
+    double vsRead = 0, vsInRead = 0;
+    std::array<std::int64_t, maxClicksPerSpan> vsClickAt {}; // queued clicks, by ring frame
+    std::array<Metronome::Level, maxClicksPerSpan> vsClickLevel {};
+    int vsNumClicks = 0;
 };
 } // namespace weft::engine

@@ -6,13 +6,27 @@
 // disabled in preferences are dropped here.
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace weft::engine
 {
 class Engine;
+
+/** A device's number for a track's MIDI input filter (P-TRI-9): a stable hash of its name, never 0
+    (0 means the computer keyboard when sending, and every device when filtering). */
+constexpr std::uint32_t midiSourceId (std::string_view deviceName) noexcept
+{
+    if (deviceName.empty() || deviceName == "all")
+        return 0;
+    std::uint32_t h = 2166136261u;
+    for (const char c : deviceName)
+        h = (h ^ static_cast<std::uint8_t> (c)) * 16777619u;
+    return h == 0 ? 1 : h;
+}
 
 class MidiInputRouter
 {
@@ -28,9 +42,14 @@ public:
         False when it was dropped (disabled input, or the engine's queue is full). */
     bool deliver (const std::string& deviceName, std::uint8_t status, std::uint8_t data1, std::uint8_t data2);
 
+    /** Also hands every controller message from an enabled device to `tap` (Smart Controls, D-UI-52), on the
+        device's thread; the message still goes on to the engine. Null removes it. */
+    void setControllerTap (std::function<void (std::uint8_t status, std::uint8_t data1, std::uint8_t data2)> tap);
+
 private:
     Engine& eng;
     mutable std::mutex lock;
     std::set<std::string> off;
+    std::function<void (std::uint8_t, std::uint8_t, std::uint8_t)> controllerTap;
 };
 } // namespace weft::engine

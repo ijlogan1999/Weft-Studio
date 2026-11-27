@@ -46,7 +46,7 @@ TEST_CASE ("Bounce dialog: Ctrl+B is in the File menu; defaults follow W-9", "[U
     CHECK (dialog.start.getText() == "1.1.1.0");
     CHECK (dialog.end.getText() == "3.1.1.0");
     CHECK (dialog.tail.getToggleState());
-    CHECK (dialog.mode.getText() == "Offline");
+    CHECK (dialog.mode.getText() == "Automatic");
     CHECK (dialog.wav.getToggleState());
     CHECK (dialog.bitDepth.getText() == "24-bit");
     CHECK_FALSE (dialog.mp3.getToggleState());
@@ -178,4 +178,102 @@ TEST_CASE ("Screenshot of the Bounce dialog", "[.screenshot-bounce]")
     out.deleteFile();
     juce::FileOutputStream stream (out);
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+}
+
+TEST_CASE ("AT-EXP-19 Bounce dialog options, New Folder, Export Track and All Tracks, Export Selection as MIDI File", "[UI][bounce][AT-EXP-19]")
+{
+    Ui ui;
+    sineProject (ui);
+    // The File menu has the three exports.
+    juce::StringArray names;
+    const auto menu = ui.main->getMenuForIndex (0, "File");
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        names.add (it.getItem().text);
+    for (const auto* n : { "Export Selection as MIDI File...", "Export Track as Audio File...", "Export All Tracks as Audio Files..." })
+        CHECK (names.contains (n));
+
+    // The new options map onto the settings.
+    {
+        BounceDialog dialog (ui.studio);
+        CHECK (dialog.mode.getNumItems() == 3);
+        CHECK (dialog.normalize.getText() == "Off");
+        CHECK (dialog.channels.getText() == "Interleaved");
+        CHECK (dialog.tempoInfo.getToggleState());
+        dialog.mode.setSelectedItemIndex (1, juce::sendNotificationSync);
+        dialog.normalize.setSelectedItemIndex (1, juce::sendNotificationSync);
+        dialog.channels.setSelectedItemIndex (2, juce::sendNotificationSync);
+        dialog.aiff.setToggleState (true, juce::dontSendNotification);
+        dialog.flac.setToggleState (true, juce::dontSendNotification);
+        dialog.secondPass.setToggleState (true, juce::dontSendNotification);
+        dialog.secondPass.onClick();
+        CHECK_FALSE (dialog.tail.isEnabled()); // the second pass replaces the tail
+        const auto s = dialog.settings();
+        CHECK (s.forceOffline);
+        CHECK_FALSE (s.realtime);
+        CHECK (s.normalize == engine::Normalize::overloadOnly);
+        CHECK (s.channels == engine::FileChannels::mono);
+        CHECK (s.aiff.has_value());
+        CHECK (s.flac.has_value());
+        CHECK (s.secondCyclePass);
+        // Real-time turns the second pass off.
+        dialog.mode.setSelectedItemIndex (2, juce::sendNotificationSync);
+        CHECK_FALSE (dialog.secondPass.isEnabled());
+        CHECK_FALSE (dialog.settings().secondCyclePass);
+
+        // New Folder makes a folder inside the current one and bounces there.
+        dialog.askFolderName = [] (std::function<void (juce::String)> done) { done ("Mixes"); };
+        const auto before = std::filesystem::path (dialog.folder.getText().toStdString());
+        dialog.makeFolder.onClick();
+        CHECK (std::filesystem::is_directory (before / "Mixes"));
+        CHECK (dialog.settings().folder == before / "Mixes");
+    }
+
+    // Export Track needs a selected audio or instrument track.
+    ui.studio.selectTrack (ui.m().info.masterTrackId);
+    CHECK_FALSE (ui.studio.perform (Cmd::exportTrackAudio));
+    CHECK (ui.studio.status.contains ("Select an audio or instrument track"));
+    const auto sine = ui.m().trackOrder.front();
+    ui.studio.selectTrack (sine);
+    CHECK (ui.studio.exportableTracks (false) == std::vector<Id> { sine });
+    const auto inst = ui.studio.session().createTrack (model::TrackKind::instrument, "Keys").value();
+    const auto muted = ui.studio.session().createTrack (model::TrackKind::audio, "Muted").value();
+    REQUIRE (ui.studio.session().setTrackMute (muted, true));
+    ui.studio.edited();
+    std::vector<Id> unmuted;
+    for (const auto& id : ui.m().trackOrder)
+        if (id != muted)
+            unmuted.push_back (id);
+    CHECK (ui.studio.exportableTracks (true) == unmuted);
+    CHECK (unmuted.back() == inst);
+
+    // Export All Tracks: one file per track, named after it, each solo; one result lists them all.
+    BounceDialog all (ui.studio, ui.studio.exportableTracks (true));
+    CHECK (all.getTitle() == "Export All Tracks");
+    CHECK_FALSE (all.mode.isEnabled());
+    CHECK_FALSE (all.name.isEnabled());
+    const auto each = all.allSettings();
+    REQUIRE (each.size() == unmuted.size());
+    CHECK (each[0].name == ui.m().track (unmuted[0])->name);
+    CHECK (each[0].soloTracks == std::set<Id> { unmuted[0] });
+    CHECK (each.back().name == "Keys");
+    all.end.setText ("2.1.1.0", false);
+    all.bounceButton.onClick();
+    runBounce (ui);
+    REQUIRE (ui.studio.lastBounce);
+    REQUIRE (ui.studio.lastBounce->ok);
+    CHECK (ui.studio.lastBounce->files.size() == unmuted.size());
+    CHECK (ui.studio.lastBounce->message == "Exported " + std::to_string (unmuted.size()) + " files.");
+    CHECK (std::filesystem::exists (ui.studio.projectRoot() / "Bounces" / "Keys.wav"));
+
+    // Export Selection as MIDI File writes the selected MIDI regions.
+    CHECK_FALSE (ui.studio.perform (Cmd::exportSelectionMidi));
+    const auto region = ui.studio.session().createMidiRegion (inst, 0, 3840).value();
+    ui.studio.edited();
+    ui.studio.selection.set ({ region });
+    CHECK (ui.studio.perform (Cmd::exportSelectionMidi));
+    const auto file = ui.folder.path / "Selection.mid";
+    REQUIRE (ui.studio.exportSelectionAsMidi (file));
+    const auto read = media::readMidiFile (file);
+    REQUIRE (read);
+    CHECK (ui.studio.status == "Exported Selection.mid.");
 }

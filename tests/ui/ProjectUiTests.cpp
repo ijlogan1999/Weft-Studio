@@ -127,8 +127,10 @@ TEST_CASE ("AT-PRJ-1 New Project at 48 kHz has the default contents; File menu h
     for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
         if (! it.getItem().isSeparator)
             file.add (it.getItem().text);
-    CHECK (file == juce::StringArray { "New Project", "Open", "Open Recent", "Delete Project", "Save", "Save As", "Save Version...", "Bounce", "Import Audio...", "Export Regions as Files...", "Project Settings",
-                                  "Audio & MIDI Settings", "Exit" });
+    CHECK (file == juce::StringArray { "New Project", "Open", "Close Project", "Open Recent", "Delete Project", "Save", "Save As", "Save Version...", "Bounce",
+                                       "Import Audio...", "Export Regions as Files...", "Export Selection as MIDI File...",
+                                       "Export Track as Audio File...", "Export All Tracks as Audio Files...", "Project Settings",
+                                       "Audio & MIDI Settings", "Settings...", "Key Commands...", "Exit" });
 
     NewProjectDialog dialog (ui.studio);
     CHECK (dialog.name.getText() == "Untitled");
@@ -772,4 +774,48 @@ TEST_CASE ("AT-PRJ-15 the key shows in the control bar, is typed there and set i
     ui.settle();
     CHECK (ui.m().info.key == model::KeySignature { 10, false });
     CHECK (key.getText() == juce::String::fromUTF8 ("B\xE2\x99\xAD major"));
+}
+
+TEST_CASE ("AT-PRJ-20 Project Settings sets the count-in, pan law and MIDI input filter; the count-in menus list beats and longer counts", "[UI][project][AT-PRJ-20]")
+{
+    Ui ui;
+    {
+        ProjectSettingsDialog dialog (ui.studio);
+        CHECK (dialog.countIn.getNumItems() == 9);
+        CHECK (dialog.countIn.getItemText (8) == "2 beats");
+        CHECK (dialog.panLaw.getText() == "-3 dB (equal power)");
+        dialog.countIn.setSelectedId (9);  // 2 beats
+        dialog.panLaw.setSelectedId (4);   // -6 dB
+        dialog.ignoreMidi[2].setToggleState (true, juce::dontSendNotification); // pitch bend
+        REQUIRE (dialog.apply());
+    }
+    ui.settle();
+    CHECK (ui.m().info.metronomeDefaults.countInBars == -2);
+    CHECK (ui.m().info.panLawDb == -6.0);
+    CHECK (ui.m().info.midiInputFilter == model::midiFilter::pitchBend);
+    {
+        ProjectSettingsDialog again (ui.studio);
+        CHECK (again.countIn.getText() == "2 beats");
+        CHECK (again.panLaw.getText() == "-6 dB (linear)");
+        CHECK (again.ignoreMidi[2].getToggleState());
+        CHECK_FALSE (again.ignoreMidi[0].getToggleState());
+    }
+
+    // Navigate › Count-in and the control bar offer the same nine choices.
+    juce::StringArray navigate;
+    const auto navigateMenu = ui.main->getMenuForIndex (4, "Navigate");
+    for (juce::PopupMenu::MenuItemIterator it (navigateMenu, true); it.next();)
+        navigate.add (it.getItem().text);
+    CHECK (navigate.contains ("6 Bars"));
+    CHECK (navigate.contains ("1 Beat"));
+    ui.main->menuItemSelected (MainComponent::countInOff + 7, 4);
+    CHECK (ui.studio.engine().settings().countInBars == -1);
+    REQUIRE (ui.key ('K', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.engine().settings().countInBars == 0);
+    REQUIRE (ui.key ('K', juce::ModifierKeys::shiftModifier));
+    CHECK (ui.studio.engine().settings().countInBars == -1);
+    CHECK (ui.studio.status == "Count-in: 1 beat.");
+    auto& bar = ui.main->controlBar();
+    bar.pickOverflow (ControlBar::overflowCountIn + 4);
+    CHECK (ui.studio.engine().settings().countInBars == 4);
 }

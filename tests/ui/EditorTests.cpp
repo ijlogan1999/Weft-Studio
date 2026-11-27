@@ -136,6 +136,99 @@ TEST_CASE ("AT-LIB-1 file browser lists supported files, previews on click, drag
     CHECK (ui.main->side().media().rows().size() == 1);
 }
 
+TEST_CASE ("AT-LIB-3 file browser history, places, search and preview controls", "[UI][AT-LIB-3]")
+{
+    Ui ui;
+    auto& device = static_cast<engine::NullDevice&> (ui.studio.device());
+    device.setCaptureCapacity (4096);
+    const auto dir = ui.folder.path / "browse";
+    std::filesystem::create_directories (dir / "Loops");
+    const auto wav = writeSine (dir / "tone.wav", 0.5);
+    writeSine (dir / "Loops" / "drum.wav", 0.1);
+    {
+        std::ofstream mid (dir / "beat.mid", std::ios::binary);
+        const unsigned char bytes[] = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 1, 0xE0, 'M', 'T', 'r', 'k', 0, 0, 0, 4, 0, 0xFF, 0x2F, 0 };
+        mid.write (reinterpret_cast<const char*> (bytes), sizeof (bytes));
+    }
+    ui.main->run (Cmd::toggleSidePanel);
+    ui.settle();
+    auto& browser = ui.main->side().browser();
+    auto& list = browser.contents();
+    const auto names = [&] {
+        for (int i = 0; i < 300 && list.isStillLoading(); ++i)
+            juce::Thread::sleep (10);
+        juce::StringArray out;
+        for (int i = 0; i < list.getNumFiles(); ++i)
+            out.add (list.getFile (i).getFileName());
+        return out;
+    };
+    const juce::File root (juce::String (dir.string())), loops (juce::String ((dir / "Loops").string()));
+
+    // Back and forward.
+    browser.setRoot (root);
+    browser.setRoot (loops);
+    CHECK (list.getDirectory() == loops);
+    REQUIRE (browser.canGoBack());
+    CHECK (browser.backButton().isEnabled());
+    CHECK_FALSE (browser.forwardButton().isEnabled());
+    browser.backButton().onClick();
+    ui.settle();
+    CHECK (list.getDirectory() == root);
+    REQUIRE (browser.canGoForward());
+    browser.forwardButton().onClick();
+    ui.settle();
+    CHECK (list.getDirectory() == loops);
+    browser.goBack();
+    browser.setRoot (root.getParentDirectory()); // a new place drops the forward history
+    CHECK_FALSE (browser.canGoForward());
+    browser.goBack();
+    CHECK (list.getDirectory() == root);
+
+    // Places.
+    browser.goHome();
+    CHECK (list.getDirectory() == juce::File::getSpecialLocation (juce::File::userHomeDirectory));
+    browser.goToProject();
+    CHECK (list.getDirectory() == juce::File (juce::String (ui.studio.projectRoot().string())));
+    browser.goBack();
+    browser.goBack();
+    CHECK (list.getDirectory() == root);
+
+    // Search: every word, any case; folders stay.
+    CHECK (names().contains ("beat.mid"));
+    browser.searchField().setText ("TON", juce::dontSendNotification);
+    browser.searchField().onTextChange(); // JUCE posts the change; deliver it now
+    auto found = names();
+    INFO (found.joinIntoString (", "));
+    CHECK (found.contains ("tone.wav"));
+    CHECK (found.contains ("Loops"));
+    CHECK_FALSE (found.contains ("beat.mid"));
+    browser.setSearch ("tone mid");
+    CHECK_FALSE (names().contains ("tone.wav"));
+    browser.setSearch ({});
+    CHECK (browser.searchField().isEmpty());
+    CHECK (names().contains ("beat.mid"));
+
+    // Play previews the selected file at the preview volume; pressed again it stops.
+    browser.volumeSlider().setValue (-12.0, juce::sendNotificationSync);
+    list.dispatchPendingMessages();
+    const juce::File tone (juce::String (wav.string()));
+    browser.tree().setSelectedFile (tone);
+    REQUIRE (browser.tree().getSelectedFile() == tone);
+    browser.playButton().onClick();
+    ui.settle();
+    ui.renderAudio (2048);
+    CHECK (ui.studio.engine().previewing());
+    CHECK (browser.playButton().getButtonText() == "Stop");
+    float peak = 0;
+    for (auto v : device.capturedOutput (0))
+        peak = std::max (peak, std::abs (v));
+    CHECK (peak == Catch::Approx (0.5 * std::pow (10.0, -12.0 / 20.0)).epsilon (0.01));
+    browser.playButton().onClick();
+    ui.settle();
+    ui.renderAudio (256);
+    CHECK_FALSE (ui.studio.engine().previewing());
+}
+
 TEST_CASE ("AT-EDA-2 Snap Edits to Zero Crossings moves audio editor trims onto a zero crossing", "[UI][AT-EDA-2]")
 {
     Ui ui;
@@ -172,4 +265,398 @@ TEST_CASE ("AT-EDA-2 Snap Edits to Zero Crossings moves audio editor trims onto 
     const engine::MediaSource flat (dc);
     CHECK (engine::nearestZeroCrossing (flat, 500, 100) == 500);
     CHECK (engine::nearestZeroCrossing (flat, 50, 100) == 0); // the file start counts
+}
+
+TEST_CASE ("AT-ARR-39 Text, Zoom, Fade, Gain and Quantize tools; Next and Previous Tool", "[UI][AT-ARR-39]")
+{
+    Ui ui;
+    const auto audio = importSine (ui, bar); // one second: bar 2 to bar 2 + 2 beats at 120 BPM
+    auto& tl = ui.timeline();
+    auto& s = ui.studio.session();
+    const auto box = [&] { return tl.regionBounds (ui.region (audio)); };
+
+    // Text: click a region, type a name.
+    ui.studio.tool = Tool::text;
+    tl.promptForText = [] (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done) {
+        CHECK (title == "Rename region");
+        CHECK (current.isNotEmpty());
+        done ("Lead take");
+    };
+    ui.click (box().getCentre());
+    CHECK (ui.region (audio).name == "Lead take");
+
+    // Fade: a drag in the left half sets the fade in, in the right half the fade out; one undo step each.
+    ui.studio.tool = Tool::fade;
+    {
+        const auto b = box();
+        tl.pointerDown (juce::Point<float> { b.getX() + b.getWidth() * 0.1f, b.getCentreY() }, {}, 1);
+        tl.pointerDrag (juce::Point<float> { b.getX() + b.getWidth() * 0.25f, b.getCentreY() }, {});
+        tl.pointerUp (juce::Point<float> { b.getX() + b.getWidth() * 0.25f, b.getCentreY() }, {});
+        ui.settle();
+    }
+    CHECK (ui.region (audio).audio.fadeIn.length == Catch::Approx (0.25 * static_cast<double> (ui.region (audio).length)).margin (500));
+    CHECK (ui.region (audio).audio.fadeOut.length == 0);
+    CHECK (s.undoName() == "Fade");
+    {
+        const auto b = box();
+        tl.pointerDown (juce::Point<float> { b.getRight() - 2.0f, b.getCentreY() }, {}, 1);
+        tl.pointerDrag (juce::Point<float> { b.getRight() - b.getWidth() * 0.5f, b.getCentreY() }, {});
+        tl.pointerUp (juce::Point<float> { b.getRight() - b.getWidth() * 0.5f, b.getCentreY() }, {});
+        ui.settle();
+    }
+    CHECK (ui.region (audio).audio.fadeOut.length > 0);
+
+    // Gain: up is louder, 0.25 dB a pixel, one undo step.
+    ui.studio.tool = Tool::gain;
+    {
+        const auto c = box().getCentre();
+        tl.pointerDown (c, {}, 1);
+        tl.pointerDrag (c.translated (0.0f, -24.0f), {});
+        tl.pointerUp (c.translated (0.0f, -24.0f), {});
+        ui.settle();
+    }
+    CHECK (ui.region (audio).audio.gainDb == Catch::Approx (6.0));
+    CHECK (s.undoName() == "Region Gain");
+    REQUIRE (ui.studio.perform (Cmd::undo));
+    CHECK (ui.region (audio).audio.gainDb == Catch::Approx (0.0));
+
+    // Quantize: a click quantizes a MIDI region's notes to the piano roll's quantize grid.
+    const auto keysTrack = ui.instrumentTracks (1).front();
+    const auto midi = *s.createMidiRegion (keysTrack, 4 * bar, bar);
+    const auto note = *s.drawNote (midi, 4 * bar + 250, 60, 120, 100);
+    ui.studio.edited();
+    ui.settle();
+    ui.studio.tool = Tool::quantize;
+    ui.studio.piano.quantizeGrid = 240;
+    ui.studio.piano.strength = 100.0;
+    ui.click (tl.regionBounds (ui.region (midi)).getCentre());
+    CHECK (commands::noteTimelineTick (ui.region (midi), commands::findNote (ui.m(), note)->pos) == 4 * bar + 240);
+
+    // Zoom: a box fits its range; a click zooms in; Alt+click out.
+    ui.studio.tool = Tool::zoom;
+    const auto from = ui.studio.view.tickToX (2.0 * bar), to = ui.studio.view.tickToX (3.0 * bar);
+    tl.pointerDown (juce::Point<float> { static_cast<float> (from), 10.0f }, {}, 1);
+    tl.pointerDrag (juce::Point<float> { static_cast<float> (to), 30.0f }, {});
+    tl.pointerUp (juce::Point<float> { static_cast<float> (to), 30.0f }, {});
+    ui.settle();
+    CHECK (ui.studio.view.xToTick (0.0) == Catch::Approx (2.0 * bar).margin (2.0));
+    CHECK (ui.studio.view.xToTick (static_cast<double> (tl.getWidth())) == Catch::Approx (3.0 * bar).margin (2.0));
+    const auto ppt = ui.studio.view.pixelsPerTick;
+    ui.click ({ 100.0f, 10.0f });
+    CHECK (ui.studio.view.pixelsPerTick == Catch::Approx (2.0 * ppt));
+    ui.click ({ 100.0f, 10.0f }, juce::ModifierKeys::altModifier);
+    CHECK (ui.studio.view.pixelsPerTick == Catch::Approx (ppt));
+
+    // Next / Previous Tool go through the Tool menu's order and wrap.
+    ui.studio.tool = Tool::quantize;
+    REQUIRE (ui.studio.perform (Cmd::nextTool));
+    CHECK (ui.studio.tool == Tool::pointer);
+    REQUIRE (ui.studio.perform (Cmd::previousTool));
+    CHECK (ui.studio.tool == Tool::quantize);
+    // The Tool menu lists every tool with its key.
+    juce::StringArray names, keys;
+    const auto menu = ui.main->toolMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+    {
+        names.add (it.getItem().text);
+        keys.add (it.getItem().shortcutKeyDescription);
+    }
+    CHECK (names == juce::StringArray { "Pointer", "Pencil", "Scissors", "Glue", "Eraser", "Mute", "Text", "Zoom", "Fade", "Gain", "Quantize" });
+    CHECK (keys == juce::StringArray { "T", "P", "I", "J", "E", "M", "N", "Z", "A", "G", "Q" });
+}
+
+TEST_CASE ("AT-ARR-40 nudge value, lengthen and shorten, slip, shuffle, grid lines", "[UI][AT-ARR-40]")
+{
+    Ui ui;
+    auto& s = ui.studio.session();
+    auto& studio = ui.studio;
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto a = *s.createMidiRegion (keys, 0, bar);
+    const auto b = *s.createMidiRegion (keys, 3 * bar, bar);
+    studio.edited();
+    ui.settle();
+
+    // Nudge by a beat, then by a tick.
+    studio.selection.set ({ b });
+    ui.main->menuItemSelected (static_cast<int> (Cmd::nudgeByBeat) + 1, 1);
+    CHECK (studio.nudgeValue == Studio::NudgeValue::beat);
+    REQUIRE (studio.perform (Cmd::nudgeRight));
+    CHECK (ui.region (b).start == 3 * bar + bar / 4);
+    REQUIRE (studio.perform (Cmd::nudgeByTick));
+    REQUIRE (studio.perform (Cmd::nudgeLeft));
+    CHECK (ui.region (b).start == 3 * bar + bar / 4 - 1);
+
+    // Lengthen and shorten by the nudge value (a bar).
+    REQUIRE (studio.perform (Cmd::nudgeByBar));
+    studio.selection.set ({ a });
+    REQUIRE (studio.perform (Cmd::lengthenNotes));
+    CHECK (ui.region (a).length == 2 * bar);
+    CHECK (s.undoName() == "Region Length");
+    REQUIRE (studio.perform (Cmd::shortenNotes));
+    CHECK (ui.region (a).length == bar);
+
+    // Shuffle: b moves left to meet a's end; a moves right to meet b's start.
+    studio.selection.set ({ b });
+    REQUIRE (studio.perform (Cmd::shuffleLeft));
+    CHECK (ui.region (b).start == bar);
+    CHECK (s.undoName() == "Shuffle");
+    CHECK_FALSE (studio.perform (Cmd::shuffleLeft)); // touching already
+    REQUIRE (studio.perform (Cmd::undo));
+    studio.selection.set ({ a });
+    REQUIRE (studio.perform (Cmd::shuffleRight));
+    CHECK (ui.region (a).start + ui.region (a).length == ui.region (b).start);
+    REQUIRE (studio.perform (Cmd::undo));
+    REQUIRE (s.moveRegion (a, bar / 2));
+    studio.edited();
+    REQUIRE (studio.perform (Cmd::shuffleLeft)); // with nothing before it, to the project start
+    CHECK (ui.region (a).start == 0);
+
+    // Slip: the region stays, what plays inside moves (MIDI: sequence offset; audio: source offset).
+    REQUIRE (studio.perform (Cmd::nudgeByBeat));
+    studio.selection.set ({ a });
+    const auto offset = ui.region (a).midi.sequenceOffset;
+    REQUIRE (ui.key (juce::KeyPress::leftKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::altModifier));
+    CHECK (ui.region (a).midi.sequenceOffset == offset + bar / 4);
+    CHECK (ui.region (a).start == 0);
+    CHECK (s.undoName() == "Slip Region");
+    const auto audio = importSine (ui, bar);
+    studio.selection.set ({ audio });
+    REQUIRE (studio.perform (Cmd::slipLeft));
+    CHECK (ui.region (audio).audio.sourceOffset == 24000); // a beat at 120 BPM
+    REQUIRE (studio.perform (Cmd::slipRight));
+    CHECK (ui.region (audio).audio.sourceOffset == 0);
+    CHECK_FALSE (studio.perform (Cmd::slipRight)); // the start of the file
+
+    // View › Grid Lines.
+    CHECK (studio.gridLines);
+    REQUIRE (studio.perform (Cmd::gridLines));
+    CHECK_FALSE (studio.gridLines);
+    const auto view = ui.main->getMenuForIndex (5, "View");
+    bool listed = false;
+    for (juce::PopupMenu::MenuItemIterator it (view); it.next();)
+        if (it.getItem().text == "Grid Lines")
+            listed = ! it.getItem().isTicked;
+    CHECK (listed);
+}
+
+TEST_CASE ("AT-LIB-4 project audio: regions per file, preview, add, rename, delete, select unused, add to tracks", "[UI][AT-LIB-4]")
+{
+    Ui ui;
+    ui.main->run (Cmd::toggleSidePanel);
+    ui.settle();
+    ui.main->side().showTab (SidePanel::mediaTab);
+    ui.settle();
+    auto& media = ui.main->side().media();
+    const auto a = writeSine (ui.folder.path / "kick.wav", 0.5);
+    const auto b = writeSine (ui.folder.path / "pad.wav", 1.0);
+
+    // Add Audio File adds the files without regions, as one undo step.
+    media.chooseFiles = [&] (std::function<void (std::vector<std::filesystem::path>)> done) { done ({ a, b }); };
+    media.pick (MediaList::itemAddFile);
+    ui.settle();
+    REQUIRE (media.rows().size() == 2);
+    CHECK (ui.m().regions.empty());
+    CHECK (ui.studio.session().undoName() == "Add Audio File");
+    CHECK (media.selectedFiles().size() == 2);
+    const auto kick = media.rows()[0].hash, pad = media.rows()[1].hash;
+    CHECK (media.rows()[0].name == "kick.wav");
+    CHECK (media.rows()[0].sampleRate == ui.m().info.sampleRate);
+
+    // Add to New Tracks: a track per file with its region at the playhead; Add Region places one on the selected track.
+    media.selectFiles ({ kick });
+    ui.studio.locate (bar);
+    media.pick (MediaList::itemAddToTracks);
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Add to Tracks");
+    REQUIRE (media.rows()[0].regions == 1);
+    const auto kickTrack = ui.region (media.rows()[0].regionIds.front()).trackId;
+    CHECK (ui.m().track (kickTrack)->name == "kick");
+    CHECK (ui.region (media.rows()[0].regionIds.front()).start == bar);
+    ui.studio.selectTrack (kickTrack);
+    media.selectFiles ({ kick, pad });
+    ui.studio.locate (4 * bar);
+    media.pick (MediaList::itemAddRegion);
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Add Region");
+    CHECK (media.rows()[0].regions == 2);
+    REQUIRE (media.rows()[1].regions == 1);
+    const auto padRegion = media.rows()[1].regionIds.front();
+    CHECK (ui.region (padRegion).trackId == kickTrack);
+    CHECK (ui.region (padRegion).start > 4 * bar); // after the kick
+    CHECK (media.shownRows().size() == 2);
+
+    // Show All Regions lists them under their files; a click on a region row selects it; the triangle closes a file.
+    media.pick (MediaList::itemShowAll);
+    ui.settle();
+    REQUIRE (media.shownRows().size() == 5); // kick, its two regions, pad, its region
+    CHECK (media.shownRows()[1].region == media.rows()[0].regionIds[0]);
+    media.list().selectRow (4);
+    media.list().getListBoxModel()->listBoxItemClicked (4, mouse (media.list(), { 60.0f, 4.0f }));
+    CHECK (ui.studio.selection.ids() == std::vector<Id> { padRegion });
+    media.list().getListBoxModel()->listBoxItemClicked (0, mouse (media.list(), { 10.0f, 4.0f }));
+    CHECK_FALSE (media.isOpen (kick));
+    CHECK (media.shownRows().size() == 3);
+
+    // The path line and Play / Loop.
+    media.selectFiles ({ pad });
+    CHECK (media.path.getText().endsWith (".wav"));
+    media.playOrStop();
+    ui.renderAudio();
+    CHECK (ui.studio.engine().previewing());
+    CHECK (media.previewing() == pad);
+    CHECK (media.play.getButtonText() == "Stop");
+    media.playOrStop();
+    CHECK (media.previewing().empty());
+    CHECK (media.play.getButtonText() == "Play");
+
+    // Rename.
+    media.selectFiles ({ kick });
+    media.promptForText = [] (const juce::String&, const juce::String& current, std::function<void (juce::String)> done) {
+        CHECK (current == "kick.wav");
+        done ("Kick 1");
+    };
+    media.pick (MediaList::itemRename);
+    ui.settle();
+    CHECK (ui.m().mediaRef (kick)->originalName == "Kick 1");
+    CHECK (ui.studio.session().undoName() == "Rename Audio File");
+
+    // Select Unused finds files no region plays; Delete removes a file and its regions as one undo step.
+    media.selectFiles ({ pad });
+    media.pick (MediaList::itemDelete);
+    ui.settle();
+    CHECK (ui.studio.session().undoName() == "Delete File");
+    CHECK (ui.m().mediaRef (pad) == nullptr);
+    CHECK (ui.m().region (padRegion) == nullptr);
+    CHECK (media.rows().size() == 1);
+    ui.studio.session().undo();
+    ui.studio.edited();
+    ui.settle();
+    CHECK (ui.m().mediaRef (pad) != nullptr);
+    CHECK (ui.m().region (padRegion) != nullptr);
+    media.pick (MediaList::itemSelectUnused);
+    CHECK (media.selectedFiles().empty());
+    CHECK (ui.studio.status == "No unused audio files.");
+    ui.studio.session().deleteRegions ({ padRegion });
+    ui.studio.edited();
+    ui.settle();
+    media.pick (MediaList::itemSelectUnused);
+    CHECK (media.selectedFiles() == std::vector<std::string> { pad });
+    CHECK_FALSE (ui.studio.session().removeMedia ({ kick })); // still played by regions
+    media.pick (MediaList::itemDelete);
+    ui.settle();
+    CHECK (ui.m().mediaRef (pad) == nullptr);
+
+    // The menu.
+    juce::StringArray names;
+    const auto menu = media.fileMenu();
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (it.getItem().text.isNotEmpty())
+            names.add (it.getItem().text);
+    for (auto name : { "Add Audio File...", "Add Region to Selected Track", "Add to New Tracks", "Rename...", "Select Unused", "Show All Regions", "Hide All Regions",
+                       "Show in File Manager" })
+        CHECK (names.contains (name));
+}
+
+TEST_CASE ("AT-EDA-4 the Audio File Editor: its bar, a selection, file functions with undo, tempo from a selection", "[UI][AT-EDA-4]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    const auto id = importSine (ui, bar);
+    const auto original = ui.region (id).audio.media;
+    ui.timeline().pointerDown (ui.centreOf (id), {}, 2);
+    ui.timeline().pointerUp (ui.centreOf (id), {});
+    ui.settle();
+    auto& editor = ui.main->bottom().audioEditor();
+    REQUIRE (editor.region() != nullptr);
+    CHECK (editor.fileButton.isVisible());
+    CHECK (editor.zoom.isVisible());
+    CHECK_FALSE (editor.functions.isVisible());
+
+    // The bar: zoom slider, Waveform Zoom, Snap and the scales.
+    editor.zoom.setValue (1.0, juce::sendNotificationSync);
+    CHECK (editor.samplesPerPixel == Catch::Approx (AudioEditor::maxZoom));
+    editor.zoom.setValue (0.0, juce::sendNotificationSync);
+    CHECK (editor.sampleToX (48000) <= editor.getWidth());
+    CHECK (editor.amplitudeLabels().joinIntoString (",") == "100%,50%,0");
+    editor.waveZoomButton.onClick();
+    CHECK (editor.waveZoom == 4.0f);
+    CHECK (editor.amplitudeLabels()[0] == "25%");
+    editor.waveZoomButton.onClick();
+    editor.amplitudeScale = AudioEditor::AmplitudeScale::decibels;
+    CHECK (editor.amplitudeLabels().joinIntoString (",") == "0 dB,-6 dB,-inf");
+    REQUIRE_FALSE (editor.rulerLabels().isEmpty());
+    editor.rulerScale = AudioEditor::RulerScale::samples;
+    CHECK (editor.rulerLabels()[0] == "0");
+    const bool snap = studio.snapEnabled;
+    editor.snapButton.onClick();
+    ui.settle();
+    CHECK (studio.snapEnabled != snap);
+    CHECK (editor.snapButton.getToggleState() == studio.snapEnabled);
+
+    // W: the Audio File Editor. Dragging selects part of the file.
+    REQUIRE (studio.perform (Cmd::toggleAudioFileEditor));
+    ui.settle();
+    CHECK (studio.audioFileMode);
+    CHECK (editor.functions.isVisible());
+    const auto y = editor.waveArea().getCentreY();
+    editor.pointerDown ({ static_cast<float> (editor.sampleToX (0)), y });
+    editor.pointerDrag ({ static_cast<float> (editor.sampleToX (12000)), y }, true);
+    editor.pointerUp();
+    CHECK (editor.selectionStart() < 200);
+    CHECK (std::abs (editor.selectionEnd() - 12000) < 200);
+    CHECK (ui.region (id).audio.sourceOffset == 0); // selecting doesn't trim
+
+    // Silence the selection: the region plays a new file; undo goes back.
+    editor.setSelection (0, 12000);
+    REQUIRE (editor.apply (engine::FileEdit::silence));
+    CHECK (studio.session().undoName() == "Edit File: Silence");
+    CHECK (ui.region (id).audio.media != original);
+    REQUIRE (studio.session().undo().done);
+    studio.edited();
+    ui.settle();
+    CHECK (ui.region (id).audio.media == original);
+
+    // Copy, then Paste over a point: the file (and the region) grow by the copy.
+    REQUIRE (editor.copySelection());
+    REQUIRE (studio.audioClipboard != nullptr);
+    CHECK (studio.audioClipboard->numFrames() == 12000);
+    editor.setSelection (24000, 24000);
+    REQUIRE (editor.paste());
+    ui.settle();
+    CHECK (ui.m().mediaRef (ui.region (id).audio.media)->lengthSamples == 60000);
+    CHECK (ui.region (id).length == 60000);
+    CHECK (editor.selectionStart() == 24000);
+    CHECK (editor.selectionEnd() == 36000);
+    // Cut takes it out again.
+    REQUIRE (editor.cutSelection());
+    ui.settle();
+    CHECK (ui.region (id).length == 48000);
+    // Select All and Trim with nothing to trim is refused (the file wouldn't change).
+    editor.pickFunction (1);
+    CHECK (editor.selectionEnd() - editor.selectionStart() == 48000);
+
+    // Adjust Tempo Using Selection Length: 0.75 s at 120 BPM is 1.5 beats, rounded to 2, so 160 BPM.
+    editor.setSelection (0, 36000);
+    REQUIRE (editor.adjustTempoToSelection());
+    CHECK (ui.m().tempo.bpmAt (ui.region (id).start) == Catch::Approx (160.0));
+
+    // Play plays the selection; again stops.
+    editor.playSelection();
+    ui.renderAudio (256);
+    CHECK (studio.engine().previewing());
+    editor.playSelection();
+    ui.renderAudio (256);
+    CHECK_FALSE (studio.engine().previewing());
+
+    // W again hides it; Alt+double-click opens a region in the Audio File Editor, in a window.
+    REQUIRE (studio.perform (Cmd::toggleAudioFileEditor));
+    ui.settle();
+    CHECK (studio.layout.bottom == BottomTab::none);
+    studio.audioFileMode = false;
+    const auto altClick = juce::ModifierKeys (juce::ModifierKeys::altModifier | juce::ModifierKeys::leftButtonModifier);
+    ui.timeline().pointerDown (ui.centreOf (id), altClick, 2);
+    ui.timeline().pointerUp (ui.centreOf (id), altClick);
+    ui.settle();
+    CHECK (studio.audioFileMode);
+    CHECK (ui.main->windowNamed ("Audio Editor") != nullptr);
 }

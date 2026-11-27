@@ -55,6 +55,12 @@ Project {
   tempoMap: TempoMap
   signatureMap: SignatureMap
   markers: Map<Id, Marker>
+  keyChanges: Map<Id, KeyChange>  // D-UI-44; missing in older projects = none
+  sections: Map<Id, Section>      // the arrangement (D-UI-45)
+  groups: Map<Id, Group>          // D-W6-15; missing in older projects = none
+  vcas: Map<Id, Vca>              // D-W6-16; missing in older projects = none
+  groupsActive: bool              // D-W6-15: false = no group links or hides anything; missing = true
+  notes: string?                  // the project's notes (D-UI-47); missing = none
   cycle: { enabled: bool, start: Ticks, end: Ticks }
   punch: { enabled: bool, start: Ticks, end: Ticks }
   endMarker: Ticks?
@@ -62,6 +68,8 @@ Project {
   metronomeDefaults: MetronomeSettings   // per-user settings start from this (D-DM-12)
   key: { tonic: 0..11, mode: "major" | "minor" }   // F-TMP-10, D-DM-20
   showHiddenTracks: bool          // hidden tracks get rows again (D-W3-7)
+  panLaw: -3 | 0 | -4.5 | -6      // dB at centre for mono sources (D-UI-42); missing = -3
+  midiInputFilter: int            // bits: 1 notes, 2 program change, 4 pitch bend, 8 controllers, 16 aftertouch, 32 poly aftertouch (D-UI-42)
   automationLanes: Map<Id, AutomationLane>
 
   collab: CollabMeta              // §9
@@ -97,7 +105,51 @@ Track {
   locked: LockInfo?             // §9.3
   strip: ChannelStrip           // §5
   automationMode: 'off'|'read'|'touch'|'latch'|'write'
+  playback: TrackPlayback?      // instrument tracks; absent = defaults (D-W3-13)
+  groupId: Id?                  // its group (D-W6-15); a missing group = none. Not on the master
+  vcaId: Id?                    // the VCA fader that scales it (D-W6-16); a missing VCA = none. Not on the master
+  notes: string?                // the track's notes (D-UI-47); missing = none. Not on the master
+  smartControls: {              // Smart Controls (D-UI-52); missing = mapped automatically
+    layout: 4 | 8 | 12,         // knobs
+    controls: [ { name: string, mappings: [ { target: AutomationTarget, min: 0..1, max: 0..1 } ],
+                  cc: -1..127, ccChannel: 0..16 } ]   // one per knob; cc -1 = no controller, channel 0 = any
+  }?
+  stack: 'folder' | 'summing'?  // buses only: this track is a stack's main (D-W6-17)
+  stackOpen: bool = true        // a stack main: its members have rows (and strips, following stacks)
+  stackId: Id?                  // a member: its stack's main; a missing or non-main track = not in a stack
   visibleLaneIds: List<Id>      // LOCAL ONLY
+}
+
+Group {                         // D-W6-15; edited field by field, links too
+  id: Id
+  number: 1..32                 // the lowest free one when made; shown in the Group slot
+  name: string                  // "Group N" when made
+  enabled: bool = true          // "On"
+  hidden: bool = false          // "H": its tracks have no rows and no strips (while it's on and groups are active)
+  links: {
+    selection: bool = false, quantize: bool = false, automationMode: bool = false,
+    volume: bool = true, mute: bool = true, input: bool = false, pan: bool = false,
+    solo: bool = true, record: bool = false, color: bool = false, zoom: bool = false, hide: bool = false,
+    sends: int = 0              // bit n links send slot n + 1 (of 8)
+  }
+}
+
+Vca {                           // D-W6-16
+  id: Id
+  name: string                  // "VCA N" when made
+  volumeDb: float = 0           // -inf (-200) to +6
+  mute: bool = false
+}
+
+TrackPlayback {                 // edited field by field, so concurrent changes to different fields merge
+  transpose: int = 0            // -96..96
+  velocityOffset: int = 0       // -99..99
+  keyLow: int = 0, keyHigh: int = 127
+  velocityLow: int = 1, velocityHigh: int = 127
+  delay: float = 0              // ms (-500..500) or, with delayInTicks, ticks (-960..960)
+  delayInTicks: bool = false
+  noTranspose: bool = false     // regions' transpose ignored
+  outChannel: int = 0           // 0 = each event's own channel, else 1-16
 }
 
 InputAssignment =
@@ -128,6 +180,8 @@ Region {
   name: string?                 // default derived from source
   color: Color?                 // null = inherit track color
   muted: bool
+  delayMs: float                // -500..500, default 0 (L-RGN-6)
+  delayInTicks: bool, delayTicks: Ticks   // -960..960; whichever was set last applies (D-W4-16)
   z: int                        // stacking order on its track; higher plays on top
   loop: { enabled: bool, endTicks: Ticks }?    // loop repeats until endTicks
   takeFolderId: Id?             // set if this region is a take
@@ -148,10 +202,17 @@ AudioRegionData {
   gainDb: Db                    // region gain, default 0
   fadeIn:  Fade                 // { length: Samples, curve: 'linear'|'equalPower'|'sCurve' }
   fadeOut: Fade
+  reversed: bool                // plays a reversed copy (L-RGN-12, D-W4-16)
+  transpose?: int               // semitones -24..24, pitch only (D-UI-51); absent = 0
+  fineTune?: int                // cents -50..50; absent = 0
+  speed?: number                // tape-style speed 0.25..4; absent = 1
+  stretch?: number              // time stretch at the same pitch 0.25..4; absent = 1
 }
 ```
 
-Invariants: `sourceOffset ≥ 0`; `sourceOffset + length ≤ media.lengthSamples`; `fadeIn.length + fadeOut.length ≤ length`.
+A fade may also carry `speed: true` (D-UI-51): the fade in is then Speed Up and the fade out Slow Down, with no level change.
+
+Invariants: `sourceOffset ≥ 0`; `sourceOffset + length × speed / stretch ≤ media.lengthSamples` (the region plays `length × speed / stretch` samples of its file); `fadeIn.length + fadeOut.length ≤ length`.
 
 ### 4.3 MIDI region data
 
@@ -159,9 +220,12 @@ Invariants: `sourceOffset ≥ 0`; `sourceOffset + length ≤ media.lengthSamples
 MidiRegionData {
   sequenceId: Id                // events live in a MidiSequence (shared by aliases in v2)
   sequenceOffset: Ticks         // event at this sequence tick plays at region.start
-  quantize: { grid: Ticks, strength: 0..1, swing: 0..1 } | null
+  quantize: { grid: Ticks, strength: 0..1, swing: 0..1, range: Ticks, flam: Ticks } | null   // range, flam: D-W4-16
   transpose: int                // semitones, default 0 (v2 UI; field present from v1)
   velocityOffset: int           // default 0 (v2 UI)
+  dynamics: int                 // percent 0..300, 100 = off, 0 = Fixed (D-W4-16)
+  gate: int                     // 0 off, 1..200 percent, -1 Fixed, -2 Legato
+  clipLength: bool              // default true
 }
 ```
 
@@ -325,7 +389,9 @@ Results are computed in float64 and rounded to the nearest sample only at the po
 
 ### 8.1 Marker
 ```ts
-Marker { id: Id, pos: Ticks, name: string, color: Color?, createdBy: UserId }
+Marker { id: Id, pos: Ticks, name: string, color: Color?, createdBy: UserId, text: string? }   // text: the marker text (D-UI-48); missing = none
+KeyChange { id: Id, pos: Ticks /* > 0 */, key: { tonic: 0..11, mode: "major" | "minor" } }
+Section { id: Id, start: Ticks, length: Ticks, name: string, color: Color? }   // sections don't overlap
 ```
 
 ### 8.2 Automation lane
@@ -349,7 +415,7 @@ AutoPoint { id: Id, pos: Ticks, value: Normalized, curve: float /* −1..1, appl
 
 ### 8.3 Metronome
 ```ts
-MetronomeSettings { enabled: bool, levelDb: Db, during: 'record'|'play'|'both', countInBars: 0|1|2 }
+MetronomeSettings { enabled: bool, levelDb: Db, during: 'record'|'play'|'both', countInBars: -2..6 }   // 1-6 bars, -1/-2 beats, 0 none (D-UI-42)
 ```
 **Decision D-DM-12:** metronome and count-in settings are per user (local view state), because one person's click preference shouldn't change another's. The project stores only a default used when a user opens the project for the first time.
 

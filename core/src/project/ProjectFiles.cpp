@@ -259,8 +259,18 @@ bool saveProjectAs (doc::Document& document, const model::ProjectModel& model, c
 void RecentProjects::load()
 {
     list = readLines (file);
-    if (list.size() > maxItems)
-        list.resize (maxItems);
+    if (list.size() > maxLimit)
+        list.resize (maxLimit); // setLimit trims to the chosen length
+}
+
+void RecentProjects::setLimit (std::size_t n)
+{
+    keep = std::clamp<std::size_t> (n, minLimit, maxLimit);
+    if (list.size() > keep)
+    {
+        list.resize (keep);
+        save();
+    }
 }
 
 bool RecentProjects::save() const
@@ -276,8 +286,8 @@ void RecentProjects::add (const fs::path& root)
 {
     std::erase (list, root);
     list.insert (list.begin(), root);
-    if (list.size() > maxItems)
-        list.resize (maxItems);
+    if (list.size() > keep)
+        list.resize (keep);
     save();
 }
 

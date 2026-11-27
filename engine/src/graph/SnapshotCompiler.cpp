@@ -1,6 +1,9 @@
 #include "weft/engine/graph/EngineSnapshot.h"
+#include "weft/engine/dsp/Stretch.h"
 
 #include "weft/model/Automation.h"
+#include "weft/commands/Notes.h"
+#include "weft/engine/midi/MidiInputs.h"
 #include "weft/time/Quantize.h"
 
 #include <algorithm>
@@ -113,10 +116,18 @@ float dbToGain (double db) noexcept { return db <= minusInfinityDb ? 0.0f : stat
 
 std::int64_t EngineSnapshot::tickToSample (Ticks t) const noexcept { return std::llround (tempo.tickToSample (static_cast<double> (t))); }
 
-std::pair<float, float> panGains (double pan) noexcept
+std::pair<float, float> panGains (double pan, double lawDb) noexcept
 {
-    const double theta = (std::clamp (pan, -1.0, 1.0) + 1.0) * std::numbers::pi / 4.0;
-    return { static_cast<float> (std::cos (theta)), static_cast<float> (std::sin (theta)) };
+    const double x = (std::clamp (pan, -1.0, 1.0) + 1.0) / 2.0; // 0 = left, 1 = right
+    const double powerL = std::cos (x * std::numbers::pi / 2.0), powerR = std::sin (x * std::numbers::pi / 2.0);
+    double l = powerL, r = powerR;
+    if (lawDb <= -6.0)
+        l = 1.0 - x, r = x;
+    else if (lawDb <= -4.5)
+        l = std::sqrt (powerL * (1.0 - x)), r = std::sqrt (powerR * x);
+    else if (lawDb > -3.0)
+        l = powerL * std::numbers::sqrt2, r = powerR * std::numbers::sqrt2;
+    return { static_cast<float> (l), static_cast<float> (r) };
 }
 
 std::pair<float, float> balanceGains (double pan) noexcept
@@ -135,7 +146,13 @@ int EngineSnapshot::channelIndex (const Id& trackId) const noexcept
 
 namespace
 {
-std::int64_t delaySamples (const model::Region& r, double rate) { return std::llround (r.delayMs * rate / 1000.0); }
+/** A region's playback delay in samples (L-RGN-6): milliseconds, or ticks at the tempo where it starts (D-W4-16). */
+std::int64_t delaySamples (const model::Region& r, const EngineSnapshot& snap)
+{
+    if (! r.delayInTicks)
+        return std::llround (r.delayMs * snap.sampleRate / 1000.0);
+    return snap.tickToSample (std::max<Ticks> (0, r.start + r.delayTicks)) - snap.tickToSample (r.start);
+}
 
 void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const model::Track& track, EngineSnapshot& snapshot,
                   const MediaPool& mediaPool, double projectRate)
@@ -159,7 +176,7 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
                 continue;
         }
         const auto loopEnd = r->loop && r->loop->enabled ? r->loop->endTicks : Ticks { 0 };
-        const auto delay = delaySamples (*r, deviceRate); // L-RGN-6: the whole region plays shifted
+        const auto delay = delaySamples (*r, *snap); // L-RGN-6: the whole region plays shifted
         if (r->isMidi)
         {
             const Ticks stopTick = std::max (r->start + r->length, loopEnd);
@@ -201,11 +218,16 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
     {
         const auto& r = *inst.region;
         const auto length = inst.end - inst.start;
-        std::int64_t fadeIn = 0, fadeOut = 0;
+        std::int64_t fadeIn = 0, fadeOut = 0, speedUp = 0, slowDown = 0;
         if (! r.isMidi)
         {
             fadeIn = std::clamp<std::int64_t> (std::llround (static_cast<double> (r.audio.fadeIn.length) * projectToDevice), 0, length);
             fadeOut = std::clamp<std::int64_t> (std::llround (static_cast<double> (r.audio.fadeOut.length) * projectToDevice), 0, length - fadeIn);
+            // Speed fades change the speed, not the level, and so don't crossfade with what's underneath (D-UI-51).
+            if (r.audio.fadeIn.speed)
+                std::swap (speedUp, fadeIn);
+            if (r.audio.fadeOut.speed)
+                std::swap (slowDown, fadeOut);
         }
         const auto visible = takeVisible (covered, inst.start, inst.end, inst.start + fadeIn, inst.end - fadeOut);
         if (visible.empty())
@@ -213,7 +235,9 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
 
         if (! r.isMidi)
         {
-            auto audio = mediaPool.find (r.audio.media);
+            // Stretched or pitch-shifted regions play their derived audio (prepareDerivedMedia).
+            const auto derived = derivedMediaKey (r.audio);
+            auto audio = mediaPool.find (derived.empty() ? r.audio.media : derived);
             if (! audio || audio->numFrames() == 0)
                 continue;
             if (std::find (snap->media.begin(), snap->media.end(), audio) == snap->media.end())
@@ -254,8 +278,11 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
                 seg.regionStart = inst.start;
                 seg.regionEnd = inst.end;
                 seg.media = audio.get();
-                seg.sourceAtRegionStart = static_cast<double> (r.audio.sourceOffset) * audio->sampleRate() / projectRate;
-                seg.sourceStep = audio->sampleRate() / deviceRate;
+                // The derived audio is `stretch` times as long as the file; speed is a faster or slower read.
+                seg.sourceAtRegionStart = static_cast<double> (r.audio.sourceOffset) * r.audio.stretch * audio->sampleRate() / projectRate;
+                seg.sourceStep = r.audio.speed * audio->sampleRate() / deviceRate;
+                seg.speedUp = speedUp;
+                seg.slowDown = slowDown;
                 seg.gain = dbToGain (r.audio.gainDb);
                 seg.fadeIn = fadeIn;
                 seg.fadeOut = fadeOut;
@@ -274,28 +301,37 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
         const auto* seq = model.sequence (r.midi.sequenceId);
         if (seq == nullptr)
             continue;
+        const auto& playback = track.playback;
+        // The track's delay (P-TRI-14): milliseconds, or ticks at the tempo where the event falls.
+        const auto trackDelay = [&] (Ticks at) -> std::int64_t {
+            if (playback.delay == 0)
+                return 0;
+            if (! playback.delayInTicks)
+                return std::llround (playback.delay * deviceRate / 1000.0);
+            const auto moved = std::max<Ticks> (0, at + static_cast<Ticks> (std::llround (playback.delay)));
+            return snap->tickToSample (moved) - snap->tickToSample (at);
+        };
         const auto windowStart = r.midi.sequenceOffset;
         const auto windowEnd = windowStart + r.length;
-        for (const auto* note : seq->sortedNotes())
+        // Quantize, gate time, dynamics and clip length (D-W4-16), shared with Apply All Parameters.
+        for (const auto& p : commands::playedNotes (r, *seq, inst.startTick, inst.endTick))
         {
-            if (note->muted || note->pos < windowStart || note->pos >= windowEnd)
-                continue;
-            auto onTick = inst.startTick + (note->pos - windowStart);
-            if (const auto& q = r.midi.quantize)
-                onTick = quantizeTick (onTick, q->grid, q->strength, q->swing * 100.0);
-            if (onTick < inst.startTick || onTick >= inst.endTick)
-                continue;
-            const auto noteDelay = delaySamples (r, deviceRate);
+            const auto* note = p.note;
+            const auto onTick = p.on;
+            const auto played = playback.play (note->pitch, p.velocity, r.midi.transpose);
+            if (! played)
+                continue; // outside the track's key or velocity limits (D-W3-13)
+            const auto noteDelay = delaySamples (r, *snap) + trackDelay (onTick);
             const auto on = snap->tickToSample (onTick) + noteDelay;
             const bool shown = std::any_of (visible.begin(), visible.end(), [on] (const Interval& iv) { return on >= iv.first && on < iv.second; });
             if (! shown)
                 continue;
             ScheduledNote n;
             n.on = on;
-            n.off = std::max (on + 1, snap->tickToSample (std::min (onTick + std::max<Ticks> (1, note->length), inst.endTick)) + noteDelay);
-            n.channel = static_cast<std::uint8_t> (std::clamp (note->channel, 1, 16));
-            n.pitch = static_cast<std::uint8_t> (std::clamp (note->pitch + r.midi.transpose, 0, 127));
-            n.velocity = static_cast<std::uint8_t> (std::clamp (note->velocity + r.midi.velocityOffset, 1, 127));
+            n.off = std::max (on + 1, snap->tickToSample (p.off) + noteDelay);
+            n.channel = static_cast<std::uint8_t> (playback.outChannel > 0 ? playback.outChannel : std::clamp (note->channel, 1, 16));
+            n.pitch = static_cast<std::uint8_t> (played->first);
+            n.velocity = static_cast<std::uint8_t> (played->second);
             plan.notes.push_back (n);
         }
         for (const auto& [id, e] : seq->controllers)
@@ -305,12 +341,14 @@ void planRegions (ChannelPlan& plan, const model::ProjectModel& model, const mod
             const auto atTick = inst.startTick + (e.pos - windowStart);
             if (atTick < inst.startTick || atTick >= inst.endTick)
                 continue;
-            const auto at = snap->tickToSample (atTick) + delaySamples (r, deviceRate);
+            const auto at = snap->tickToSample (atTick) + delaySamples (r, *snap) + trackDelay (atTick);
             if (! std::any_of (visible.begin(), visible.end(), [at] (const Interval& iv) { return at >= iv.first && at < iv.second; }))
                 continue;
             if (auto out = scheduledEvent (e))
             {
                 out->at = at;
+                if (playback.outChannel > 0 && out->status < 0xf0)
+                    out->status = static_cast<std::uint8_t> ((out->status & 0xf0) | (playback.outChannel - 1));
                 plan.controllers.push_back (*out);
             }
         }
@@ -492,6 +530,8 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
     snap->signatures = model.signatures;
     const auto& cycle = model.info.cycle;
     snap->cycleEnabled = cycle.enabled && cycle.end > cycle.start;
+    snap->panLawDb = model.info.panLawDb;
+    snap->midiInputFilter = model.info.midiInputFilter;
     snap->cycleStart = snap->tickToSample (cycle.start);
     snap->cycleEnd = snap->tickToSample (cycle.end);
     const auto& punch = model.info.punch;
@@ -559,27 +599,43 @@ std::unique_ptr<EngineSnapshot> compileSnapshot (const model::ProjectModel& mode
 
     for (const auto* track : ordered)
     {
-        if (track->off)
-            continue; // L-TRH-7: an off track has no channel at all
+        if (track->off || track->isFolderStack())
+            continue; // L-TRH-7: an off track has no channel at all; a folder stack's main carries no sound (D-W6-17)
         ChannelPlan plan;
         plan.trackId = track->id;
         plan.kind = track->kind;
         plan.sourceChannels = track->kind == model::TrackKind::audio ? std::clamp (track->channels, 1, 2) : 2;
         plan.gain = dbToGain (track->strip.volumeDb);
-        const auto [l, r] = plan.sourceChannels == 1 ? panGains (track->strip.pan) : balanceGains (track->strip.pan);
+        const auto [l, r] = plan.sourceChannels == 1 ? panGains (track->strip.pan, model.info.panLawDb) : balanceGains (track->strip.pan);
         plan.panLeft = l;
         plan.panRight = r;
         plan.soloAudible = local.soloed.empty() || audibleBySolo.contains (track->id);
+        if (const auto vca = model.vcas.find (track->vcaId); ! track->vcaId.empty() && vca != model.vcas.end())
+        {
+            plan.vcaGain = dbToGain (vca->second->volumeDb);
+            plan.soloAudible = plan.soloAudible && ! vca->second->mute;
+        }
+        if (const auto* folder = model.stackMain (track->id); folder != nullptr && folder->isFolderStack())
+        {
+            // A folder stack's main fader and mute act on its members like a VCA (D-W6-17).
+            plan.vcaGain *= dbToGain (folder->strip.volumeDb);
+            plan.soloAudible = plan.soloAudible && ! folder->mute;
+        }
         plan.audible = ! track->mute && plan.soloAudible;
         plan.instrument = track->kind == model::TrackKind::instrument ? instruments.find (track->id) : nullptr;
         plan.armed = local.armed.contains (track->id) && track->kind != model::TrackKind::bus;
         plan.monitor = monitorFromString (track->monitor);
+        if (! local.softwareMonitoring || (local.monitorSelectedOnly && local.selectedTrack != track->id))
+            plan.monitor = MonitorMode::off; // D-UI-41
         if (track->kind == model::TrackKind::audio && track->input.kind == model::InputAssignment::Kind::audio)
             plan.inputFirst = std::max (0, track->input.firstChannel);
         if (track->kind == model::TrackKind::instrument)
         {
             plan.midiChannel = track->input.kind == model::InputAssignment::Kind::midi ? std::clamp (track->input.channel, 0, 16) : 0;
             plan.liveMidi = plan.armed || local.selectedTrack == track->id;
+            if (track->input.kind == model::InputAssignment::Kind::midi)
+                plan.midiSource = midiSourceId (track->input.device);
+            plan.playback = track->playback;
         }
         if (track->kind != model::TrackKind::bus)
             planRegions (plan, model, *track, *snap, mediaPool, projectRate);

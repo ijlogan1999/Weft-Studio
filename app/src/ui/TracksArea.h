@@ -22,9 +22,27 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24, tempoLane = 40, signatureLane = 20;
+    static constexpr int cycleStrip = 8, rulerHeight = 32, markerLane = 24, tempoLane = 40, signatureLane = 20, arrangementLane = 24, keyLane = 20;
+    /** Where the tempo and signature lanes start with the default global tracks showing. */
     static constexpr int tempoTop = rulerHeight + markerLane, signatureTop = tempoTop + tempoLane;
-    int preferredHeight() const { return rulerHeight + (studio.layout.globalTracks ? markerLane + tempoLane + signatureLane : 0); }
+    static int laneHeight (GlobalLane lane) noexcept;
+    /** The global tracks showing, top to bottom, and their bounds (D-UI-44). */
+    std::vector<std::pair<GlobalLane, juce::Rectangle<int>>> lanes() const;
+    std::optional<juce::Rectangle<int>> laneBounds (GlobalLane lane) const;
+    std::optional<GlobalLane> laneAt (float y) const;
+    int preferredHeight() const;
+
+    /** Arrangement lane (D-UI-45): the section drawn at x. */
+    const model::Section* sectionAt (double x) const;
+    /** Key lane (D-UI-44): the key change drawn at x (not the project key at the start). */
+    const model::KeyChange* keyChangeAt (double x) const;
+    /** While a section is dragged: where it would land. */
+    std::optional<Ticks> sectionDropTarget() const noexcept { return sectionDrop; }
+    /** Asks for a time signature, or a key, at the playhead (Create Time Signature Change, Create Key Change). */
+    void createSignatureChange();
+    void createKeyChange();
+    /** The question box (tests answer it at once). */
+    std::function<void (const juce::String& title, const juce::String& current, std::function<void (juce::String)>)> promptForText = askForText;
 
     /** Bar numbers (1-based) and their x, thinned so labels don't collide (AT-ARR-1). */
     static std::vector<std::pair<int, double>> barLabels (const model::ProjectModel& m, const arrange::TimelineView& view, double width);
@@ -74,7 +92,10 @@ public:
 
 private:
     Studio& studio;
-    enum class Drag { none, cycle, playhead, marker, tempo, punchStart, punchEnd, punch } drag = Drag::none;
+    enum class Drag { none, cycle, playhead, marker, tempo, punchStart, punchEnd, punch, keyChange, sectionStart, sectionEnd, sectionMove } drag = Drag::none;
+    Id draggedKey, draggedSection;
+    std::optional<Ticks> sectionDrop; // where a dragged section lands: the section edge nearest the pointer
+    bool copySection = false;          // Ctrl-drag copies (D-UI-45)
     Ticks dragFrom = 0;
     Id draggedMarker, draggedTempo;
     double dragBpm = 0;
@@ -100,6 +121,9 @@ public:
     const Id trackId;
     juce::Label name;
     SwipeButton mute { "M" }, solo { "S" }, arm { "R" };
+    /** Optional buttons (Configure Track Header, D-UI-37): On/Off, Input Monitoring and Hide. */
+    SwipeButton onOff { "On" }, monitor { "I" };
+    juce::TextButton hide { "H" };
     /** Volume and pan on the header's second line (L-TRH-3), shown when the track is tall enough. */
     juce::Slider volume, pan;
     /** The lock icon (04 §6.1): shown while the track is locked; click to unlock your own lock. */
@@ -120,7 +144,8 @@ public:
         itemDelete,
         itemTrackOff,
         itemHide,
-        itemColour = 100 // + 1 .. paletteSize
+        itemColour = 100, // + 1 .. paletteSize
+        itemHeaderOption = 200 // + Studio::HeaderOption
     };
     /** The header the pointer is over while this one is dragged to reorder; nullptr when not dragging. */
     const TrackHeader* dropTarget() const noexcept { return reorderOver; }
@@ -129,14 +154,17 @@ public:
     // Automation view (W-8): the mode, and per lane the parameter selector and "+".
     juce::ComboBox mode;
     std::vector<std::unique_ptr<juce::ComboBox>> parameters;
-    std::vector<std::unique_ptr<juce::TextButton>> addLane;
+    std::vector<std::unique_ptr<juce::TextButton>> addLane, removeLane;
 
     /** Collaborators whose focus is this track (their badges, AT-COL-12). */
     std::vector<const collab::RemotePresence*> badges() const;
+    /** A stack main's disclosure triangle (D-W6-17), left of the icon; empty for other tracks. */
+    juce::Rectangle<int> disclosureArea() const;
 
 private:
     void rebuildAutomation();
     void lockClicked();
+    int nameLeft() const;
     Studio& studio;
     juce::SharedResourcePointer<KnobLook> knobs;
     bool liveVolume = false, livePan = false;
@@ -155,6 +183,11 @@ class Timeline final : public juce::Component, public juce::FileDragAndDropTarge
 {
 public:
     explicit Timeline (Studio& studio);
+
+    /** The Text tool's prompt (D-UI-36); tests replace it. Default: a small dialog. */
+    std::function<void (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)> promptForText;
+    /** Asks for a new name for the region (the Text tool). */
+    void renameRegion (const Id& regionId);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -267,11 +300,17 @@ private:
     Ticks tickAt (float x) const { return static_cast<Ticks> (std::llround (studio.view.xToTick (x))); }
 
     Studio& studio;
-    enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut, loop, rubberBand } drag = Drag::none;
+    enum class Drag { none, move, trimStart, trimEnd, fadeIn, fadeOut, loop, rubberBand, zoomBox, gain } drag = Drag::none;
+    std::map<Id, double> gainFrom; // Gain tool: each region's gain when the drag began
     std::unique_ptr<arrange::RegionDrag> regionDrag;
     Id dragRegion;
     juce::Point<float> downAt, lastAt;
     bool gestureOpen = false;
+    /** Ctrl-drag on an audio region's edge time-stretches it (D-UI-51): the length it will have, shown as an
+        outline and applied when the drag ends (each stretch renders the audio again). */
+    bool stretching = false;
+    std::optional<Samples> stretchLength;
+    std::optional<juce::Rectangle<float>> stretchOutline() const;
 };
 
 class TracksArea final : public juce::Component, private juce::ChangeListener, private juce::ScrollBar::Listener, private juce::Timer
@@ -287,17 +326,38 @@ public:
     Timeline& timeline() noexcept { return lanes; }
     /** "+" above the headers: opens the New Track dialog (04 §6.1). */
     juce::Button& addTrackButton() noexcept { return addTrack; }
+    /** Scrolls the tracks so the track's row shows (Search and Select Track, D-UI-34). */
+    void revealTrack (const Id& trackId);
     /** The column the headers sit in; a double-click on its empty part below the last track opens the New Track dialog. */
     juce::Component& headerArea() noexcept { return headerColumn; }
     /** Right-click below the last header (D-UI-32): the new-track commands and Delete Unused Tracks. Item ids are
         command ids + 1; pickHeaderAreaMenu runs the command. */
-    static juce::PopupMenu headerAreaMenu();
+    juce::PopupMenu headerAreaMenu() const;
     void pickHeaderAreaMenu (int item);
+    static constexpr int headerOptionBase = 20000; // header-area menu ids for Configure Track Header
+    /** Configure Track Header (Alt+T, D-UI-37): the options menu, shown at the header column. */
+    void showHeaderOptions();
+    /** The header column's width (Studio::header.width); drag its right edge to resize, double-click for the default. */
+    int headerWidth() const noexcept { return studio.header.width; }
+    juce::Component& headerResizer() noexcept { return resizer; }
+    /** The zoom sliders in the corner above the headers (D-UI-38). */
+    juce::Slider horizontalZoom, verticalZoom;
+    /** The horizontal slider's 0..1 position for a zoom, and back (a log scale). */
+    static double pixelsPerTickFor (double position);
+    static double positionFor (double pixelsPerTick);
     const std::vector<std::unique_ptr<TrackHeader>>& headers() const noexcept { return trackHeaders; }
     /** Follow playhead (F-TRN-17): pages the view when the playhead leaves it. Run by the timer. */
     void followPlayhead();
 
-    static constexpr int headerWidth = 208;
+    /** Configure Global Tracks (Alt+G, D-UI-44): which global tracks show, Show Single Global Track and protect.
+        Item ids: globalShowBase + lane bit, globalProtectBase + lane bit, or a command id + 1. */
+    juce::PopupMenu globalTracksMenu() const;
+    void pickGlobalTracksMenu (int item);
+    static constexpr int globalShowBase = 21000, globalProtectBase = 22000;
+    /** The lock beside a global track's name, in the corner above the headers (in TracksArea coordinates). */
+    juce::Rectangle<int> protectButtonBounds (GlobalLane lane) const;
+    /** A click on a lock protects or unprotects its track; a right-click on the names opens globalTracksMenu(). */
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -305,6 +365,7 @@ private:
     void timerCallback() override;
     void rebuildHeaders();
     void layoutHeaders();
+    void syncZoomSliders();
 
     Studio& studio;
     Ruler rulerComponent;
@@ -324,6 +385,15 @@ private:
                 onPopupMenu();
         }
     } headerColumn;
+    struct Resizer final : juce::Component
+    {
+        explicit Resizer (Studio& s) : studio (s) { setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); }
+        void mouseDown (const juce::MouseEvent&) override { from = studio.header.width; }
+        void mouseDrag (const juce::MouseEvent& e) override { studio.setHeaderWidth (from + e.getDistanceFromDragStartX()); }
+        void mouseDoubleClick (const juce::MouseEvent&) override { studio.setHeaderWidth (Studio::defaultHeaderWidth); }
+        Studio& studio;
+        int from = 0;
+    } resizer { studio };
     CommandButton addTrack { "+", Cmd::newTrack };
     std::vector<std::unique_ptr<TrackHeader>> trackHeaders;
     std::vector<Id> shownTracks;

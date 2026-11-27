@@ -21,15 +21,24 @@ add_library(weft_app_lib STATIC
     src/ui/PresenceUi.cpp
     src/ui/Commands.cpp
     src/ui/ControlBar.cpp
+    src/ui/Displays.cpp
+    src/ui/GroupsPanel.cpp
+    src/ui/UndoHistory.cpp
+    src/ui/NotesPanel.cpp
+    src/ui/ListsPanel.cpp
+    src/ui/KeyCommands.cpp
     src/ui/Inspector.cpp
     src/ui/MainComponent.cpp
     src/ui/Mixer.cpp
     src/ui/PluginWindows.cpp
+    src/ui/PluginSettings.cpp
     src/ui/ProjectDialogs.cpp
     src/ui/NewTrackDialog.cpp
     src/ui/PluginSearch.cpp
     src/ui/ShareDialogs.cpp
     src/ui/SidePanel.cpp
+    src/ui/SmartControls.cpp
+    src/ui/Library.cpp
     src/ui/Studio.cpp
     src/ui/StudioCollab.cpp
     src/ui/Theme.cpp

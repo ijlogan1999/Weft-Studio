@@ -106,6 +106,127 @@ Color ProjectModel::regionColor (const Region& r) const
     return t != nullptr ? t->color : Color {};
 }
 
+std::vector<const KeyChange*> ProjectModel::keyChangesInOrder() const
+{
+    std::vector<const KeyChange*> out;
+    for (const auto& [id, k] : keyChanges)
+        out.push_back (k.get());
+    std::sort (out.begin(), out.end(), [] (const auto* a, const auto* b) { return a->pos != b->pos ? a->pos < b->pos : a->id < b->id; });
+    return out;
+}
+
+const KeyChange* ProjectModel::keyChangeAt (Ticks t) const
+{
+    const KeyChange* found = nullptr;
+    for (const auto* k : keyChangesInOrder())
+        if (k->pos <= t)
+            found = k;
+    return found;
+}
+
+KeySignature ProjectModel::keyAt (Ticks t) const
+{
+    const auto* k = keyChangeAt (t);
+    return k != nullptr ? k->key : info.key;
+}
+
+std::vector<const Section*> ProjectModel::sectionsInOrder() const
+{
+    std::vector<const Section*> out;
+    for (const auto& [id, s] : sections)
+        out.push_back (s.get());
+    std::sort (out.begin(), out.end(), [] (const auto* a, const auto* b) { return a->start != b->start ? a->start < b->start : a->id < b->id; });
+    return out;
+}
+
+std::vector<const Group*> ProjectModel::groupsInOrder() const
+{
+    std::vector<const Group*> out;
+    for (const auto& [id, g] : groups)
+        out.push_back (g.get());
+    std::sort (out.begin(), out.end(), [] (const auto* a, const auto* b) { return a->number != b->number ? a->number < b->number : a->id < b->id; });
+    return out;
+}
+
+std::vector<Id> ProjectModel::groupMembers (const Id& groupId) const
+{
+    std::vector<Id> out;
+    if (groupId.empty())
+        return out;
+    for (const auto& id : trackOrder)
+        if (const auto* t = track (id); t != nullptr && t->groupId == groupId)
+            out.push_back (id);
+    return out;
+}
+
+const Group* ProjectModel::activeGroup (const Id& trackId) const
+{
+    const auto* t = track (trackId);
+    if (! info.groupsActive || t == nullptr || t->groupId.empty())
+        return nullptr;
+    const auto g = groups.find (t->groupId);
+    return g != groups.end() && g->second->enabled ? g->second.get() : nullptr;
+}
+
+std::vector<Id> ProjectModel::linkedTracks (const Id& trackId, bool Group::* link) const
+{
+    const auto* g = activeGroup (trackId);
+    if (g == nullptr || ! (g->*link))
+        return {};
+    auto out = groupMembers (g->id);
+    out.erase (std::remove (out.begin(), out.end(), trackId), out.end());
+    return out;
+}
+
+std::vector<Id> ProjectModel::linkedSendTracks (const Id& trackId, int slot) const
+{
+    const auto* g = activeGroup (trackId);
+    if (g == nullptr || slot < 0 || slot > 7 || (g->linkSends & (1 << slot)) == 0)
+        return {};
+    auto out = groupMembers (g->id);
+    out.erase (std::remove (out.begin(), out.end(), trackId), out.end());
+    return out;
+}
+
+std::vector<Id> ProjectModel::stackMembers (const Id& mainId) const
+{
+    std::vector<Id> out;
+    const auto* main = track (mainId);
+    if (main == nullptr || ! main->isStackMain())
+        return out;
+    for (const auto& id : trackOrder)
+        if (const auto* t = track (id); t != nullptr && t->stackId == mainId && id != mainId)
+            out.push_back (id);
+    return out;
+}
+
+const Track* ProjectModel::stackMain (const Id& trackId) const
+{
+    const auto* t = track (trackId);
+    if (t == nullptr || t->stackId.empty() || t->stackId == trackId)
+        return nullptr;
+    const auto* main = track (t->stackId);
+    return main != nullptr && main->isStackMain() ? main : nullptr;
+}
+
+std::vector<const Vca*> ProjectModel::vcasInOrder() const
+{
+    std::vector<const Vca*> out;
+    for (const auto& [id, v] : vcas)
+        out.push_back (v.get());
+    std::sort (out.begin(), out.end(), [] (const auto* a, const auto* b) { return a->name != b->name ? a->name < b->name : a->id < b->id; });
+    return out;
+}
+
+const Section* ProjectModel::sectionAt (Ticks t) const
+{
+    const Section* found = nullptr;
+    for (const auto* s : sectionsInOrder())
+        if (s->start <= t && t < s->end())
+            found = s;
+    return found;
+}
+
 // Reading -------------------------------------------------------------------
 
 namespace
@@ -165,6 +286,10 @@ void readInfo (ProjectModel& m, const Value& root)
     info.metronomeDefaults = MetronomeSettings::fromValue (root["metronomeDefaults"]);
     info.key = KeySignature::fromValue (root["key"]);
     info.showHiddenTracks = root["showHiddenTracks"].asBool();
+    info.groupsActive = root["groupsActive"].isBool() ? root["groupsActive"].asBool() : true;
+    info.notes = root["notes"].asString();
+    info.panLawDb = root["panLaw"].isNumber() && isValidPanLaw (root["panLaw"].asDouble()) ? root["panLaw"].asDouble() : -3.0;
+    info.midiInputFilter = static_cast<int> (root["midiInputFilter"].asInt (0)) & midiFilter::all;
 
     m.storedTrackOrder.clear();
     for (const auto& item : root["trackOrder"].asList())
@@ -220,6 +345,10 @@ ProjectModel Projector::project (const Document& document)
     readCollection (m.takeFolders, root[keys::takeFolders]);
     readCollection (m.midiSequences, root[keys::midiSequences]);
     readCollection (m.markers, root[keys::markers]);
+    readCollection (m.keyChanges, root[keys::keyChanges]);
+    readCollection (m.sections, root[keys::sections]);
+    readCollection (m.groups, root[keys::groups]);
+    readCollection (m.vcas, root[keys::vcas]);
     readCollection (m.storedLanes, root[keys::automationLanes]);
     readCollab (m, root[keys::collab]);
     m.media.clear();
@@ -252,7 +381,8 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         {
             // A whole collection was replaced, or a project field changed.
             if (c == keys::tracks || c == keys::regions || c == keys::takeFolders || c == keys::midiSequences || c == keys::markers
-                || c == keys::automationLanes || c == keys::media)
+                || c == keys::keyChanges || c == keys::sections || c == keys::groups || c == keys::vcas || c == keys::automationLanes
+                || c == keys::media)
             {
                 m = project (document);
                 return;
@@ -292,6 +422,14 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
                 refreshEntity (m.midiSequences, id, v);
             else if (c == keys::markers)
                 refreshEntity (m.markers, id, v);
+            else if (c == keys::keyChanges)
+                refreshEntity (m.keyChanges, id, v);
+            else if (c == keys::sections)
+                refreshEntity (m.sections, id, v);
+            else if (c == keys::groups)
+                refreshEntity (m.groups, id, v);
+            else if (c == keys::vcas)
+                refreshEntity (m.vcas, id, v);
             else if (c == keys::automationLanes)
                 refreshEntity (m.storedLanes, id, v);
             else if (c == keys::media)
@@ -310,7 +448,8 @@ void Projector::refresh (ProjectModel& m, const Document& document, const std::v
         // Project fields are small; re-read them all (but not the collections).
         Value root = Value::map();
         for (const char* k : { "schemaVersion", "id", "name", "sampleRate", "recordBitDepth", "createdAt", "createdBy", "masterTrackId", "cycle",
-                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", keys::trackOrder })
+                               "punch", "endMarker", "metronomeDefaults", "key", "showHiddenTracks", "groupsActive", "notes", "panLaw", "midiInputFilter",
+                               keys::trackOrder })
             if (auto v = document.get (doc::path ({ k })))
                 root.set (k, std::move (*v));
         readInfo (m, root);
@@ -371,8 +510,20 @@ void Projector::derive (ProjectModel& m, const Document& document)
     // The tracks area's rows: the order without hidden tracks, unless they're shown (L-TRH-10).
     m.rows.clear();
     for (const auto& id : m.trackOrder)
-        if (const auto* t = m.track (id); t != nullptr && (! t->hidden || m.info.showHiddenTracks))
+    {
+        const auto* t = m.track (id);
+        if (t == nullptr)
+            continue;
+        // A group's H hides its tracks too (D-W6-15).
+        const auto g = t->groupId.empty() ? m.groups.end() : m.groups.find (t->groupId);
+        const bool groupHidden = g != m.groups.end() && g->second->hidden && g->second->enabled && m.info.groupsActive;
+        // A closed stack shows only its main track (D-W6-17).
+        const auto* main = m.stackMain (id);
+        if (main != nullptr && ! main->stackOpen)
+            continue;
+        if ((! t->hidden && ! groupHidden) || m.info.showHiddenTracks)
             m.rows.push_back (id);
+    }
 
     // 4. Tempo and signature points: one per position, greater Id wins (D-DM-9).
     m.tempo = TempoMap (dedupeByPosition (m.storedTempoPoints, [] (const TempoPoint& p) { return p.pos; }), static_cast<double> (m.info.sampleRate));

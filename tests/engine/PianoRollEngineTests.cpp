@@ -3,11 +3,14 @@
 #include "EngineFixtures.h"
 
 #include "weft/engine/arrange/OfflineRender.h"
+#include "weft/commands/Notes.h"
+#include "weft/engine/midi/MidiInputs.h"
 
 #include <catch2/catch_approx.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
 using namespace weft;
 using namespace weft::test;
@@ -246,4 +249,291 @@ TEST_CASE ("AT-ARR-30: region delay shifts MIDI and audio playback without movin
     const auto out = engine::renderOffline (k.rig.session.model(), k.rig.media, options);
     CHECK (out.channels[0][479] == 0.0f);
     CHECK (out.channels[0][480] != 0.0f);
+}
+
+TEST_CASE ("AT-TRK-23: track parameters change what an instrument track plays, from regions and live input", "[E][tracks][AT-TRK-23]")
+{
+    KeysRig k;
+    auto& s = k.rig.session;
+    // Played with transpose 12 + 2 and velocity +10: 74 and 54 play; 44, 84 and velocity 30 fall outside the limits.
+    for (const auto& [pos, pitch, velocity] : { std::tuple { 0, 60, 100 }, { 960, 40, 100 }, { 1920, 30, 100 }, { 2400, 70, 100 }, { 2880, 60, 20 } })
+    {
+        model::Note n;
+        n.pos = pos;
+        n.length = 480;
+        n.pitch = pitch;
+        n.velocity = velocity;
+        n.channel = 3;
+        REQUIRE (s.addNote (k.region, n));
+    }
+    REQUIRE (s.setRegionTranspose (k.region, 2));
+
+    model::TrackPlayback p;
+    p.transpose = 12;
+    p.velocityOffset = 10;
+    p.keyLow = 48;
+    p.keyHigh = 76;
+    p.velocityLow = 50;
+    p.outChannel = 5;
+    p.delay = 100.0; // ms
+    REQUIRE (s.setTrackPlayback (k.keys, p));
+    CHECK (s.undoName() == "Track Parameters");
+    k.play (barSamples);
+    const auto ticksToSamples = [] (Ticks t) { return t * barSamples / barTicks; };
+    auto ons = k.seen (0x90);
+    REQUIRE (ons.size() == 2);
+    CHECK (ons[0].event.data1 == 74); // 60 + 12 + 2
+    CHECK (ons[0].event.data2 == 110);
+    CHECK ((ons[0].event.status & 0x0f) == 4); // channel 5
+    CHECK (ons[0].frame == 4800);              // 100 ms at 48 kHz
+    CHECK (ons[1].event.data1 == 54);
+    CHECK (ons[1].frame == ticksToSamples (960) + 4800);
+    // The stored notes are unchanged.
+    const auto& seq = *s.model().sequence (s.model().region (k.region)->midi.sequenceId);
+    CHECK (seq.sortedNotes()[0]->pitch == 60);
+    CHECK (seq.sortedNotes()[0]->channel == 3);
+
+    // No Transpose ignores the region's transpose; the delay in ticks follows the tempo.
+    p.noTranspose = true;
+    p.delayInTicks = true;
+    p.delay = 480;
+    REQUIRE (s.setTrackPlayback (k.keys, p));
+    k.play (barSamples);
+    ons = k.seen (0x90);
+    REQUIRE (ons.size() == 2);
+    CHECK (ons[0].event.data1 == 72);
+    CHECK (ons[0].frame == ticksToSamples (480));
+
+    // Out of range, crossed limits and audio tracks are refused; undo is one step per change.
+    auto bad = p;
+    bad.keyLow = 80;
+    CHECK_FALSE (s.setTrackPlayback (k.keys, bad));
+    bad = p;
+    bad.delay = 961;
+    CHECK_FALSE (s.setTrackPlayback (k.keys, bad));
+    bad = p;
+    bad.outChannel = 17;
+    CHECK_FALSE (s.setTrackPlayback (k.keys, bad));
+    s.undo();
+    CHECK (s.model().track (k.keys)->playback.transpose == 12);
+    CHECK_FALSE (s.model().track (k.keys)->playback.noTranspose);
+    CHECK (s.model().track (k.keys)->playback.delay == 100.0);
+    CHECK_FALSE (s.setTrackPlayback (k.rig.audioTrack(), model::TrackPlayback {}));
+
+    // The parameters survive a save and load.
+    const auto again = model::Track::fromValue (k.keys, s.model().track (k.keys)->toValue());
+    CHECK (again.playback == s.model().track (k.keys)->playback);
+
+    // Live input: transpose, velocity, limits and out channel apply; the MIDI input device filters.
+    model::InputAssignment in;
+    in.kind = model::InputAssignment::Kind::midi;
+    in.device = "USB Keys";
+    REQUIRE (s.setTrackInput (k.keys, in));
+    k.rig.sync();
+    k.rig.engine.stop();
+    k.rig.engine.setArmedTracks ({ k.keys });
+    k.rig.device.render (512);
+    k.probe->seen.clear();
+    engine::MidiInputRouter router (k.rig.engine);
+    CHECK (router.deliver ("USB Keys", 0x90, 50, 100)); // plays as 62 at 110 on channel 5
+    CHECK (router.deliver ("Other Port", 0x90, 52, 100)); // another device: not this track
+    CHECK (router.deliver ({}, 0x90, 53, 100));           // the computer keyboard reaches it
+    CHECK (router.deliver ("USB Keys", 0x90, 70, 100));   // 82 is above the key limit
+    CHECK (router.deliver ("USB Keys", 0x90, 51, 30));    // 40 is below the velocity limit
+    k.rig.device.render (512);
+    ons = k.seen (0x90);
+    REQUIRE (ons.size() == 2);
+    CHECK (ons[0].event.data1 == 62);
+    CHECK (ons[0].event.data2 == 110);
+    CHECK ((ons[0].event.status & 0x0f) == 4);
+    CHECK (ons[1].event.data1 == 65);
+}
+
+TEST_CASE ("AT-PRL-22: MIDI region dynamics, gate time, clip length, Q-Range, Q-Flam and delay in ticks", "[E][pianoroll][AT-PRL-22]")
+{
+    KeysRig k;
+    auto& s = k.rig.session;
+    const auto add = [&] (Ticks pos, Ticks length, int pitch, int velocity) {
+        model::Note n;
+        n.pos = pos;
+        n.length = length;
+        n.pitch = pitch;
+        n.velocity = velocity;
+        return *s.addNote (k.region, n);
+    };
+    const auto played = [&] {
+        const auto& r = *s.model().region (k.region);
+        return commands::playedNotes (r, *s.model().sequence (r.midi.sequenceId), r.start, r.start + r.length);
+    };
+    add (0, 480, 60, 100);
+    add (960, 480, 62, 40);
+
+    // Dynamics scales the distance from 64; Fixed plays them alike, and the velocity offset adds after.
+    REQUIRE (s.setRegionDynamics (k.region, 50));
+    CHECK (s.undoName() == "Region Dynamics");
+    auto p = played();
+    REQUIRE (p.size() == 2);
+    CHECK (p[0].velocity == 82);
+    CHECK (p[1].velocity == 52);
+    REQUIRE (s.setRegionDynamics (k.region, 0));
+    REQUIRE (s.setRegionVelocityOffset (k.region, 10));
+    p = played();
+    CHECK (p[0].velocity == 74);
+    CHECK (p[1].velocity == 74);
+    CHECK_FALSE (s.setRegionDynamics (k.region, 301));
+    REQUIRE (s.setRegionDynamics (k.region, 100));
+    REQUIRE (s.setRegionVelocityOffset (k.region, 0));
+
+    // Gate time: a percent of the length, Fixed short, Legato to the next note.
+    REQUIRE (s.setRegionGate (k.region, 50));
+    CHECK (played()[0].off == 240);
+    REQUIRE (s.setRegionGate (k.region, model::MidiRegionData::gateFixed));
+    CHECK (played()[0].off == model::MidiRegionData::fixedGateTicks);
+    REQUIRE (s.setRegionGate (k.region, model::MidiRegionData::gateLegato));
+    p = played();
+    CHECK (p[0].off == 960);
+    CHECK (p[1].off == 1440); // the last keeps its length
+    CHECK_FALSE (s.setRegionGate (k.region, 201));
+    REQUIRE (s.setRegionGate (k.region, 0));
+
+    // Clip Length: a note past the region's end stops there, or plays on with it off.
+    const auto end = s.model().region (k.region)->length;
+    add (end - 240, 960, 64, 100);
+    CHECK (played().back().off == end);
+    REQUIRE (s.setRegionClipLength (k.region, false));
+    CHECK (played().back().off == end + 720);
+    k.play (barSamples * 3);
+    const auto offs = k.seen (0x80);
+    REQUIRE_FALSE (offs.empty());
+    CHECK (offs.back().frame == (end + 720) * barSamples / barTicks);
+    REQUIRE (s.setRegionClipLength (k.region, true));
+
+    // Q-Range and Q-Flam, on a 1/16 grid.
+    const auto chordBase = 2 * barTicks;
+    REQUIRE (s.trimRegionLength (k.region, 3 * barTicks));
+    add (chordBase + 10, 120, 50, 100);  // 10 ticks late
+    add (chordBase + 300, 120, 51, 100); // 60 ticks late of 240
+    model::RegionQuantize q;
+    q.grid = 240;
+    q.range = 30;
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    const auto onOf = [&] (int pitch) {
+        for (const auto& n : played())
+            if (n.note->pitch == pitch)
+                return n.on;
+        return Ticks (-1);
+    };
+    CHECK (onOf (50) == chordBase);
+    CHECK (onOf (51) == chordBase + 300);
+    q.range = -30;
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    CHECK (onOf (50) == chordBase + 10);
+    CHECK (onOf (51) == chordBase + 240);
+    q.range = 0;
+    q.flam = 20; // a chord a beat later, one note 5 ticks late
+    add (chordBase + 960, 120, 67, 100);
+    add (chordBase + 960, 120, 72, 100);
+    add (chordBase + 965, 120, 70, 100);
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    CHECK (onOf (67) == chordBase + 960);
+    CHECK (onOf (70) == chordBase + 980);
+    CHECK (onOf (72) == chordBase + 1000);
+    q.flam = -20;
+    REQUIRE (s.setRegionQuantize (k.region, q));
+    CHECK (onOf (72) == chordBase + 960);
+    CHECK (onOf (67) == chordBase + 1000);
+    q.range = 4000;
+    CHECK_FALSE (s.setRegionQuantize (k.region, q));
+    REQUIRE (s.setRegionQuantize (k.region, std::nullopt));
+
+    // Delay in ticks; setting milliseconds goes back to them.
+    REQUIRE (s.setRegionDelayTicks (k.region, 480));
+    CHECK (s.model().region (k.region)->delayInTicks);
+    k.play (barSamples);
+    REQUIRE_FALSE (k.seen (0x90).empty());
+    CHECK (k.seen (0x90)[0].frame == 480 * barSamples / barTicks);
+    CHECK_FALSE (s.setRegionDelayTicks (k.region, 961));
+    REQUIRE (s.setRegionDelay (k.region, 10.0));
+    CHECK_FALSE (s.model().region (k.region)->delayInTicks);
+    REQUIRE (s.setRegionDelayTicks (k.region, 240));
+
+    // A save and load keeps them.
+    REQUIRE (s.setRegionGate (k.region, 50));
+    const auto again = model::Region::fromValue (k.region, s.model().region (k.region)->toValue());
+    CHECK (again.midi.gate == 50);
+    CHECK (again.delayInTicks);
+    CHECK (again.delayTicks == 240);
+}
+
+TEST_CASE ("AT-PRL-23: Apply All Parameters writes the region parameters into the notes", "[E][pianoroll][AT-PRL-23]")
+{
+    KeysRig k;
+    auto& s = k.rig.session;
+    model::Note n;
+    n.pos = 250;
+    n.length = 480;
+    n.pitch = 60;
+    n.velocity = 100;
+    const auto note = *s.addNote (k.region, n);
+    REQUIRE (s.setRegionQuantize (k.region, model::RegionQuantize { 240, 1.0, 0.0 }));
+    REQUIRE (s.setRegionTranspose (k.region, 2));
+    REQUIRE (s.setRegionVelocityOffset (k.region, 10));
+    REQUIRE (s.setRegionGate (k.region, 50));
+    REQUIRE (s.setRegionDelayTicks (k.region, 120));
+    k.play (barSamples);
+    const auto before = k.seen (0x90);
+    REQUIRE (before.size() == 1);
+
+    REQUIRE (s.applyRegionParameters ({ k.region }, false));
+    CHECK (s.undoName() == "Apply All Except Delay");
+    auto r = *s.model().region (k.region);
+    CHECK_FALSE (r.midi.quantize);
+    CHECK (r.midi.transpose == 0);
+    CHECK (r.midi.velocityOffset == 0);
+    CHECK (r.midi.gate == 0);
+    CHECK (r.delayTicks == 120); // kept
+    const auto* written = s.model().sequence (r.midi.sequenceId)->sortedNotes()[0];
+    CHECK (written->pos == 240);
+    CHECK (written->length == 240);
+    CHECK (written->pitch == 62);
+    CHECK (written->velocity == 110);
+    // It plays the same.
+    k.play (barSamples);
+    const auto after = k.seen (0x90);
+    REQUIRE (after.size() == 1);
+    CHECK (after[0].frame == before[0].frame);
+    CHECK (after[0].event.data1 == before[0].event.data1);
+    CHECK (after[0].event.data2 == before[0].event.data2);
+
+    // With the delay too, then one undo step back.
+    REQUIRE (s.applyRegionParameters ({ k.region }, true));
+    CHECK (s.undoName() == "Apply All Parameters");
+    r = *s.model().region (k.region);
+    CHECK (r.delayTicks == 0);
+    CHECK (s.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pos == 360);
+    s.undo();
+    s.undo();
+    r = *s.model().region (k.region);
+    CHECK (r.midi.transpose == 2);
+    CHECK (s.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pos == 250);
+    CHECK (s.model().sequence (r.midi.sequenceId)->notes.contains (note));
+}
+
+TEST_CASE ("AT-UI-20: controllers from enabled MIDI inputs reach the Smart Controls tap and still play", "[E][midi][AT-UI-20]")
+{
+    Rig rig;
+    engine::MidiInputRouter router (rig.engine);
+    std::vector<std::array<std::uint8_t, 3>> tapped;
+    router.setControllerTap ([&] (std::uint8_t status, std::uint8_t d1, std::uint8_t d2) { tapped.push_back ({ status, d1, d2 }); });
+    router.setDisabled ({ "Off Port" });
+    CHECK (router.deliver ("Pad Controller", 0xB0, 21, 64));
+    CHECK (router.deliver ("Pad Controller", 0x90, 60, 100)); // notes aren't tapped
+    CHECK_FALSE (router.deliver ("Off Port", 0xB3, 22, 1));   // a disabled input is dropped before the tap
+    CHECK (router.deliver ("Pad Controller", 0xB2, 7, 127));
+    REQUIRE (tapped.size() == 2);
+    CHECK (tapped[0] == std::array<std::uint8_t, 3> { 0xB0, 21, 64 });
+    CHECK (tapped[1] == std::array<std::uint8_t, 3> { 0xB2, 7, 127 });
+    router.setControllerTap (nullptr);
+    CHECK (router.deliver ("Pad Controller", 0xB0, 21, 0));
+    CHECK (tapped.size() == 2);
 }

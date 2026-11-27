@@ -6,8 +6,10 @@
 #include "weft/project/ProjectFiles.h"
 #include "weft/project/ProjectFolder.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <random>
 
@@ -444,4 +446,340 @@ TEST_CASE ("Shared folder: each computer keeps its own recovery log", "[U][proje
     REQUIRE (b.renameProject ("Unsaved"));
     CHECK (desktop.open().recoveryAvailable());
     CHECK_FALSE (project::ProjectFolder (root, "aaaaaaaaaaaaaaaa").open().recoveryAvailable());
+}
+
+TEST_CASE ("AT-PRJ-16 project count-in, pan law and MIDI input filter", "[U][project][AT-PRJ-16]")
+{
+    auto s = commands::Session::createNew ({}, "userA").value();
+    CHECK (s.model().info.panLawDb == -3.0);
+    CHECK (s.model().info.midiInputFilter == 0);
+
+    // Count-in: none, 1 to 6 bars, or 1 or 2 beats.
+    model::MetronomeSettings m = s.model().info.metronomeDefaults;
+    for (const int n : { 6, -2, 3 })
+    {
+        m.countInBars = n;
+        CHECK (s.setMetronomeDefaults (m));
+        CHECK (s.model().info.metronomeDefaults.countInBars == n);
+    }
+    for (const int n : { 7, -3 })
+    {
+        m.countInBars = n;
+        CHECK_FALSE (s.setMetronomeDefaults (m));
+    }
+    CHECK (model::countInName (0) == "None");
+    CHECK (model::countInName (1) == "1 bar");
+    CHECK (model::countInName (4) == "4 bars");
+    CHECK (model::countInName (-1) == "1 beat");
+    CHECK (model::countInName (-2) == "2 beats");
+    CHECK (model::countInIndex (-2) == 8);
+    CHECK (model::countInIndex (99) == 0);
+
+    // Pan law: one undo step; only the four laws.
+    CHECK (s.setPanLaw (-6.0));
+    CHECK (s.model().info.panLawDb == -6.0);
+    CHECK (s.undoName() == "Set Pan Law");
+    CHECK_FALSE (s.setPanLaw (-6.0));
+    CHECK_FALSE (s.setPanLaw (-2.0));
+    REQUIRE (s.undo().done);
+    CHECK (s.model().info.panLawDb == -3.0);
+    REQUIRE (s.setPanLaw (-4.5));
+
+    // MIDI input filter: bits of model::midiFilter.
+    using namespace model::midiFilter;
+    CHECK (s.setMidiInputFilter (notes | pitchBend));
+    CHECK (s.undoName() == "Set MIDI Input Filter");
+    CHECK_FALSE (s.setMidiInputFilter (64));
+    CHECK (drops (notes, 0x93, 100));
+    CHECK_FALSE (drops (notes, 0x93, 0)); // a velocity-0 note-on ends a note: it passes
+    CHECK_FALSE (drops (notes, 0x80, 0));
+    CHECK (drops (controllers, 0xb0, 1));
+    CHECK (drops (programChange, 0xc5, 0));
+    CHECK (drops (channelPressure, 0xd0, 0));
+    CHECK (drops (polyPressure, 0xa0, 0));
+    CHECK (drops (pitchBend, 0xe0, 0));
+    CHECK_FALSE (drops (all & ~pitchBend, 0xe0, 0));
+
+    // All three are in the document and survive reopening.
+    const auto bytes = s.document().save();
+    commands::Session reopened (doc::Document::load (bytes).value(), "userB");
+    CHECK (reopened.model().info.metronomeDefaults.countInBars == 3);
+    CHECK (reopened.model().info.panLawDb == -4.5);
+    CHECK (reopened.model().info.midiInputFilter == (notes | pitchBend));
+}
+
+TEST_CASE ("AT-TMP-11 key changes along the timeline: add, move, edit, delete, the key at a tick", "[U][project][AT-TMP-11]")
+{
+    using model::KeySignature;
+    auto s = commands::Session::createNew ({}, "userA").value();
+    REQUIRE (s.setKey ({ 2, false })); // D major from the start
+    CHECK_FALSE (s.addKeyChange (0, { 7, false }));  // the start is the project key
+    const auto change = s.addKeyChange (8 * 3840, { 7, false }); // G major from bar 9
+    REQUIRE (change);
+    CHECK (s.undoName() == "Add Key Change");
+    CHECK_FALSE (s.addKeyChange (8 * 3840, { 9, true })); // one per position
+    CHECK (s.model().keyAt (0) == KeySignature { 2, false });
+    CHECK (s.model().keyAt (8 * 3840 - 1) == KeySignature { 2, false });
+    CHECK (s.model().keyAt (8 * 3840) == KeySignature { 7, false });
+    CHECK (s.model().keyAt (100000) == KeySignature { 7, false });
+
+    // The key display edits the key in effect where it is.
+    REQUIRE (s.setKeyAt (10 * 3840, { 4, true }));
+    CHECK (s.model().keyChanges.at (*change)->key == KeySignature { 4, true });
+    CHECK (s.model().info.key == KeySignature { 2, false });
+    REQUIRE (s.setKeyAt (3840, { 5, false }));
+    CHECK (s.model().info.key == KeySignature { 5, false });
+    CHECK (s.undoName() == "Set Key");
+
+    REQUIRE (s.setKeyChange (*change, 4 * 3840, { 4, true }));
+    CHECK (s.undoName() == "Key Change");
+    CHECK (s.model().keyAt (4 * 3840) == KeySignature { 4, true });
+    CHECK_FALSE (s.setKeyChange (*change, 0, { 4, true }));
+    const auto second = s.addKeyChange (12 * 3840, { 0, false });
+    REQUIRE (second);
+    CHECK_FALSE (s.setKeyChange (*second, 4 * 3840, { 0, false })); // onto the other one
+    REQUIRE (s.model().keyChangesInOrder().size() == 2);
+    CHECK (s.model().keyChangesInOrder()[0]->id == *change);
+
+    // Saved with the project.
+    const auto bytes = s.document().save();
+    commands::Session reopened (doc::Document::load (bytes).value(), "userB");
+    CHECK (reopened.model().keyAt (13 * 3840) == KeySignature { 0, false });
+    CHECK (reopened.model().keyChanges.size() == 2);
+
+    REQUIRE (s.deleteKeyChange (*second));
+    CHECK (s.undoName() == "Delete Key Change");
+    CHECK (s.model().keyAt (13 * 3840) == KeySignature { 4, true });
+    REQUIRE (s.undo().done);
+    CHECK (s.model().keyAt (13 * 3840) == KeySignature { 0, false });
+}
+
+TEST_CASE ("AT-ARR-44 arrangement sections: add, name, colour, resize, no overlaps, delete", "[U][arrange][AT-ARR-44]")
+{
+    auto s = commands::Session::createNew ({}, "userA").value();
+    const auto intro = s.addSection (0, 4 * 3840);
+    REQUIRE (intro);
+    CHECK (s.undoName() == "Add Section");
+    CHECK (s.model().sections.at (*intro)->name == "Intro");
+    const auto verse = s.addSection (4 * 3840, 8 * 3840);
+    REQUIRE (verse);
+    CHECK (s.model().sections.at (*verse)->name == "Verse");
+    CHECK_FALSE (s.addSection (10 * 3840, 4 * 3840)); // inside the verse
+    CHECK_FALSE (s.addSection (-1, 3840));
+    CHECK (s.model().sectionAt (5 * 3840)->id == *verse);
+    CHECK (s.model().sectionAt (12 * 3840) == nullptr);
+
+    REQUIRE (s.renameSection (*verse, "Verse 1"));
+    CHECK (s.undoName() == "Rename Section");
+    CHECK_FALSE (s.renameSection (*verse, ""));
+    REQUIRE (s.setSectionColor (*verse, model::Color { 3, {} }));
+    CHECK (s.model().sections.at (*verse)->color->palette == 3);
+    CHECK_FALSE (s.setSectionRange (*verse, 2 * 3840, 4 * 3840)); // over the intro
+    REQUIRE (s.setSectionRange (*verse, 4 * 3840, 4 * 3840));
+    CHECK (s.undoName() == "Resize Section");
+    CHECK (s.model().sections.at (*verse)->end() == 8 * 3840);
+
+    const auto bytes = s.document().save();
+    commands::Session reopened (doc::Document::load (bytes).value(), "userB");
+    REQUIRE (reopened.model().sectionsInOrder().size() == 2);
+    CHECK (reopened.model().sectionsInOrder()[1]->name == "Verse 1");
+
+    REQUIRE (s.deleteSection (*intro));
+    CHECK (s.undoName() == "Delete Section");
+    CHECK (s.model().sections.size() == 1);
+}
+
+TEST_CASE ("AT-ARR-46 moving and copying a section takes its regions, markers and key changes along", "[U][arrange][AT-ARR-46]")
+{
+    constexpr Ticks bar = 3840;
+    auto s = commands::Session::createNew ({}, "userA").value();
+    const auto inst = s.createTrack (model::TrackKind::instrument, "").value();
+    const auto intro = s.addSection (0, 4 * bar).value();
+    const auto verse = s.addSection (4 * bar, 4 * bar).value();
+    const auto inIntro = s.createMidiRegion (inst, bar, bar).value();
+    const auto inVerse = s.createMidiRegion (inst, 5 * bar, bar).value();
+    const auto across = s.createMidiRegion (inst, 3 * bar, 2 * bar).value(); // crosses the intro's end
+    const auto marker = s.addMarker (6 * bar, "Hook").value();
+    const auto key = s.addKeyChange (4 * bar, model::KeySignature { 2, false }).value();
+    const auto starts = [&] {
+        std::vector<Ticks> out;
+        for (const auto& [id, r] : s.model().regions)
+            out.push_back (r->start);
+        std::sort (out.begin(), out.end());
+        return out;
+    };
+
+    // Dropped inside another section, or at its own edge: refused, or nothing happens.
+    CHECK_FALSE (s.moveSection (intro, 6 * bar, false));
+    REQUIRE (s.moveSection (intro, 0, false));
+    CHECK (s.model().regions.size() == 3);
+
+    // Moving the intro after the verse: one undo step; the crossing region is split at the edge.
+    REQUIRE (s.moveSection (intro, 8 * bar, false));
+    CHECK (s.undoName() == "Move Section");
+    CHECK (s.model().sections.at (verse)->start == 0);
+    CHECK (s.model().sections.at (intro)->start == 4 * bar);
+    CHECK (s.model().regions.size() == 4);
+    CHECK (s.model().regions.at (inIntro)->start == 5 * bar);
+    CHECK (s.model().regions.at (inVerse)->start == bar);
+    CHECK (s.model().regions.at (across)->start == 7 * bar);
+    CHECK (starts() == std::vector<Ticks> { 0, bar, 5 * bar, 7 * bar });
+    CHECK (s.model().markers.at (marker)->pos == 2 * bar);
+    CHECK (s.model().keyChanges.at (key)->pos == 0);
+    REQUIRE (s.undo().done);
+    CHECK (s.model().sections.at (intro)->start == 0);
+    CHECK (s.model().regions.size() == 3);
+    CHECK (s.model().regions.at (inIntro)->start == bar);
+    CHECK (s.model().markers.at (marker)->pos == 6 * bar);
+
+    // Copying the verse to the start: everything from there moves right by a verse, and the twin
+    // section holds copies of its regions.
+    REQUIRE (s.moveSection (verse, 0, true));
+    CHECK (s.undoName() == "Copy Section");
+    REQUIRE (s.model().sections.size() == 3);
+    const auto order = s.model().sectionsInOrder();
+    CHECK (order[0]->name == "Verse");
+    CHECK (order[0]->start == 0);
+    CHECK (order[1]->id == intro);
+    CHECK (order[1]->start == 4 * bar);
+    CHECK (order[2]->id == verse);
+    CHECK (order[2]->start == 8 * bar);
+    CHECK (s.model().regions.at (inVerse)->start == 9 * bar);
+    CHECK (s.model().regions.at (inIntro)->start == 5 * bar);
+    CHECK (s.model().markers.at (marker)->pos == 10 * bar);
+    CHECK (s.model().regions.size() == 6); // three, plus the split, plus two copies
+    std::size_t inTwin = 0;
+    for (const auto& [id, r] : s.model().regions)
+        if (r->start < 4 * bar)
+            ++inTwin;
+    CHECK (inTwin == 2);
+    REQUIRE (s.undo().done);
+    CHECK (s.model().sections.size() == 2);
+    CHECK (s.model().regions.size() == 3);
+}
+
+TEST_CASE ("AT-PRJ-21 project and track notes: set, undo, unchanged is refused, saved with the project", "[U][project][AT-PRJ-21]")
+{
+    TempDir tmp;
+    project::ProjectFolder folder (tmp.path / "Notes.weft");
+    REQUIRE (folder.create());
+    auto s = newSession();
+    const auto track = s.model().trackOrder.front();
+    CHECK (s.model().info.notes.empty());
+    CHECK (s.model().track (track)->notes.empty());
+
+    REQUIRE (s.setProjectNotes ("Mix by Friday.\nBass is too loud."));
+    CHECK (s.undoName() == "Project Notes");
+    REQUIRE (s.setTrackNotes (track, "Use take 3."));
+    CHECK (s.undoName() == "Track Notes");
+    CHECK (s.model().info.notes == "Mix by Friday.\nBass is too loud.");
+    CHECK (s.model().track (track)->notes == "Use take 3.");
+    // The same text again isn't a step.
+    CHECK_FALSE (s.setTrackNotes (track, "Use take 3."));
+    CHECK_FALSE (s.setProjectNotes ("Mix by Friday.\nBass is too loud."));
+    CHECK_FALSE (s.setTrackNotes ("no-such-track", "x"));
+
+    REQUIRE (s.undo().done);
+    CHECK (s.model().track (track)->notes.empty());
+    REQUIRE (s.redo().done);
+    CHECK (s.model().track (track)->notes == "Use take 3.");
+
+    REQUIRE (folder.save (s.document()));
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    Session reopened (std::move (*opened.document), "userB", fixedClock, 7);
+    CHECK (reopened.model().info.notes == "Mix by Friday.\nBass is too loud.");
+    CHECK (reopened.model().track (track)->notes == "Use take 3.");
+
+    // Clearing the notes removes them from the file.
+    REQUIRE (s.setProjectNotes (""));
+    CHECK (s.model().info.notes.empty());
+    const auto stored = s.document().get (doc::path ({ "notes" }));
+    CHECK ((! stored || stored->isNull()));
+}
+
+TEST_CASE ("AT-ARR-47 a marker's text: set, unchanged refused, undo, saved with the project", "[U][arrange][AT-ARR-47]")
+{
+    TempDir tmp;
+    project::ProjectFolder folder (tmp.path / "Markers.weft");
+    REQUIRE (folder.create());
+    auto s = newSession();
+    const auto marker = s.addMarker (3840, "Verse");
+    REQUIRE (marker);
+    CHECK (s.model().markers.at (*marker)->text.empty());
+    REQUIRE (s.setMarkerText (*marker, "Double the vocal here."));
+    CHECK (s.undoName() == "Marker Text");
+    CHECK (s.model().markers.at (*marker)->text == "Double the vocal here.");
+    CHECK_FALSE (s.setMarkerText (*marker, "Double the vocal here."));
+    CHECK_FALSE (s.setMarkerText ("missing", "x"));
+
+    REQUIRE (folder.save (s.document()));
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    Session reopened (std::move (*opened.document), "userB", fixedClock, 7);
+    CHECK (reopened.model().markers.at (*marker)->text == "Double the vocal here.");
+
+    REQUIRE (s.undo().done);
+    CHECK (s.model().markers.at (*marker)->text.empty());
+}
+
+TEST_CASE ("AT-TRK-26 a track's Smart Controls: set, check, undo, saved with the project", "[U][tracks][AT-TRK-26]")
+{
+    TempDir tmp;
+    project::ProjectFolder folder (tmp.path / "Smart.weft");
+    REQUIRE (folder.create());
+    auto s = newSession();
+    const auto track = s.model().trackOrder.front();
+    CHECK_FALSE (s.model().track (track)->smartControls);
+
+    model::SmartControls sc;
+    sc.layout = 4;
+    sc.controls.resize (2); // filled out to the layout
+    model::AutomationTarget volume, pan;
+    pan.kind = "pan";
+    sc.controls[0].name = "Level";
+    sc.controls[0].mappings.push_back ({ volume, 0.25, 0.75 });
+    sc.controls[0].mappings.push_back ({ pan, 1.0, 0.0 }); // backwards
+    sc.controls[1].cc = 21;
+    sc.controls[1].ccChannel = 2;
+    REQUIRE (s.setSmartControls (track, sc));
+    CHECK (s.undoName() == "Smart Controls");
+    const auto& stored = *s.model().track (track)->smartControls;
+    CHECK (stored.layout == 4);
+    REQUIRE (stored.controls.size() == 4);
+    CHECK (stored.controls[0].name == "Level");
+    REQUIRE (stored.controls[0].mappings.size() == 2);
+    CHECK (stored.controls[0].mappings[0].min == Catch::Approx (0.25));
+    CHECK (stored.controls[0].mappings[1].target.kind == "pan");
+    CHECK (stored.controls[0].mappings[1].min == Catch::Approx (1.0));
+    CHECK (stored.controls[1].cc == 21);
+    CHECK (stored.controls[3].mappings.empty());
+
+    // Unchanged, a layout other than 4, 8 or 12, or a controller out of range is refused.
+    CHECK_FALSE (s.setSmartControls (track, stored));
+    auto bad = stored;
+    bad.layout = 6;
+    CHECK_FALSE (s.setSmartControls (track, bad));
+    bad = stored;
+    bad.controls[2].cc = 128;
+    CHECK_FALSE (s.setSmartControls (track, bad));
+    CHECK_FALSE (s.setSmartControls ("no-such-track", stored));
+
+    REQUIRE (folder.save (s.document()));
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    Session reopened (std::move (*opened.document), "userB", fixedClock, 7);
+    const auto& back = reopened.model().track (track)->smartControls;
+    REQUIRE (back);
+    CHECK (back->layout == 4);
+    CHECK (back->controls[0].mappings[0].max == Catch::Approx (0.75));
+    CHECK (back->controls[1].ccChannel == 2);
+
+    // Back to automatic: nothing stored.
+    REQUIRE (s.setSmartControls (track, std::nullopt));
+    CHECK_FALSE (s.model().track (track)->smartControls);
+    REQUIRE (s.undo().done);
+    CHECK (s.model().track (track)->smartControls);
+    REQUIRE (s.undo().done);
+    CHECK_FALSE (s.model().track (track)->smartControls);
 }

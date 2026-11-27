@@ -116,7 +116,179 @@ std::vector<CommandInfo> build()
         { Cmd::selectNext, "Select Next Region or Note", "Right", { key (K::rightKey) } },
         { Cmd::searchPlugins, "Search and Add Plug-in...", "Ctrl+Shift+P", { key ('P', ctrl | shift) } },
         { Cmd::deleteUnusedTracks, "Delete Unused Tracks", "", {} },
+        { Cmd::newTrackNextInput, "New Track with Next Input", "Ctrl+Shift+N", { key ('N', ctrl | shift) } },
+        { Cmd::searchTracks, "Search and Select Track...", "Ctrl+Alt+F", { key ('F', ctrl | alt) } },
+        { Cmd::selectAllFollowing, "Select All Following", "Shift+F", { key ('F', shift) } },
+        { Cmd::legato, "Legato", "Ctrl+Shift+L", { key ('L', ctrl | shift) } },
+        { Cmd::removeOverlaps, "Remove Overlaps", "", {} },
+        { Cmd::noteStartToPlayhead, "Note Start to Playhead", "", {} },
+        { Cmd::noteEndToPlayhead, "Note End to Playhead", "", {} },
+        { Cmd::lengthenNotes, "Lengthen", "Alt+Shift+Right", { key (K::rightKey, alt | shift) } },
+        { Cmd::shortenNotes, "Shorten", "Alt+Shift+Left", { key (K::leftKey, alt | shift) } },
+        { Cmd::scaleQuantize, "Scale Quantize", "", {} },
+        { Cmd::goToCycleStart, "Go to Cycle Start", "Ctrl+Home", { key (K::homeKey, ctrl) } },
+        { Cmd::goToCycleEnd, "Go to Cycle End", "Ctrl+End", { key (K::endKey, ctrl) } },
+        { Cmd::goToSelectionStart, "Go to Selection Start", "Shift+Home", { key (K::homeKey, shift) } },
+        { Cmd::goToSelectionEnd, "Go to Selection End", "Shift+End", { key (K::endKey, shift) } },
+        { Cmd::goToLastLocate, "Go to Last Locate Position", "", {} },
+        { Cmd::goToPosition, "Go to Position...", "Ctrl+G", { key ('G', ctrl) } },
+        { Cmd::playFromStart, "Play from Beginning", "", {} },
+        { Cmd::playFromCycleStart, "Play from Cycle Start", "", {} },
+        { Cmd::playFromSelection, "Play from Selection", "Shift+Space", { key (K::spaceKey, shift) } },
+        { Cmd::playFromWindowEdge, "Play from Left Window Edge", "", {} },
+        { Cmd::playFromPreviousBar, "Play from Previous Bar", "", {} },
+        { Cmd::playFromLastLocate, "Play from Last Locate Position", "", {} },
+        { Cmd::stopGoToStart, "Stop and Go to Beginning", "", {} },
+        { Cmd::stopGoToCycleStart, "Stop and Go to Cycle Start", "", {} },
+        { Cmd::stopGoToLastLocate, "Stop and Go to Last Locate Position", "", {} },
+        { Cmd::cycleForward, "Move Cycle Forward by Its Length", "Ctrl+Shift+Right", { key (K::rightKey, ctrl | shift) } },
+        { Cmd::cycleBack, "Move Cycle Back by Its Length", "Ctrl+Shift+Left", { key (K::leftKey, ctrl | shift) } },
+        { Cmd::doubleCycle, "Double Cycle Length", "", {} },
+        { Cmd::halveCycle, "Halve Cycle Length", "", {} },
+        { Cmd::nextTool, "Next Tool", "", {} },
+        { Cmd::previousTool, "Previous Tool", "", {} },
+        { Cmd::nudgeByGrid, "Grid", "", {} },
+        { Cmd::nudgeByBar, "Bar", "", {} },
+        { Cmd::nudgeByBeat, "Beat", "", {} },
+        { Cmd::nudgeByDivision, "Division", "", {} },
+        { Cmd::nudgeByTick, "Tick", "", {} },
+        { Cmd::slipLeft, "Slip Left", "Ctrl+Alt+Left", { key (K::leftKey, ctrl | alt) } },
+        { Cmd::slipRight, "Slip Right", "Ctrl+Alt+Right", { key (K::rightKey, ctrl | alt) } },
+        { Cmd::shuffleLeft, "Shuffle Left", "", {} },
+        { Cmd::shuffleRight, "Shuffle Right", "", {} },
+        { Cmd::gridLines, "Grid Lines", "", {} },
+        { Cmd::configureTrackHeader, "Configure Track Header...", "Alt+T", { key ('T', alt) } },
+        { Cmd::toggleAllTracksOff, "Turn All Tracks On/Off", "", {} },
+        { Cmd::togglePluginWindows, "Show/Hide All Plug-in Windows", "V", { key ('V') } },
+        { Cmd::unmuteAll, "Mute Off for All", "Ctrl+Alt+Shift+M", { key ('M', ctrl | alt | shift) } },
+        { Cmd::clearRecallSolo, "Clear/Recall Solo", "Ctrl+Alt+Shift+S", { key ('S', ctrl | alt | shift) } },
+        { Cmd::soloSelectedRegions, "Solo Tracks of Selected Regions", "", {} },
+        { Cmd::monitorTrack, "Input Monitoring Track", "Shift+I", { key ('I', shift) } },
+        { Cmd::copyChannelStrip, "Copy Channel Strip Setting", "", {} },
+        { Cmd::pasteChannelStrip, "Paste Channel Strip Setting", "", {} },
+        { Cmd::cycleMixerMode, "Cycle Through Mixer Views", "", {} },
+        { Cmd::zoomVerticalIn, "Zoom Vertical In", "Ctrl+Down", { key (K::downKey, ctrl) } },
+        { Cmd::zoomVerticalOut, "Zoom Vertical Out", "Ctrl+Up", { key (K::upKey, ctrl) } },
+        { Cmd::saveZoom1, "Save as Zoom 1", "Ctrl+Alt+Shift+1", { key ('1', ctrl | alt | shift) } },
+        { Cmd::saveZoom2, "Save as Zoom 2", "Ctrl+Alt+Shift+2", { key ('2', ctrl | alt | shift) } },
+        { Cmd::saveZoom3, "Save as Zoom 3", "Ctrl+Alt+Shift+3", { key ('3', ctrl | alt | shift) } },
+        { Cmd::recallZoom1, "Recall Zoom 1", "Ctrl+Alt+1", { key ('1', ctrl | alt) } },
+        { Cmd::recallZoom2, "Recall Zoom 2", "Ctrl+Alt+2", { key ('2', ctrl | alt) } },
+        { Cmd::recallZoom3, "Recall Zoom 3", "Ctrl+Alt+3", { key ('3', ctrl | alt) } },
+        { Cmd::navigateBack, "Navigation: Back", "Ctrl+[", { key ('[', ctrl) } },
+        { Cmd::navigateForward, "Navigation: Forward", "Ctrl+]", { key (']', ctrl) } },
+        { Cmd::pageUp, "Page Up", "Page Up", { key (K::pageUpKey) } },
+        { Cmd::pageDown, "Page Down", "Page Down", { key (K::pageDownKey) } },
+        { Cmd::pageLeft, "Page Left", "Alt+Page Up", { key (K::pageUpKey, alt) } },
+        { Cmd::pageRight, "Page Right", "Alt+Page Down", { key (K::pageDownKey, alt) } },
+        { Cmd::zoomTrack, "Zoom Selected Track", "Ctrl+Alt+Z", { key ('Z', ctrl | alt) } },
+        { Cmd::selectPreviousTrack, "Select Previous Track", "", {} },
+        { Cmd::selectNextTrack, "Select Next Track", "", {} },
+        { Cmd::selectInsideCycle, "Select All Inside Cycle", "Shift+L", { key ('L', shift) } },
+        { Cmd::selectMutedRegions, "Select Muted Regions", "", {} },
+        { Cmd::selectSameColor, "Select Same-Colored Regions", "", {} },
+        { Cmd::selectFirst, "Select First Region", "", {} },
+        { Cmd::selectLast, "Select Last Region", "", {} },
+        { Cmd::togglePreviousRegion, "Add Previous Region to Selection", "Shift+Left", { key (K::leftKey, shift) } },
+        { Cmd::toggleNextRegion, "Add Next Region to Selection", "Shift+Right", { key (K::rightKey, shift) } },
+        { Cmd::scrollToSelection, "Scroll to Selection", "", {} },
+        { Cmd::moveToPlayhead, "Move Region to Playhead", "", {} },
+        { Cmd::moveToPlayheadSelectNext, "Move Region to Playhead and Select Next", "", {} },
+        { Cmd::regionStartToPlayhead, "Set Region Start to Playhead", "", {} },
+        { Cmd::regionEndToPlayhead, "Set Region End to Playhead", "", {} },
+        { Cmd::splitAtCycle, "Split Regions at Cycle", "", {} },
+        { Cmd::markerForSelection, "Create Marker for Selected Regions", "Shift+;", { key (';', shift), key (':', shift) } },
+        { Cmd::cycleToMarker, "Set Cycle to Marker", "", {} },
+        { Cmd::cycleToPreviousMarker, "Set Cycle to Previous Marker", "", {} },
+        { Cmd::cycleToNextMarker, "Set Cycle to Next Marker", "", {} },
+        { Cmd::previousMarkerSetLocators, "Previous Marker and Set Locators", "Ctrl+Alt+Shift+,", { key (',', ctrl | alt | shift) } },
+        { Cmd::nextMarkerSetLocators, "Next Marker and Set Locators", "Ctrl+Alt+Shift+.", { key ('.', ctrl | alt | shift) } },
+        { Cmd::goToMarkerNumber, "Go to Marker Number...", "Ctrl+/", { key ('/', ctrl) } },
+        { Cmd::applyRegionParameters, "Apply All Parameters Permanently", "", {} },
+        { Cmd::applyRegionParametersExceptDelay, "Apply All Except Delay", "", {} },
+        { Cmd::settings, "Settings...", "Ctrl+,", { key (',', ctrl) } },
+        { Cmd::toggleControlBar, "Control Bar", "", {} },
+        { Cmd::toggleToolbar, "Toolbar", "", {} },
+        { Cmd::customizeControlBar, "Customize Control Bar...", "", {} },
+        { Cmd::bigBeatsDisplay, "Open Big Beats Display", "", {} },
+        { Cmd::bigTimeDisplay, "Open Big Time Display", "", {} },
+        { Cmd::performanceMeter, "Performance Meter", "", {} },
+        { Cmd::configureGlobalTracks, "Configure Global Tracks...", "Alt+G", { key ('G', alt) } },
+        { Cmd::showSingleGlobalTrack, "Show Single Global Track", "", {} },
+        { Cmd::toggleArrangementTrack, "Show/Hide Arrangement Track", "", {} },
+        { Cmd::toggleMarkerTrack, "Show/Hide Marker Track", "", {} },
+        { Cmd::toggleTempoTrack, "Show/Hide Tempo Track", "", {} },
+        { Cmd::toggleSignatureTrack, "Show/Hide Signature Track", "", {} },
+        { Cmd::toggleKeyTrack, "Show/Hide Key Track", "", {} },
+        { Cmd::markerTrackOnly, "Show/Hide Marker Track Only", "", {} },
+        { Cmd::createSignatureChange, "Create Time Signature Change...", "", {} },
+        { Cmd::createKeyChange, "Create Key Change...", "", {} },
+        { Cmd::exportSelectionMidi, "Export Selection as MIDI File...", "", {} },
+        { Cmd::exportTrackAudio, "Export Track as Audio File...", "", {} },
+        { Cmd::exportAllTracksAudio, "Export All Tracks as Audio Files...", "", {} },
+        { Cmd::recordToggle, "Record Toggle", "Alt+R", { key ('R', alt) } },
+        { Cmd::toggleReplace, "Replace", "", {} },
+        { Cmd::captureRecording, "Capture as Recording", "Ctrl+Shift+R", { key ('R', ctrl | shift) } },
+        { Cmd::toggleGroups, "Enable/Disable Groups", "Shift+G", { key ('G', shift) } },
+        { Cmd::groupsWindow, "Groups...", "Alt+Shift+G", { key ('G', alt | shift) } },
+        { Cmd::createGroup, "Create Group for Selected Tracks", "Ctrl+Alt+G", { key ('G', ctrl | alt) } },
+        { Cmd::newVca, "New VCA Fader", "", {} },
+        { Cmd::createFolderStack, "Create Folder Stack", "Ctrl+Shift+F", { key ('F', ctrl | shift) } },
+        { Cmd::createSummingStack, "Create Summing Stack", "", {} },
+        { Cmd::flattenStack, "Flatten Stack", "", {} },
+        { Cmd::toggleStack, "Open/Close Track Stack", "", {} },
+        { Cmd::followStacks, "Follow Track Stacks", "", {} },
+        { Cmd::undoHistory, "Undo History", "Alt+Z", { key ('Z', alt) } },
+        { Cmd::openMainWindow, "Open Main Window", "", {} },
+        { Cmd::mixerWindow, "Open Mixer", "Alt+X", { key ('X', alt) } },
+        { Cmd::pianoRollWindow, "Open Piano Roll", "", {} },
+        { Cmd::audioEditorWindow, "Open Audio Editor", "", {} },
+        { Cmd::projectAudioWindow, "Open Project Audio", "", {} },
+        { Cmd::regionInspectorWindow, "Region Inspector Float", "", {} },
+        { Cmd::closeWindow, "Close Window", "Ctrl+W", { key ('W', ctrl) } },
+        { Cmd::cycleWindows, "Cycle Through Windows", "Ctrl+`", { key ('`', ctrl) } },
+        { Cmd::cycleWindowsBack, "Cycle Through Windows (Backwards)", "Ctrl+Shift+`", { key ('`', ctrl | shift) } },
+        { Cmd::minimizeWindow, "Minimize Window", "", {} },
+        { Cmd::minimizeAllWindows, "Minimize All Windows", "", {} },
+        { Cmd::zoomWindow, "Zoom Window", "", {} },
+        { Cmd::fullScreen, "Enter/Exit Full Screen", "F11", { key (K::F11Key) } },
+        { Cmd::closeProject, "Close Project", "Ctrl+Alt+W", { key ('W', ctrl | alt) } },
+        { Cmd::cycleWindowViews, "Cycle Through Window Views", "", {} },
+        { Cmd::cycleWindowViewsBack, "Cycle Through Window Views (Backwards)", "", {} },
+        { Cmd::toggleNotes, "Notes", "Alt+Shift+N", { key ('N', alt | shift) } },
+        { Cmd::mixerNotes, "Track Notes in the Mixer", "", {} },
+        { Cmd::listEditors, "List Editors", "D", { key ('D') } },
+        { Cmd::openEventList, "Open Event List", "Ctrl+7", { key ('7', ctrl) } },
+        { Cmd::openMarkerList, "Open Marker List", "", {} },
+        { Cmd::openTempoList, "Open Tempo List", "Alt+Shift+T", { key ('T', alt | shift) } },
+        { Cmd::openSignatureList, "Open Signature List", "", {} },
+        { Cmd::openMarkerText, "Open Marker Text", "", {} },
+        { Cmd::toggleAudioFileEditor, "Show/Hide Audio File Editor", "W", { key ('W') } },
+        { Cmd::keyCommands, "Key Commands...", "Alt+K", { key ('K', alt) } },
+        { Cmd::toggleSmartControls, "Smart Controls", "B", { key ('B') } },
+        { Cmd::smartControlsWindow, "Open Smart Controls", "", {} },
+        { Cmd::toggleLibrary, "Library", "Y", { key ('Y') } },
+        { Cmd::loopBrowser, "Loops", "O", { key ('O') } },
+        { Cmd::searchLibrary, "Search Library", "Alt+F", { key ('F', alt) } },
+        { Cmd::toggleVarispeed, "Varispeed", "", {} },
+        { Cmd::addSection, "Add Arrangement Section", "", {} },
+        { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
+        { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },
+        { Cmd::automationAllTouch, "Set All Tracks to Automation Touch", "", {} },
+        { Cmd::automationAllLatch, "Set All Tracks to Automation Latch", "", {} },
+        { Cmd::automationOffRead, "Toggle Track Automation Off/Read", "Ctrl+Alt+Shift+R", { key ('R', ctrl | alt | shift) } },
+        { Cmd::automationLatchRead, "Toggle Track Automation Latch/Read", "Ctrl+Alt+Shift+L", { key ('L', ctrl | alt | shift) } },
+        { Cmd::cycleAutomationParameter, "Cycle Through Used Automation Parameters", "Ctrl+Alt+Shift+A", { key ('A', ctrl | alt | shift) } },
     };
+    for (int n = 1; n <= 9; ++n)
+    {
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::screenset1) + n - 1), "Recall Screenset " + juce::String (n),
+                       "Alt+Shift+" + juce::String (n), { key ('0' + n, alt | shift) } });
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::screensetTens1) + n - 1), "Recall Screenset " + juce::String (n) + "x", "", {} });
+    }
+    for (int n = 1; n <= 9; ++n)
+        t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::hideGroup1) + n - 1), "Toggle Hide Group " + juce::String (n),
+                       "Ctrl+Shift+" + juce::String (n), { key ('0' + n, ctrl | shift) } });
     for (int n = 1; n <= 9; ++n)
         t.push_back ({ static_cast<Cmd> (static_cast<int> (Cmd::marker1) + n - 1), "Go to Marker " + juce::String (n), juce::String (n),
                        { key ('0' + n) } });
@@ -128,12 +300,199 @@ std::vector<CommandInfo> build()
                        "Ctrl+Numpad " + juce::String (n - 10), { key (pad[n - 10], ctrl) } });
     return t;
 }
-} // namespace
 
-const std::vector<CommandInfo>& commandTable()
+std::vector<CommandInfo>& liveTable()
+{
+    static auto table = build();
+    return table;
+}
+
+const std::vector<CommandInfo>& defaultTable()
 {
     static const auto table = build();
     return table;
+}
+
+std::pair<int, int> normalKey (const juce::KeyPress& k)
+{
+    // Letters arrive as their upper or lower case character; compare on the key code, case-insensitively.
+    auto code = k.getKeyCode();
+    if (code >= 'a' && code <= 'z')
+        code -= 'a' - 'A';
+    return { code, k.getModifiers().withoutMouseButtons().getRawFlags() & (ctrl | shift | alt) };
+}
+
+void changed()
+{
+    if (onKeyAssignmentsChanged())
+        onKeyAssignmentsChanged()();
+}
+} // namespace
+
+std::function<void()>& onKeyAssignmentsChanged()
+{
+    static std::function<void()> callback;
+    return callback;
+}
+
+const std::vector<CommandInfo>& commandTable() { return liveTable(); }
+
+namespace
+{
+CommandInfo& liveInfo (Cmd id)
+{
+    for (auto& c : liveTable())
+        if (c.id == id)
+            return c;
+    jassertfalse;
+    return liveTable().front();
+}
+} // namespace
+
+const std::vector<juce::KeyPress>& defaultKeys (Cmd id)
+{
+    for (const auto& c : defaultTable())
+        if (c.id == id)
+            return c.keys;
+    static const std::vector<juce::KeyPress> none;
+    return none;
+}
+
+void setCommandKeys (Cmd id, std::vector<juce::KeyPress> keys)
+{
+    for (const auto& k : keys)
+        for (auto& c : liveTable())
+            if (c.id != id)
+            {
+                const auto before = c.keys.size();
+                std::erase_if (c.keys, [&] (const juce::KeyPress& other) { return normalKey (other) == normalKey (k); });
+                if (c.keys.size() != before)
+                    c.shortcut = c.keys.empty() ? juce::String() : keyDescription (c.keys.front());
+            }
+    auto& info = liveInfo (id);
+    info.keys = std::move (keys);
+    const auto& defaults = defaultKeys (id);
+    // The default text where the keys are the defaults ("Delete" for Delete and Backspace), else the first key's.
+    const bool same = info.keys.size() == defaults.size()
+                   && std::equal (info.keys.begin(), info.keys.end(), defaults.begin(), [] (const auto& a, const auto& b) { return normalKey (a) == normalKey (b); });
+    for (const auto& d : defaultTable())
+        if (d.id == id)
+            info.shortcut = same ? d.shortcut : info.keys.empty() ? juce::String() : keyDescription (info.keys.front());
+    changed();
+}
+
+void resetAllKeys()
+{
+    liveTable() = defaultTable();
+    changed();
+}
+
+std::optional<Cmd> commandUsingKey (const juce::KeyPress& key, std::optional<Cmd> except)
+{
+    for (const auto& c : commandTable())
+        if (! except || c.id != *except)
+            for (const auto& k : c.keys)
+                if (normalKey (k) == normalKey (key))
+                    return c.id;
+    return std::nullopt;
+}
+
+namespace
+{
+const std::vector<std::pair<int, const char*>>& keyNames()
+{
+    static const std::vector<std::pair<int, const char*>> names {
+        { K::spaceKey, "Space" },     { K::homeKey, "Home" },          { K::endKey, "End" },          { K::deleteKey, "Delete" },
+        { K::backspaceKey, "Backspace" }, { K::leftKey, "Left" },       { K::rightKey, "Right" },      { K::upKey, "Up" },
+        { K::downKey, "Down" },       { K::pageUpKey, "Page Up" },     { K::pageDownKey, "Page Down" }, { K::escapeKey, "Esc" },
+        { K::returnKey, "Return" },   { K::tabKey, "Tab" },            { K::insertKey, "Insert" },
+        { K::F1Key, "F1" },           { K::F2Key, "F2" },              { K::F3Key, "F3" },            { K::F4Key, "F4" },
+        { K::F5Key, "F5" },           { K::F6Key, "F6" },              { K::F7Key, "F7" },            { K::F8Key, "F8" },
+        { K::F9Key, "F9" },           { K::F10Key, "F10" },            { K::F11Key, "F11" },          { K::F12Key, "F12" },
+        { K::numberPad0, "Numpad 0" }, { K::numberPad1, "Numpad 1" },  { K::numberPad2, "Numpad 2" }, { K::numberPad3, "Numpad 3" },
+        { K::numberPad4, "Numpad 4" }, { K::numberPad5, "Numpad 5" },  { K::numberPad6, "Numpad 6" }, { K::numberPad7, "Numpad 7" },
+        { K::numberPad8, "Numpad 8" }, { K::numberPad9, "Numpad 9" },
+    };
+    return names;
+}
+} // namespace
+
+juce::String keyDescription (const juce::KeyPress& key)
+{
+    const auto [code, mods] = normalKey (key);
+    juce::String out;
+    if ((mods & ctrl) != 0)
+        out << "Ctrl+";
+    if ((mods & alt) != 0)
+        out << "Alt+";
+    if ((mods & shift) != 0)
+        out << "Shift+";
+    for (const auto& [c, name] : keyNames())
+        if (c == code)
+            return out + name;
+    return out + juce::String::charToString (static_cast<juce::juce_wchar> (code));
+}
+
+std::optional<juce::KeyPress> parseKeyDescription (const juce::String& text)
+{
+    auto rest = text.trim();
+    int mods = 0;
+    for (bool more = true; more;)
+    {
+        more = false;
+        for (const auto& [prefix, flag] : { std::pair { "Ctrl+", ctrl }, std::pair { "Alt+", alt }, std::pair { "Shift+", shift } })
+            if (rest.startsWith (prefix) && rest.length() > juce::String (prefix).length())
+            {
+                mods |= flag;
+                rest = rest.substring (juce::String (prefix).length());
+                more = true;
+            }
+    }
+    for (const auto& [c, name] : keyNames())
+        if (rest == name)
+            return key (c, mods);
+    if (rest.length() == 1)
+        return key (static_cast<int> (juce::CharacterFunctions::toUpperCase (rest[0])), mods);
+    return std::nullopt;
+}
+
+juce::String keyAssignmentsToString()
+{
+    auto* object = new juce::DynamicObject();
+    for (const auto& c : commandTable())
+    {
+        const auto& defaults = defaultKeys (c.id);
+        const bool same = c.keys.size() == defaults.size()
+                       && std::equal (c.keys.begin(), c.keys.end(), defaults.begin(), [] (const auto& a, const auto& b) { return normalKey (a) == normalKey (b); });
+        if (same)
+            continue;
+        juce::Array<juce::var> keys;
+        for (const auto& k : c.keys)
+            keys.add (keyDescription (k));
+        object->setProperty (juce::Identifier (c.name.isEmpty() ? juce::String ("?") : c.name), keys);
+    }
+    return juce::JSON::toString (juce::var (object), true);
+}
+
+void keyAssignmentsFromString (const juce::String& json)
+{
+    const auto parsed = juce::JSON::parse (json);
+    auto* object = parsed.getDynamicObject();
+    if (object == nullptr)
+        return;
+    const auto callback = std::exchange (onKeyAssignmentsChanged(), nullptr); // loading isn't a change to save
+    for (const auto& [name, value] : object->getProperties())
+        for (const auto& c : defaultTable())
+            if (c.name == name.toString() && value.isArray())
+            {
+                std::vector<juce::KeyPress> keys;
+                for (const auto& k : *value.getArray())
+                    if (const auto press = parseKeyDescription (k.toString()))
+                        keys.push_back (*press);
+                setCommandKeys (c.id, keys);
+                break;
+            }
+    onKeyAssignmentsChanged() = callback;
 }
 
 const CommandInfo& commandInfo (Cmd id)
@@ -151,20 +510,5 @@ juce::String tooltipFor (Cmd id)
     return c.shortcut.isEmpty() ? c.name : c.name + " (" + c.shortcut + ")";
 }
 
-std::optional<Cmd> commandForKey (const juce::KeyPress& pressed)
-{
-    // Letters arrive as their upper or lower case character; compare on the key code, case-insensitively.
-    auto normal = [] (const juce::KeyPress& k) {
-        auto code = k.getKeyCode();
-        if (code >= 'a' && code <= 'z')
-            code -= 'a' - 'A';
-        return std::pair { code, k.getModifiers().withoutMouseButtons().getRawFlags() & (ctrl | shift | alt) };
-    };
-    const auto p = normal (pressed);
-    for (const auto& c : commandTable())
-        for (const auto& k : c.keys)
-            if (normal (k) == p)
-                return c.id;
-    return std::nullopt;
-}
+std::optional<Cmd> commandForKey (const juce::KeyPress& pressed) { return commandUsingKey (pressed); }
 } // namespace weft::ui

@@ -54,6 +54,18 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PRJ-15** [U][UI] · F-TMP-10 · The project key starts at C major; typing "f#m" in the control bar's key display sets F♯ minor as one undo step "Set Key" and nonsense changes nothing; Project Settings offers the 24 keys and sets B♭ major; names and sharps/flats follow D-DM-20; an exported MIDI file carries the key signature event, and importing a MIDI file into an empty project takes the file's key (as it takes the tempo, D-AT-1).
 
+**AT-PRJ-16** [U] · F-PRJ-9, D-UI-42 · Project count-in takes none, 1 to 6 bars or 1 or 2 beats and refuses 7 bars or 3 beats; the pan law takes 0, -3, -4.5 or -6 dB as one undo step "Set Pan Law"; the MIDI input filter takes the six kinds' bits as one undo step "Set MIDI Input Filter"; note-offs and velocity-0 note-ons always pass; all three survive saving and reopening.
+
+**AT-PRJ-17** [E] · D-UI-42 · Recording at bar 5 with a 3-bar count-in starts at bar 2, with 6 bars at bar -1, with 2 beats of 4/4 one half note before, and with 1 beat of 6/8 one eighth before; no count-in starts recording at once. The project's count-in default reaches the transport unclamped.
+
+**AT-PRJ-18** [E] · D-UI-42 · A mono source at centre plays at -6.02 dB each side with the -6 dB law (and 0.75 at pan +0.5, linear), -4.52 dB with -4.5, 0 dB with 0 (and +3 dB hard left), and -3.01 dB with -3; a hard pan is unity under -3, -4.5 and -6; a stereo source's balance is the same under any law.
+
+**AT-PRJ-19** [E] · D-UI-42 · With pitch bend and program change ignored, a recorded pass keeps its note and volume controller but neither ignored event, and the instrument never hears them. With notes ignored, a new note-on is dropped while the note-off of a note held before still reaches the instrument.
+
+**AT-PRJ-20** [UI] · D-UI-42 · Project Settings lists nine count-in choices ending "2 beats", shows the pan law as "-3 dB (equal power)", and sets 2 beats, -6 dB and ignore pitch bend; reopening it shows them. Navigate › Count-in lists "6 Bars" and "1 Beat"; choosing 1 Beat, Shift+K turns it off and back to 1 beat ("Count-in: 1 beat."); the control bar's More menu sets 4 bars.
+
+**AT-PRJ-21** [U] · D-UI-47 · Setting the project's notes and a track's notes are undo steps "Project Notes" and "Track Notes"; setting the same text again, or notes on a missing track, is refused. Undo and redo restore them; they survive saving and reopening; clearing the project's notes removes them from the file.
+
 **AT-PRJ-14** [UI] · L-PRJ-8 · File › Delete Project lists the recent projects except the open one; choosing one asks first, then moves its folder to the system Trash and removes it from Open Recent; Cancel leaves it; the open project can't be deleted.
 
 ## 2. Transport (TRN)
@@ -95,6 +107,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-TRN-19** [U] · F-TRN-20 · With regions selected from bar 3 beat 2 to bar 6 beat 1, U sets the cycle range to bar 3 – bar 7 (rounded outward to bars) and turns cycle on; with nothing selected, U does nothing.
 
 **AT-TRN-20** [UI] · D-UI-17 · Stopped at bar 4 with Cycle off, Stop moves the playhead to tick 0. With the cycle at bars 3–5 and the playhead at bar 7, Stop goes to bar 3 and Stop again to tick 0; Space starts playback at bar 3; numpad 0 stops it and the playhead is back at bar 3. With Cycle off, Play starts at the playhead. The Navigate menu lists Stop.
+
+**AT-TRN-21** [E][UI] · D-W1-11 · At 120 BPM in 4/4 with Division on, clicks fall every 6,000 samples and a division is softer than a beat; with Bar off the click at sample 0 has the pitch of a beat; with only Bar on, clicks fall at 0 and 96,000 only; with Only During Count-in on, a one-bar count-in clicks four times and the bar after it is silent; Tone Low clicks lower than Normal and High higher. The Navigate menu's Metronome Clicks submenu turns each option on and the engine's settings follow.
+
+**AT-TRN-22** [UI] · D-UI-35 · With the cycle at bars 3–4 (off) and a region at bars 5–6: Ctrl+Home goes to bar 3, Ctrl+End to bar 4; with the region selected Shift+Home goes to bar 5 and Shift+End to bar 7; with nothing selected Go to Selection Start says so. Shift+Space plays from bar 5; Stop and Go to Cycle Start stops at bar 3; Play from Previous Bar plays from bar 2; Stop and Go to Beginning stops at tick 0; Play from Left Window Edge plays from the view's left edge and Stop and Go to Last Locate Position returns there. Ctrl+Shift+Right moves the cycle to bars 4–5, Double makes it 4–6, Halve 4–5, Ctrl+Shift+Left back to 3–4, and undo undoes one move. The Navigate menu has Go To, Play From, Stop And and Cycle Range; Play's right-click menu lists Play from Cycle Start and picking it plays from bar 3.
 
 **AT-TRN-18** [UI] · F-TRN-17 · With follow on and zoom showing 4 bars, playing past the right edge scrolls the view so the playhead stays visible; with follow off, the view does not scroll.
 
@@ -146,6 +162,16 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-REC-22** [E] · L-MREC-6, D-W2-4 · With MIDI Recording › Replace on, a one-bar pass from bar 1 deletes the existing notes on its track inside that bar, deletes a region left empty inside it, keeps notes after it, and adds the new region (even with Merge on); one undo restores it all.
 
+**AT-REC-23** [E] · D-UI-41 · A track with monitoring On plays its input; with software monitoring off it doesn't; with Monitor only the selected track it doesn't while another track is selected, and does once it is selected.
+
+**AT-REC-24** [E] · D-W1-12 · Playing from bar 1 with an armed track and a 2-bar count-in set, Record Toggle half a bar in starts recording at once without moving the playhead back; Record Toggle a bar later stops recording and playback goes on; the recording starts half a bar in, at least a bar long; stopping returns to bar 1.
+
+**AT-REC-25** [E] · D-W1-12 · With Replace on, recording a bar from half a bar into a 2-bar audio region leaves its first half-bar, the recording, and its last half-bar, in one undo step "Record"; undo restores the 2-bar region.
+
+**AT-REC-26** [E] · D-W1-13 · A note played at beat 3 while playing (not recording) is captured onto the instrument track as a region at bar 1 with the note at tick 1920, one beat long, undo step "Record"; an audio track is refused; a second capture finds nothing; playing again starts over.
+
+**AT-REC-27** [UI] · D-W1-12 to D-W1-14 · Navigate lists Record Toggle (Alt+R), Capture as Recording (Ctrl+Shift+R) and Replace (unticked). Replace from the command lights the control bar's Replace button, and MIDI Recording › Replace turns it off again. Capture with nothing played says "Nothing to capture". With the auto record enable setting on (shown in Settings and kept), selecting an instrument track arms it and selecting another moves the arm to it.
+
 ## 4. Tracks (TRK)
 
 **AT-TRK-1** [E] · F-TRK-1 · A mono audio track's region is output equally to L and R at center pan (−3 dB each per pan law); a stereo track preserves channel separation.
@@ -185,6 +211,18 @@ Notation: *Given* / *When* / *Then*.
 **AT-TRK-19** [UI] · F-TRK-10, D-UI-25 · With three audio tracks, Ctrl+click on track 2's Mute mutes it and unmutes tracks 1 and 3 in one undo step ("Mute Only"); Alt+click on track 1's Mute mutes all three ("Mute All") and Alt+click again unmutes them; Alt+click on Solo solos every track and again clears them; Ctrl+click on Record arms only that track. Pressing track 1's Mute and dragging over tracks 2 and 3 mutes all three in one undo step ("Mute Tracks"), and releasing doesn't toggle track 1 back; a swipe from a lit Solo turns the swiped ones off.
 
 **AT-TRK-20** [UI] · F-TRK-6, W-1a, D-UI-32 · With a bus "Drums" and 2 device inputs, the New Track dialog set to 2 mono audio tracks, Input 1, Ascending, output Drums, Input monitoring and Record enable creates tracks on inputs 1 and 2, both out to Drums, monitoring On and record-enabled, as one undo step ("New Tracks"). Stereo lists Input 1-2; for an instrument track the input is disabled and the instrument menu starts with Weft Keys. The header-area menu is New Track, New Audio Track, New Instrument Track, Delete Unused Tracks, and its New Instrument Track adds one. Delete Unused Tracks with one instrument track holding a region leaves just that track and the bus (step "Delete Unused Tracks"); run again it changes nothing and says "No unused tracks."; undo brings the tracks back.
+
+**AT-TRK-21** [UI] · D-UI-34 · With a mono audio track on input 1, out to bus "Drums", monitoring On and selected, Ctrl+Shift+N adds a mono audio track right below it on input 2, out to Drums, monitoring On, selected, as one undo step ("New Track"); from a track on the device's last input the new track has no input; Alt+click on + adds one too; with the bus selected nothing is added. From an instrument track with an instrument, the new track has the same instrument. Search and Select Track: "vocal LEAD" finds only "Lead Vocal", "drums" finds the bus, the master is never listed, and choosing a match selects it. The Track menu lists both commands.
+
+**AT-TRK-22** [UI] · D-UI-37 · With two audio tracks and an instrument track, the optional header buttons are hidden until turned on in Configure Track Header (from the header menu, the header column menu or Studio); then each audio header shows On, M, S, R, I, H left to right, and the instrument header shows On but not I. A click on On turns the track off ("Turn Track Off"); Ctrl+click on another turns only that one on ("Turn On Only"); Alt+click sets every track ("Turn All Tracks Off"). Turn All Tracks On/Off turns them all on, then all off; a swipe down the On column is one undo step ("Turn Tracks On/Off") and leaves Mute alone. I switches monitoring On then back to Auto; H hides the track. Turning Volume off hides the slider and keeps pan; Track Numbers off moves the name left and Track Icons on moves it right. Dragging the column edge 60 px widens the headers and moves the lanes by 60 px, a long drag stops at 480 px, and a double-click returns to 208 px. The Track menu ends with Turn All Tracks On/Off and Configure Track Header (AT-TRK-4).
+
+**AT-TRK-23** [E] · D-W3-13 · On an instrument track with a region transposed +2 and notes on channel 3, track parameters Transpose +12, Velocity +10, Key limit 48-76, Velocity limit 50-127, Out channel 5 and Delay 100 ms play note 60 at 100 as 74 at 110 on channel 5, 100 ms late, and 40 as 54; 30, 70 and a note at velocity 20 don't play; the stored notes are unchanged ("Track Parameters"). No Transpose drops the region's +2, and a 480-tick delay plays the first note half a beat late. A crossed key limit, a 961-tick delay, out channel 17 and an audio track are refused; undo is one step; the parameters survive a save. Live input on device "USB Keys": a note from it plays transposed and offset on channel 5, one from another device doesn't reach the track, the computer keyboard does, and notes outside the limits don't play.
+
+**AT-TRK-24** [UI] · D-W3-13 · The inspector shows track parameters for an instrument track and not an audio track; MIDI In lists All and the connected devices. A Transpose drag is one undo step ("Track Parameters") and the slider follows undo. Key limit high 40 then low 60 makes both 60. Delay 25.5 ms, then the ticks unit sets it to 0 with a ±960 range, and 240 reads "240". Out channel 10 and No Transpose are set; MIDI In "Pads" with channel 2 sets the track's input, and once Pads is unplugged the menu still shows it for that track.
+
+**AT-TRK-25** [U] · D-W6-17 · A summing stack of C and A: main "Stack 1" before A, then A, C (in track order); both play into it and it plays to Verb, where A did; A can't join another stack; closed, the rows are the main, B and Verb. Flatten sends A and C to Verb; undo brings the stack back, and undoing its open, close and creation restores the order and A's output. A folder stack of B and C leaves their outputs, refuses being an output or send target, and flattening restores the order.
+
+**AT-TRK-26** [U] · D-UI-52 · A track's Smart Controls (4 knobs, knob 1 "Level" mapped to Volume from 25% to 75% and backwards to Pan, knob 2 on controller 21 channel 2) are set as one undo step "Smart Controls", filled out to four knobs, and survive saving and reopening. The same again, 6 knobs, controller 128 or a missing track is refused. Going back to automatic stores nothing; undo restores each step.
 
 **AT-TRK-15** [E] · L-TRH-7 · Turn Track Off (track header menu) on an audio or instrument track: it plays nothing and its sends go quiet, it records nothing while armed, the header reads OFF; Turn Track On restores it; buses and the master can't be turned off; each is one undo step.
 
@@ -266,11 +304,35 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-38** [UI] · F-ARR-21, D-UI-27, D-UI-28 · With regions at bars 1, 3 and 5 on one track and the bar-3 region selected, Right selects the bar-5 region and Left twice the bar-1 region; Left at the first does nothing; with nothing selected and the playhead at bar 2, Right selects the bar-3 region. Z fits the selected region; Z again fits the whole project; Z after changing the selection fits the new selection.
 
+**AT-ARR-39** [UI] · D-UI-36 · Text tool: clicking an audio region and entering "Lead take" renames it. Fade tool: a drag from 10% to 25% of the region's width sets a fade in of about a quarter of its length and no fade out (step "Fade"); a drag from its right edge to the middle sets a fade out. Gain tool: dragging up 24 px makes the gain +6 dB (step "Region Gain"); undo makes it 0 dB. Quantize tool: clicking a MIDI region with a note 250 ticks into the bar and the quantize grid at 1/16 moves the note to 240. Zoom tool: a box from bar 3 to bar 4 shows exactly bars 3–4; a click doubles the zoom and Alt+click halves it. Next Tool after Quantize is Pointer and Previous Tool goes back. The Tool menu lists Pointer, Pencil, Scissors, Glue, Eraser, Mute, Text, Zoom, Fade, Gain, Quantize with keys T P I J E M N Z A G Q.
+
+**AT-ARR-40** [UI] · D-W3-11 · With MIDI regions A (bar 1) and B (bar 4) on one track: Nudge Value › Beat then Nudge Right moves B one beat; Tick then Nudge Left moves it back one tick. With Bar, Lengthen makes A two bars (step "Region Length") and Shorten one again. Shuffle Left moves B to A's end (step "Shuffle") and again does nothing; Shuffle Right moves A to end at B's start; A alone at half a bar shuffles left to tick 0. With Beat, Ctrl+Alt+Left slips A's content a beat (sequence offset +480, start unchanged, step "Slip Region"); an audio region slips left to source offset 24,000 and right back to 0, and can't slip right past 0. View › Grid Lines turns the grid off and the menu shows it unticked.
+
+**AT-ARR-41** [UI] · D-UI-38 · With 13 tracks: the horizontal zoom slider shows the zoom on its log scale and moving it sets the zoom; the vertical slider at 80 makes every track 80 px; the sliders sit left of +. Ctrl+Down makes the tracks 100 px and Ctrl+Up 80 px. Save as Zoom 1 at bar 5, then Zoom In, Zoom Vertical In and a scroll to the start: Ctrl+Alt+1 restores the zoom, bar 5 and 80 px; Recall Zoom 2 unsaved does nothing. Navigation: Back gives 100 px, Back again 80 px at the zoomed-in level, Forward 100 px. Alt+Page Down moves the view one width right; Page Left twice returns to the start and stops there. Page Down scrolls the tracks and Page Up back to the top. Zoom Selected Track makes the selected track taller and leaves the others; again restores it. Ctrl+drag of a header's lower edge by 20 px sets every track 20 px taller.
+
+**AT-ARR-42** [UI] · D-W3-12 · On Keys (regions at bars 1, 3 (muted) and 5) and Bass (bars 3-4), with the bar-1 and Bass regions the same colour: Shift+F from the bar-3 region selects it, bar 5 and Bass; with the cycle at bars 3-4, Shift+L selects the bar-3 and Bass regions; Select Muted Regions selects the bar-3 one; Select Same-Colored from Bass adds bar 1; on Keys, Select Last picks bar 5 and Select First bar 1; Shift+Right adds bar 3; from bar 5 Shift+Left adds bar 3. Down selects Bass, Up Keys. Move Region to Playhead and Select Next with the playhead at bar 4 moves the bar-3 region there and selects the bar-5 one; Undo moves it back. With the playhead at bar 4 Set Region End makes the Bass region one bar long ("Set Region End"), and Set Region Start starts it at bar 4; with the playhead outside it nothing happens. With the cycle from bar 3½ to 4½, Split Regions at Cycle makes Bass three regions as one undo step ("Split at Cycle"). Scroll to Selection brings a region at bar 201 into view.
+
+**AT-ARR-44** [U] · D-UI-45 · Sections are added as one undo step "Add Section", named Intro then Verse; one inside another or before the start is refused. Rename (not to nothing), Section Color and Resize Section work, a resize onto another section is refused; sections survive saving and reopening; Delete Section removes one.
+
+**AT-ARR-45** [UI] · D-UI-44, D-UI-45 · Configure Global Tracks lists the five tracks and the commands; showing Key and Arrangement gives five lanes, Arrangement on top and Key at the bottom, and moves the tempo lane down. Hiding Tempo removes its lane; after clicking the Key lane, Show Single Global Track shows only it; Marker Track Only shows only markers and then restores the rest. Typing F# minor in the Key lane's menu at bar 5 adds a change the control bar shows after it; dragging it to bar 7 is one undo step "Move Key Change". In the Arrangement lane, Add Section Here at bar 2 makes an 8-bar section, Rename makes it "Verse", dragging its end to bar 6 resizes it, and clicking it selects the region inside and goes to bar 2; Add Arrangement Section adds the next one after it. Dragging the first section past the second shows the drop at the second's end and moves it and its region there as "Move Section"; Ctrl-dragging it makes "Copy Section", with a third section and a copied region. With Markers protected, Add Marker does nothing and says the track is protected, the marker's menu is disabled, and dragging the marker moves only the playhead; clicking the lock unprotects it. Create Time Signature Change at bar 3 beat 2 sets 3/4 from bar 4; Create Key Change sets E♭ major from the playhead. The track choice survives a restart.
+
+**AT-ARR-46** [U] · D-UI-45 · With Intro (bars 1-4) and Verse (5-8), a drop inside a section is refused and a drop at the section's own edge changes nothing. Moving Intro to the end of Verse is one undo step "Move Section": Verse starts at bar 1, the region crossing their edge is split, and the regions, marker and key change go with their section; undo restores all of it. Copying Verse to the start is "Copy Section": a twin Verse at bar 1 with copies of both its regions, everything else one Verse later; undo removes them.
+
+**AT-ARR-47** [U] · D-UI-48 · A marker's text is set as undo step "Marker Text"; the same text again, or text for a missing marker, is refused; it survives saving and reopening; undo clears it.
+
+**AT-ARR-48** [E] · D-UI-51 · A one-second 440 Hz region plays at 440 Hz. Speed 200% ("Region Speed") makes it 24,000 samples long at 880 Hz and silent after; a split halfway starts the right part 24,000 samples into the file, joining them again works, and lengthening can't run past the file's end; 500% is refused. Transpose +12 ("Transpose") plays 880 Hz at the same length; Fine Tune +50 cents plays a quarter tone up; +25 semitones and 51 cents are refused; back at 0 the rendered audio is let go. Time Stretch to 96,000 samples ("Time Stretch") plays 440 Hz for two seconds; a stretch beyond 4x stops at 4x; stretching from the start edge keeps the end. A half-second Speed Up starts at full level but slow and is back in time with the unfaded sine after it; a half-second Slow Down winds down at the end. The values and fade types survive saving; a plain region writes none of them.
+
+**AT-ARR-43** [UI] · D-UI-39 · With markers Intro (bar 1), Verse (bar 3), Chorus (bar 5) and a selected region "Bridge" at bar 7, Shift+; adds a marker "Bridge" at bar 7. With the playhead at bar 4 Set Cycle to Marker sets bars 3-5 with Cycle on and the playhead unmoved; Set Cycle to Next Marker sets bars 5-7 and moves the playhead to bar 5; Previous goes back to bars 3-5. From bar 8, Set Cycle to Marker runs from bar 7 to the project end. With Cycle off at bar 2, Ctrl+Alt+Shift+. goes to bar 3 and sets bars 3-5, Cycle still off; Previous Marker and Set Locators goes to bar 1 with bars 1-3. Go to Marker Number 3 goes to bar 5; 9 does nothing.
+
 ## 6. Audio editor (EDA)
 
 **AT-EDA-1** [UI] · F-EDA-1 · Double-clicking an audio region opens the audio editor showing the full source with the used part highlighted; trimming in the editor with snap off changes the region by single samples at maximum zoom; the change is reflected in the arrange view.
 
 **AT-EDA-2** [UI] · L-ATE-3, D-W3-6 · With View › Snap Edits to Zero Crossings on, dragging a region edge in the audio editor lands on the nearest sample, within 10 ms, where the summed signal crosses zero (or the file's start or end); with none in reach the edge goes where it was dragged.
+
+**AT-EDA-3** [E] · D-UI-49 · Inverting frames 100 to 200 of a file changes only those and moves both regions playing it to the new file (keeping its name), one undo step "Edit File: Invert"; undo plays the old file. Normalize with nothing selected brings the peak to 1.0; Change Gain -6 dB halves, Silence zeroes, Fade In ramps, Remove DC Offset centres and Reverse flips a selection. Deleting 1000 frames before region b moves b back 1000 frames and leaves a; deleting inside a shortens it; deleting all of b is refused. Pasting 500 copied frames over 100 moves b 400 frames on. Trim keeps 2000 to 14000 (a and b follow; "Trim Audio File"); a trim that would empty a region is refused, as is one with nothing selected.
+
+**AT-EDA-4** [UI] · D-UI-49 · The audio editor's zoom slider goes from the whole file to 16 px a sample; the amplitude scale reads 100%, 50%, 0 (25% with Wave Zoom; 0 dB, -6 dB, -inf in decibels) and the sample ruler starts at 0; Snap toggles the tracks area's snap. W turns on the Audio File Editor with Functions; dragging selects without trimming. Silence changes the region's file and undo restores it; copying 12000 frames and pasting at 24000 makes the file and region 60000 long and selects the pasted part; Cut takes it out again. Adjust Tempo Using Selection Length on 0.75 s at 120 BPM gives 160 BPM. Play starts and stops the preview. W hides the editor; Alt+double-click opens the region in an Audio Editor window with File on.
 
 ## 7. Piano roll (PRL)
 
@@ -311,6 +373,18 @@ Notation: *Given* / *When* / *Then*.
 **AT-PRL-18** [UI] · D-W4-10, D-W4-11 · Dragging a note two grid steps right and two semitones up with Shift moves it in time only; dragging it mostly upward with Shift changes its pitch only; without Shift both change. After clicking a note of length 480 and velocity 64, a pencil click draws a note of length 480 and velocity 64.
 
 **AT-PRL-19** [UI] · F-PRL-4, D-UI-28 · With notes at ticks 0 (pitch 60), 480 (64) and 480 (60) selected one at a time, Right steps 0/60 → 480/60 → 480/64 and Left steps back; with no note selected and the playhead at tick 240, Right selects 480/60. Alt+Right moves the selected note one grid step; Alt+Left moves it back.
+
+**AT-PRL-20** [U][UI] · D-W4-14 · Notes at ticks 0, 480 and 1200 (all 240 long, pitch 60) and 480 (pitch 64): Legato on the first three makes them 480, 720 and 240 long (480/64 unselected stays 240); a chord at 0 and 0 ends together at the next start. Remove Overlaps shortens a 960-long note at 0 to 480 when the same pitch starts at 480, and leaves it alone when only another pitch does. With the playhead at 120, Note Start to Playhead makes a 0–240 note 120–240 and leaves a note at 480; Note End to Playhead (from the original notes) leaves the note at 480 alone and makes the note at 0 end at 120. Lengthen adds one snap step; Shorten never goes below one tick. Select All Following from a selected note at 480 selects every note starting at 480 or later. Each edit is one undo step with its name.
+
+**AT-PRL-21** [U][UI] · D-W4-15 · Scale Quantize with C Major moves C#3 to C3 (halfway goes down), F#3 to F3, and leaves E3; with A Minor Pentatonic A#3 goes to A3, B3 to C4 and C#4 to C4; pitch stays in 0–127. The piano roll's second toolbar row shows the regions' names, the selected note's velocity (dragging it sets every selected note as one undo step "Note Velocity"), the Scale root and Scale menus with Scale Q, and the info line names the pitch and bar position under the pointer.
+
+**AT-PRL-22** [E] · D-W4-16 · Notes at velocity 100 and 40 play at 82 and 52 with Dynamics 2:1 ("Region Dynamics"), and both at 74 with Fixed and Velocity +10; 301% is refused. Gate 50% plays a 480-tick note for 240, Fixed for 30, and Legato ends it where the next note starts while the last keeps its length; 201 is refused. A note that runs 720 ticks past the region's end stops there, and with Clip Length off plays its whole length. On a 1/16 grid with Q-Range +30, a note 10 ticks late moves and one 60 late stays; with −30 the opposite. Q-Flam +20 spreads a three-note chord low to high 20 ticks apart, −20 high to low; a range over 3840 is refused. A 480-tick delay plays the first note half a beat late, 961 is refused, and setting milliseconds turns ticks off. The settings survive a save.
+
+**AT-PRL-23** [E] · D-W4-16 · A note at 250 (length 480, pitch 60, velocity 100) in a region with 1/16 quantize, Transpose +2, Velocity +10, Gate 50% and a 120-tick delay: Apply All Except Delay writes it as 240, 240, 62, 110, resets those parameters, keeps the delay and plays exactly as before ("Apply All Except Delay"); Apply All Parameters then moves it to 360 and resets the delay ("Apply All Parameters"); two undos bring back the original note and settings.
+
+**AT-PRL-24** [UI] · D-W4-16 · With a MIDI region selected the inspector shows Dynamics Off, Gate Time Off, Clip Length ticked, delay in ms and no Reverse. Dynamics 2:1, Gate Legato and Clip Length off set the region. Q-Range and Q-Flam are disabled until a quantize value is chosen, then set it keeping the grid. The ticks unit sets the delay to 0 with a ±960 range, and 240 reads "240". Edit › MIDI Region Parameters lists Apply All Parameters Permanently and Apply All Except Delay; the second resets the region's quantize and dynamics and keeps the delay. An audio region shows Reverse unticked; ticking it reverses the region ("Reverse") and it shows ticked.
+
+**AT-PRL-25** [U] · D-UI-48 · Changing a controller event's position, number, value and channel is one undo step "Change Event"; an unchanged event, a value of 128, channel 17, a position before the region or a missing event is refused; undo restores it.
 
 ## 8. Quantize (QNT)
 
@@ -356,6 +430,20 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-MIX-17** [UI] · F-MIX-6, D-W6-10 · Shift+click on a filled insert slot bypasses it without opening its window. Pressing the first slot's bypass dot bypasses it; dragging across the next slot's dot and another channel's first dot bypasses them too, a free slot is skipped, and it is one undo step ("Bypass Plug-ins") that undo reverses for all three. Insert Before › Weft Delay on slot 2 puts the delay in slot 2 and the plug-in that was there in slot 3.
 
+**AT-MIX-18** [UI] · D-W6-13 · A strip's peak number reads "-inf", then "+6.0" in red after a peak of 2.0 (linear), stays at "+6.0" after a lower one, and a click on it gives "-inf" and turns the clip light off; it sits right of the volume readout. With two tracks muted, Mute Off for All unmutes both as one undo step ("Mute Off for All"), and with none muted does nothing. With two tracks soloed, Clear/Recall Solo clears them, then brings both back; after a new solo, it brings back only the new one. With regions on two instrument tracks selected, Solo Tracks of Selected Regions solos exactly those two; with nothing selected it does nothing. Shift+I sets the selected audio track's monitoring On, and again Auto. Copying a strip with -6 dB, pan 0.3 and Weft EQ (Low Cut on) and pasting it on another track gives that track -6 dB, pan 0.3 and its own Weft EQ (a new id) with Low Cut on, as one undo step ("Paste Channel Strip Setting"); Undo takes it all back.
+
+**AT-MIX-19** [UI] · D-W6-14 · With an audio track, instrument track Keys out to bus Drums, Drums sending to bus Verb, and a hidden audio track: Tracks (the default) shows audio, Keys, Verb, Drums; All adds the hidden track after Keys. With Bus off the buses go; Alt+click on Inst leaves only Keys; turning Audio and Bus back on shows all five. Single with Keys selected shows Keys, Verb and Drums; selecting the audio track shows only it; the master stays. Cycle Through Mixer Views goes to Tracks, then All, then Single. The buttons sit above the strips.
+
+**AT-MIX-20** [U] · D-W6-15 · Tracks A, B and C in a new group "Group 1" with B at -10 dB: A's volume to -6 dB puts B at -16 and C at -6, one undo step, and a track outside stays; B to 0 dB stops A at +6. Mute links by default, pan doesn't; with pan, colour, automation mode and hide ticked and mute unticked, B's pan +0.25 moves A to -0.25, A's colour, mode and Hide reach C, and A's unmute leaves B muted. With send slot 1 linked, A's send from -10 to -4 dB moves B's from -20 to -14. The override, the group turned off, and groups turned off each leave B unmuted when A mutes. H hides the members' rows (shown again with groups off); deleting the group frees its tracks, undo puts them back. New groups take the lowest free number.
+
+**AT-MIX-21** [U][E] · D-W6-16 · New VCA is "VCA 1" at 0 dB; a track assigned to it, VCA -6 dB, mute, rename "Drums"; the master can't be assigned; deleting it unassigns the track and undo brings both back. Playing a 0.5 constant through a track at -6.02 dB on a VCA at -6.02 dB gives 0.125; the VCA's mute gives silence; unassigned, 0.25.
+
+**AT-MIX-22** [UI] · D-W6-15, D-W6-16 · New Group from A's Group slot shows "1 Group 1"; Alt+click on B's slot puts B in it (ticked in its menu). A's fader to -6 dB moves B's to -6; with the override, A to -12 leaves B. Soloing A solos B. The Groups window lists the group, chosen, Volume on and Pan off; ticking Pan and Send 2 sets them; renaming to "Drums" and ticking H hide both rows; Ctrl+Shift+1 shows them; Ctrl+Shift+2 fails (no group 2); Shift+G turns groups off (the window's box clears and mute stops linking) and on; Alt+click selects the members; the command closes the window. Create Group for Selected Tracks puts the selected track in group 2. New VCA from A's VCA slot makes "VCA 1" with A on it in one undo step ("New VCA") and a strip reading "1 track"; its fader, Mute and name change the VCA; Shift+click on the inspector's VCA slot shows it in place of the output strip; Delete VCA frees A and removes the strip.
+
+**AT-MIX-23** [E] · D-W6-17 · A track playing a 0.5 constant in a folder stack whose main is at -6.02 dB plays 0.25; the main's mute gives silence. Flattened and put in a summing stack at -6.02 dB, it plays 0.25.
+
+**AT-MIX-24** [UI] · D-W6-17 · Create Folder Stack from B selects a folder main above it with a disclosure triangle (B has none). The triangle closes it: B's header and strip go, and the main's strip has the disclosure button and no output or VCA slot. Follow Track Stacks off shows B's strip, the main before B with the tracks. Create Summing Stack from C routes C to it; closing it, then Alt on the folder's disclosure, opens both. Open/Close Track Stack from B closes the folder and selects its main. B's inspector shows the folder main on the right; soloing the main solos B; Flatten Stack on the summing main sends C to the master; Flatten Stack on A fails.
+
 ## 10. Plugins (PLG)
 
 **AT-PLG-1** [HW] · F-PLG-1, F-PLG-4 · On Windows, a set of at least 5 widely used free VST3 effects and 2 free VST3 instruments (list fixed in Phase 2) load, process audio, open their editors in floating windows, and close without error. **Decision D-AT-4** fixes the list.
@@ -386,6 +474,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-PLG-13** [UI] · F-PLG-4, D-W6-11 · With no track selected Ctrl+Shift+P only reports that a track is needed. On an audio track an empty search lists every effect and no instrument; " dEL " finds only Weft Delay; "weft del" finds it too; "zzz" finds nothing. Searching "eq" and pressing Enter adds Weft EQ to the track's first insert slot. On an instrument track the list also has the instruments, and choosing one sets the track's instrument; an instrument can't be added to an audio track. The Mix menu lists Search and Add Plug-in....
 
+**AT-PLG-14** [UI] · D-W6-12 · On Weft EQ, before anything is saved the window shows "Settings" with Compare and Paste off, and its slider list can be widened. Saving at 0.8 as "Bright" (the name asked for) shows "Bright"; changing to 0.5 shows "Bright *" and turns Compare on; Compare loads 0.8, a second press gives 0.5 back. With "Air" saved at 0.5 the list is Air, Bright; > from an unsaved change loads Bright (one undo step "Load Setting"), > again wraps to Air, < goes back to Bright, and Undo returns to 0.5. The Settings menu lists its commands, then Air and Bright with Bright ticked. Copy on one EQ and Paste on another EQ gives the second the value ("Paste Setting"). Reset Setting returns the parameter to its default ("Reset Setting") and clears the name. Save Setting as Default at 0.7: a newly inserted Weft EQ starts at 0.7, and Recall Default Setting brings 0.7 back. Deleting the loaded "Bright" leaves only Air. V hides every plug-in window, V again shows them; with none open it does nothing.
+
 ## 11. Automation (AUT)
 
 **AT-AUT-1** [UI] · F-AUT-1 · A toggles automation view; each track header shows parameter (default Volume) and mode (default Read) selectors; "+" adds another lane.
@@ -414,6 +504,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-AUT-13** [E] · F-AUT-11, D-W8-6 · A project with steep volume, pan, send and master volume automation (a 0 dB to −inf fade over 5 ms) bounces identically at block sizes 64, 512 and 2048, and the bounce matches live playback at a 240-sample device buffer to within 1e-6.
 
+**AT-AUT-14** [UI] · D-W8-7 · With two audio tracks: Set All Tracks to Automation Touch sets both ("Automation Mode"), then Latch, Read and Off; Off again does nothing. On the selected track Off/Read goes Read then Off, Latch/Read goes Read then Latch, and the other track stays Off. Choosing Touch in the second header with Alt held sets both to Touch. With two lanes shown, × on the first leaves Pan; closing that leaves Volume. With no automation Cycle Through Used Parameters does nothing; with volume and pan points it shows Pan, then Volume. With two volume points selected Up adds 0.01 to each and Shift+Down takes 0.1 from each, and the selected track doesn't change.
+
 ## 12. Tempo and signature (TMP)
 
 **AT-TMP-1** [U] · F-TMP-1 · Tempo map 120 BPM at tick 0, 60 BPM at tick 3,840: `sample(3,840)` = 96,000; `sample(4,800)` = 96,000 + 960 × 50 = 144,000; the inverse maps back exactly.
@@ -433,6 +525,10 @@ Notation: *Given* / *When* / *Then*.
 **AT-TMP-8** [UI] · F-TMP-1, L-TMP-3 · Alt-dragging a tempo change at bar 5 to bar 7 leaves bar 5 as it was and adds a change at bar 7 with the same BPM; a plain click without moving sideways adds nothing; undo removes the copy in one step.
 
 **AT-TMP-9** [UI] · L-TMP-9, D-W11-1 · Five Tap Tempo presses 500 ms apart set 120 BPM, then four 400 ms apart set 150 BPM as one more run; each run is one undo step; a single tap changes nothing.
+
+**AT-TMP-11** [U] · D-UI-44 · With the project in D major, a key change can't go at the start; G major from bar 9 is one undo step "Add Key Change" and a second change at the same place is refused; the key is D major before bar 9 and G major from it. Editing the key at bar 11 edits that change, and at bar 2 the project key. Moving the change to bar 5 is "Key Change"; it can't land on another change. Key changes survive saving and reopening; Delete Key Change removes one and undo restores it.
+
+**AT-TMP-12** [E] · D-UI-44 · A MIDI region from bar 3 to bar 7, with G major from bar 2, A minor from bar 4 and C major from bar 9, exports with two key events: G major at its start and A minor one bar in.
 
 **AT-TMP-10** [UI] · F-TMP-1, D-UI-30 · Dragging the tempo change at bar 5 two bars right and 20 px up with Shift held moves it to bar 7 and keeps its tempo; dragging it mostly upward with Shift changes its tempo and keeps it at bar 5; without Shift both change.
 
@@ -466,9 +562,27 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-EXP-13** [E][U] · L-EXP-3 · A MIDI region exports to `<region name>.mid`, type 1 at 960 PPQN, starting at the region start: notes as they play (transpose and velocity offset applied, muted notes left out, cut at the region end), controllers, and the tempo and meter at the region start plus tempo changes inside it. Files Weft writes read back identically.
 
+**AT-EXP-14** [E] · D-W9-7, D-W9-8 · Normalize On brings a −12 dBFS sine to a 0 dBFS peak and the notice says "Normalized by +12.0 dB."; Overload Protection Only leaves it alone but brings a +2 dBFS mix down to 0 dBFS without a clip warning. Mono writes one channel of (L + R) / 2; Split writes `name.L.wav` and `name.R.wav` equal to the stereo file's sides.
+
+**AT-EXP-15** [E] · D-W9-11 · With a 50 ms burst at the end of a 1-bar range into a 250 ms delay, the plain bounce is silent 150–300 ms in and the 2nd cycle pass bounce has the echo there, at the same length. A real-time-only plug-in makes Automatic real time; Offline stays offline and says so; a real-time bounce drops the second pass with a note.
+
+**AT-EXP-16** [E] · D-W9-8 · AIFF and FLAC bounces at 16, 24 and 32 bits read back (through the platform decoders) as stereo, the range's length, at 16, 24 and 24 bits; with no encoder the bounce fails saying it can't write the format. An MP3 bounce of a 96 BPM project has a TBPM frame of "96".
+
+**AT-EXP-17** [E] · D-W9-9 · Exporting one of two tone tracks renders only its tone, offline even when real time was asked for; the mix has both.
+
+**AT-EXP-18** [E] · D-W9-10 · Three MIDI regions on two tracks export as one file with a track per project track in track order, named after them, notes timed from the earliest region, the tempo at that start; it parses back; nothing MIDI selected gives no tracks.
+
+**AT-EXP-19** [UI] · D-W9-7 to D-W9-11 · The File menu lists the three exports. The dialog maps Mode, Normalize, Channels, AIFF, FLAC and the 2nd cycle pass onto the settings, turns the tail off with the second pass and the second pass off in real time; New Folder makes a folder inside the current one and selects it. Export Track refuses the master and takes the selected track; Export All Tracks lists the unmuted audio and instrument tracks, names each file after its track, and one bounce run writes them all ("Exported N files."). Export Selection as MIDI File needs MIDI regions selected and writes a file.
+
 ## 14. Library (LIB)
 
 **AT-LIB-1** [UI] · F-LIB-1 · The file browser lists folders and supported audio/MIDI files; clicking an audio file previews it; dragging it into the arrange view behaves as AT-ARR-25.
+
+**AT-LIB-3** [UI] · D-UI-33 · In the file browser, after showing a folder and then its subfolder, Back returns to the folder and Forward to the subfolder; going somewhere else after Back leaves nothing to go forward to. Home shows the home folder and Project the project's folder. Searching "TON" lists tone.wav and the folders but not beat.mid; "tone mid" lists no files; clearing it brings beat.mid back. With the volume at -12 dB, Play on the selected tone.wav (a 0.5 peak sine) previews it at a peak of 0.126 and the button reads Stop; Stop ends the preview.
+
+**AT-LIB-4** [UI] · D-UI-40 · In the Media tab, Add Audio File with kick.wav and pad.wav adds both, no regions, as one undo step ("Add Audio File"), and selects them. Add to New Tracks with kick selected and the playhead at bar 2 makes a track "kick" with its region at bar 2 ("Add to Tracks"); with that track selected and the playhead at bar 5, Add Region for both files places them one after another there ("Add Region"). Show All Regions lists the three regions under their files; clicking pad's region selects it; the triangle closes kick. The path line shows the selected file. Play previews pad and reads Stop; Play again stops. Rename makes kick "Kick 1" ("Rename Audio File"). Delete File on pad removes it and its region as one undo step ("Delete File"), and undo brings both back. Select Unused selects nothing and says "No unused audio files."; once pad's region is gone it selects pad, and Delete removes it; a file regions still play can't be removed on its own.
+
+**AT-LIB-5** [UI] · D-UI-53 · Y shows the side panel's Library tab and again hides the panel; O shows the loops. A location with Drums/kick.wav and Keys/pad.wav lists both, tagged Drums or Keys, WAV and the location's name, and can't be added twice. The Drums tag leaves kick; Drums and Keys leave nothing; Ctrl+Delete clears the tags. Searching "PAD" or "keys" leaves pad. The Drums search saved as "Drum loops" comes back with its view and tag. Preview plays kick; Ctrl+I shows its length (0.25 s) and rate. Return with kick selected and the playhead at bar 2 makes a new audio track with kick's region at bar 2. The Instruments and Effects views list every plug-in the insert menus offer. The first instrument makes a new instrument track named after it, playing it, as one undo step ("New Track with ..."); Ctrl+Return with an effect adds it to that track, and in Replace mode a click adds another. Save Patch "Lead" (volume -6 dB, pan -0.5) lists Lead under Patches, and a new track from it has the same instrument, a new copy of the effect, the volume and the pan ("New Track with Lead"). A saved setting of the effect shows under Plug-in Presets (the mixer's Show Presets in Library shows them) and loads onto the track's own copy of the effect ("Load ..."). With Link on, selecting the audio track shows Effects and the instrument track Instruments. Compact View shows the view menu instead of the list. A new Library reads back the location and the smart search.
 
 **AT-LIB-2** [UI][U] · F-LIB-2 · The project media browser lists every media hash referenced with original name, duration, and usage count; deleting all regions using a file shows count 0.
 
@@ -496,7 +610,23 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-UI-11** [UI] · F-TRN-8, D-UI-21 · In a 1400 px window the control bar shows the More button; its menu lists the three count-in choices and a CPU line, and choosing "2-bar count-in" sets the count-in to 2 bars. At 2200 px the More button is hidden. Navigate › Count-in lists Off, 1 Bar and 2 Bars; Shift+K turns a 2-bar count-in off and back on at 2 bars.
 
-**AT-UI-12** [UI] · F-UI-10, D-UI-29 · The Tool menu shows each tool's key (T, P, I, J, E, M); with it open, P picks the Pencil and M the Mute tool; a key that isn't a tool's (Q) picks nothing; with Ctrl held nothing is picked.
+**AT-UI-12** [UI] · F-UI-10, D-UI-29 · The Tool menu shows each tool's key (T, P, I, J, E, M, and N, Z, A, G, Q since D-UI-36); with it open, P picks the Pencil and M the Mute tool; a key that isn't a tool's (W) picks nothing; with Ctrl held nothing is picked.
+
+**AT-UI-13** [UI] · D-UI-41 · The Settings window opens with Welcome, 10 recent, software monitoring on, Dark and C3. Middle C as C4 names note 60 "C4" at once and saves the settings; C3 again names it "C3". Light makes the theme light; View › Dark Theme then sets the appearance to Dark. Software monitoring off and Monitor only the selected track reach the engine; 5 recent limits Open Recent; Wide playhead and the start-up choice apply and save; Help tags off turns tooltips off. The saved settings read back unchanged. A dropout puts "The audio engine couldn't keep up…" in the status bar, and nothing once that's turned off. File › Settings... has Ctrl+,.
+
+**AT-UI-14** [UI] · D-UI-43 · The control bar's customize menu lists every item ticked, the master choices, the time and tempo formats, the big displays, Apply Defaults, Save As Default and Revert. Unticking Tempo and then Key hides them and Revert shows Key again; after Save As Default, hiding the CPU reading and choosing Apply Defaults shows it again. The master volume slider sets the master's fader to -6 dB; Output Meter replaces it and None hides both. At 4.5 s the time reads 216000 as samples and 00:00:04:12 at 25 fps, and the tempo reads 120 without decimals. View › Control Bar hides the bar; View › Toolbar shows the eight default buttons under it, adding Split at Cycle puts it second and Restore Defaults removes it; the layout survives a restart. Two big beats displays and a big time display open as three windows showing the control bar's position and time, and the performance meter opens at twice its size.
+
+**AT-UI-15** [UI] · D-UI-46 · Recall Screenset 2, hide the inspector, Screenset 1 brings it back and 2 hides it again; Screenset 1x then 3 gives screenset 13 without moving to a marker; the screensets survive being written out and read back. After two renames, Undo History lists "Start" first and "Rename Track" last, current; clicking two rows up undoes both (the steps stay listed) and clicking the last redoes them; asking again doesn't open a second window. Open Mixer, Open Piano Roll and Region Inspector Float open windows holding those views; Close Window closes the inspector's. Cycle Through Window Views goes from none to Mixer, backwards twice to Smart Controls and once more to Audio Editor. Close Project gives a new project with one track.
+
+**AT-UI-16** [UI] · D-UI-47 · View › Notes opens the side panel on the Notes tab showing "Audio 1"; both notes are read-only until Edit, and Done saves them (the last undo step is "Track Notes"). Selecting another track while editing saves what was typed for the first and shows the second's empty notes. Text Size large makes the text bigger. The mixer's Notes button shows the track's notes on its strip (not on the master's); Track Notes in the Mixer hides them again. Notes again closes the side panel.
+
+**AT-UI-17** [UI] · D-UI-48 · List Editors opens the Lists tab on the Event list, which lists the one region (at 2.1.1.0, 2.0.0.0 long) while none is selected; double-clicking it lists its note (Note, C3, 100, 0.0.1.0) and controller (2.3.1.0, Control, 1, 64). Typing D3, 90, 0 1 0 0 and 2 2 1 0 changes the note; 200, or a position before the region, is refused. Hiding Notes leaves the controller. + adds a note at 3.1.1.0 and a pitch bend; deleting both is one undo step. Clicking a note selects it in the piano roll; Display Level shows the regions. The Marker list adds a marker at 3.1.1.0, renames it Chorus and moves it to 5 1 1 0; clicking it moves the playhead there; its text is saved when the text area is hidden. The Tempo list adds a change at bar 5 at 120 and types 90 (bar 1 stays 120); 5000 is refused. The Signature list shows 4/4 and the project key; it adds 3/4 at bar 3 and an F# minor key change there and sets the project key to G. Open Event List twice gives one window; Open Tempo List shows the Tempo list; Open Marker Text shows the marker's text.
+
+**AT-UI-18** [UI] · D-UI-50 · Keys read as "Ctrl+J" and "Ctrl+Alt+Shift+F11", and "Numpad 3", ",", "Shift+Space" and "Alt+Page Down" read back the same. Alt+K opens one Key Commands window. Searching "metronome" lists Metronome with K; searching "Ctrl+J" lists only Join; Unassigned lists only commands without keys. Learn Key with Esc changes nothing; Learn Key then Ctrl+J makes Ctrl+J Metronome's (Join loses it, the message says so, the tooltip reads "Metronome (Ctrl+J)") and K runs nothing; Add Key K gives "Ctrl+J, K". The saved text names Metronome and Join but not Play/Stop; Reset All restores the defaults and reading the text back restores the changes. Clear leaves Metronome with no key; Default gives back K; Delete's default keeps both keys and its "Delete" text.
+
+**AT-UI-19** [UI] · D-UI-51 · With an audio region selected the inspector shows Transpose, Fine Tune, Speed and the Speed Up / Slow Down switches, not the MIDI transpose. Transpose 5 and Fine Tune -20 set them with the length unchanged; Speed 200% halves the length, and undo restores it. Speed Up and Slow Down keep the fade lengths, and changing the fade curve keeps the type. Ctrl-dragging the right edge from half a bar to a bar leaves the region alone until release, then stretches it 2x as "Time Stretch"; undo restores it; a plain drag still trims.
+
+**AT-UI-20** [UI] [E] · D-UI-52 · On an instrument track, B shows the Smart Controls (the Smart button lit) with eight knobs: the instrument's parameters first, Volume and Pan last (Pan reads "C" at the middle). Turning Pan all the way pans the track hard right ("R 64") as one undo step, without storing a layout. In the inspector, naming knob 1 "Tone" stores the layout ("Smart Controls"); adding Volume at 25% to 75% and removing the instrument mapping leaves Volume, which the knob sweeps within that range. Learn then controller 21 assigns it ("CC 21, channel 1"); channel 2 doesn't turn it; turns from the controller are one undo step after half a second. Clear removes it. 12 knobs makes twelve; Automatic goes back to eight. Open Smart Controls twice gives one window; B hides the pane. Controller messages from an enabled MIDI input reach the Smart Controls and still play; a disabled input's don't.
 
 ## 16. Collaboration (COL)
 
@@ -566,6 +696,28 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-SYS-1** [UI][U] · F-SYS-1 · Help › About shows the version and lists every third-party component with its license text; a build check fails if any linked dependency is missing from the license manifest.
 
+## 17a. Varispeed (VS)
+
+All D-ARCH-55. Speed Only (pitch held) is out of scope (Ian, 2026-11-22), so there is no AT-VS-9.
+
+**AT-VS-1** [E] · A 1 kHz sine region a second long plays at 1.5 kHz and lasts 2/3 s at +50%, at 500 Hz and 2 s at -50%, and at 2 kHz and 1/2 s at +100% (frequency by zero crossings within 0.1%; length within 40 frames); the playhead moves through the timeline at the rate.
+
+**AT-VS-2** [E] · With Varispeed back off (and the transport stopped), playback is bit-identical to an engine that never used it.
+
+**AT-VS-3** [E] · With Varispeed at +50% on the live engine, an offline bounce is bit-identical to one made with it off, and a real-time bounce matches within 1 LSB: bounces are at normal speed.
+
+**AT-VS-4** [E] · At +25% the click comes every 19,200 samples (150 bpm, within a sample) and sounds the same as at normal speed, sample for sample.
+
+**AT-VS-5** [U] · 0% = 0 st = 440 Hz = the tempo; +100% = +12 st = 880 Hz = twice the tempo; -50% = -12 st = 220 Hz; -15% from 120 bpm reads 102 bpm, and typing 138 bpm is +15%; values outside the range clamp to -50% or +100%; the field reads "+15.0%", "138.00 bpm", "+12.00 st", "220.0 Hz".
+
+**AT-VS-6** [E] · Turning Varispeed on, changing it (+50%, -30%, +100%, block sizes 256, 128 and 77) and turning it off during playback of a sine makes no jump bigger than the sine's own fastest step at that speed, and the audio thread allocates nothing and doesn't block.
+
+**AT-VS-7** [E] · A take of a 1 kHz input recorded for two seconds at -50% is a second long on the timeline and, at normal speed, plays at 2 kHz.
+
+**AT-VS-8** [UI] · Varispeed is hidden in the control bar until Customize shows it. Typing -15 in its field turns it on at 85% (the engine plays at 0.85; the field reads "-15.0%" in the warning colour, the button lit); the tempo unit reads 102.00 bpm and typing 138 makes it +15%; the tuning unit reads 506.0 Hz; -24 semitones clamps to -12.00 st. Dragging the field up 20 px adds 10%. Transport › Varispeed turns it off (the engine at normal speed, the value kept, the field dimmed) and on again; Reset goes back to +0.0%. None of it makes an undo step or changes the project document; the control bar keeps the choice and the unit.
+
+**AT-VS-10** [E] · An input monitored at +50% comes out at its own pitch (1 kHz in, 1 kHz out).
+
 ## 18. Real-time safety and engine robustness (cross-cutting)
 
 These protect non-functional requirements stated in the brief and apply to all audio features.
@@ -590,7 +742,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-PRJ-5 | AT-PRJ-3, 8, 9 | | F-MIX-4 | AT-TRK-8 |
 | F-PRJ-6 | AT-PRJ-10 | | F-MIX-5 | AT-MIX-4 |
 | F-PRJ-7 | AT-PRJ-11, 12 | | F-MIX-6 | AT-MIX-5 |
-| F-PRJ-9 | AT-PRJ-13 | | F-MIX-7 | AT-MIX-6 |
+| F-PRJ-9 | AT-PRJ-13, 16–20 | | F-MIX-7 | AT-MIX-6 |
 | F-TRN-1 | AT-TRN-1, 2, 3, AT-RT-3 | | F-MIX-8 | AT-MIX-7 |
 | F-TRN-2 | AT-TRN-4 | | F-MIX-9 | AT-MIX-8 |
 | F-TRN-4 | AT-TRN-5 | | F-MIX-10 | AT-MIX-9, 10 |
@@ -623,7 +775,7 @@ These protect non-functional requirements stated in the brief and apply to all a
 | F-TRK-8 | AT-TRK-6 | | F-EXP-4 | AT-EXP-7 |
 | F-TRK-9 | AT-TRK-7 | | F-EXP-5 | AT-EXP-8 |
 | F-TRK-10 | AT-TRK-8, 9, 19, AT-MIX-16 | | F-EXP-11 | AT-EXP-9 |
-| F-TRK-11 | AT-TRK-10 | | F-LIB-1 | AT-LIB-1 |
+| F-TRK-11 | AT-TRK-10 | | F-LIB-1 | AT-LIB-1, 3 |
 | F-TRK-12 | AT-TRK-11 | | F-LIB-2 | AT-LIB-2 |
 | F-TRK-16 | AT-COL-20 to 23 | | F-UI-1 | AT-UI-1, 9 |
 | F-TRK-17 | AT-TRK-13 | | F-UI-3 | AT-UI-2 |

@@ -45,14 +45,35 @@ public:
         studio = std::make_unique<weft::ui::Studio> (devices->make (audio), weft::ui::textPath (projects.getFullPathName()), audio.config());
         studio->decoders = weft::engine::importDecoders();
         studio->layout = layout;
+        // D-UI-41: saved settings; before there were any, the theme the layout remembered.
+        auto prefs = weft::ui::Preferences::fromString (settings->getValue ("preferences"));
+        if (settings->getValue ("preferences").isEmpty())
+            prefs.appearance = layout.darkTheme ? weft::ui::Preferences::Appearance::dark : weft::ui::Preferences::Appearance::light;
+        studio->setPreferences (prefs);
+        studio->onPreferencesChanged = [this] (const weft::ui::Preferences& p) {
+            settings->setValue ("preferences", p.toString());
+            settings->saveIfNeeded();
+        };
         studio->midiInputs().setDisabled (audio.disabledMidiInputs);
         midi = std::make_unique<weft::engine::JuceMidiInputs> (studio->midiInputs());
 
         const auto music = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
         content = new weft::ui::MainComponent (*studio, music.isDirectory() ? music : documents);
         content->devices = devices.get();
+        studio->screensetsFromString (settings->getValue ("screensets"));
+        // Key Commands (D-UI-50): this computer's own keys.
+        weft::ui::keyAssignmentsFromString (settings->getValue ("keyCommands"));
+        weft::ui::onKeyAssignmentsChanged() = [this] {
+            settings->setValue ("keyCommands", weft::ui::keyAssignmentsToString());
+            settings->saveIfNeeded();
+        };
+        studio->onScreensetsChanged = [this] {
+            settings->setValue ("screensets", studio->screensetsToString());
+            settings->saveIfNeeded();
+        };
         content->onLayoutChanged = [this] (const weft::ui::PanelLayout& l) {
             settings->setValue ("layout", l.toString());
+            settings->setValue ("screensets", studio->screensetsToString()); // the current screenset follows the layout
             settings->saveIfNeeded();
         };
 
@@ -62,9 +83,19 @@ public:
                 return;
             mainWindow = std::make_unique<MainWindow> (getApplicationName(), content);
             if (picked.isNotEmpty())
+            {
                 content->openProject (weft::ui::textPath (picked));
-            else
-                content->showWelcome();
+                return;
+            }
+            // D-UI-41: or straight into the most recent project that's still there.
+            if (studio->preferences().startup == weft::ui::Preferences::Startup::lastProject)
+                for (const auto& p : studio->recentProjects().items())
+                    if (weft::project::RecentProjects::available (p))
+                    {
+                        content->openProject (p);
+                        return;
+                    }
+            content->showWelcome();
         };
         if (stored)
         {
@@ -79,6 +110,7 @@ public:
 
     void shutdown() override
     {
+        weft::ui::onKeyAssignmentsChanged() = nullptr;
         if (mainWindow != nullptr)
             mainWindow = nullptr; // deletes the content
         else

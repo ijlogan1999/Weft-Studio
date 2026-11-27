@@ -22,6 +22,7 @@ typedef struct WeftMp3Settings
     const char* artist;
     const char* album;
     const char* year;
+    const char* bpm; /* tempo as text, the TBPM frame; may be null or empty */
 } WeftMp3Settings;
 
 WeftMp3Encoder* weft_mp3_open (const char* path, const WeftMp3Settings* settings, char* err, size_t err_len);
