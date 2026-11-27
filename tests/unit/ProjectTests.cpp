@@ -6,6 +6,7 @@
 #include "weft/project/ProjectFiles.h"
 #include "weft/project/ProjectFolder.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -720,4 +721,65 @@ TEST_CASE ("AT-ARR-47 a marker's text: set, unchanged refused, undo, saved with 
 
     REQUIRE (s.undo().done);
     CHECK (s.model().markers.at (*marker)->text.empty());
+}
+
+TEST_CASE ("AT-TRK-26 a track's Smart Controls: set, check, undo, saved with the project", "[U][tracks][AT-TRK-26]")
+{
+    TempDir tmp;
+    project::ProjectFolder folder (tmp.path / "Smart.weft");
+    REQUIRE (folder.create());
+    auto s = newSession();
+    const auto track = s.model().trackOrder.front();
+    CHECK_FALSE (s.model().track (track)->smartControls);
+
+    model::SmartControls sc;
+    sc.layout = 4;
+    sc.controls.resize (2); // filled out to the layout
+    model::AutomationTarget volume, pan;
+    pan.kind = "pan";
+    sc.controls[0].name = "Level";
+    sc.controls[0].mappings.push_back ({ volume, 0.25, 0.75 });
+    sc.controls[0].mappings.push_back ({ pan, 1.0, 0.0 }); // backwards
+    sc.controls[1].cc = 21;
+    sc.controls[1].ccChannel = 2;
+    REQUIRE (s.setSmartControls (track, sc));
+    CHECK (s.undoName() == "Smart Controls");
+    const auto& stored = *s.model().track (track)->smartControls;
+    CHECK (stored.layout == 4);
+    REQUIRE (stored.controls.size() == 4);
+    CHECK (stored.controls[0].name == "Level");
+    REQUIRE (stored.controls[0].mappings.size() == 2);
+    CHECK (stored.controls[0].mappings[0].min == Catch::Approx (0.25));
+    CHECK (stored.controls[0].mappings[1].target.kind == "pan");
+    CHECK (stored.controls[0].mappings[1].min == Catch::Approx (1.0));
+    CHECK (stored.controls[1].cc == 21);
+    CHECK (stored.controls[3].mappings.empty());
+
+    // Unchanged, a layout other than 4, 8 or 12, or a controller out of range is refused.
+    CHECK_FALSE (s.setSmartControls (track, stored));
+    auto bad = stored;
+    bad.layout = 6;
+    CHECK_FALSE (s.setSmartControls (track, bad));
+    bad = stored;
+    bad.controls[2].cc = 128;
+    CHECK_FALSE (s.setSmartControls (track, bad));
+    CHECK_FALSE (s.setSmartControls ("no-such-track", stored));
+
+    REQUIRE (folder.save (s.document()));
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    Session reopened (std::move (*opened.document), "userB", fixedClock, 7);
+    const auto& back = reopened.model().track (track)->smartControls;
+    REQUIRE (back);
+    CHECK (back->layout == 4);
+    CHECK (back->controls[0].mappings[0].max == Catch::Approx (0.75));
+    CHECK (back->controls[1].ccChannel == 2);
+
+    // Back to automatic: nothing stored.
+    REQUIRE (s.setSmartControls (track, std::nullopt));
+    CHECK_FALSE (s.model().track (track)->smartControls);
+    REQUIRE (s.undo().done);
+    CHECK (s.model().track (track)->smartControls);
+    REQUIRE (s.undo().done);
+    CHECK_FALSE (s.model().track (track)->smartControls);
 }

@@ -10,6 +10,7 @@
 #include "ShareDialogs.h"
 #include "UndoHistory.h"
 #include "KeyCommands.h"
+#include "SmartControls.h"
 
 namespace weft::ui
 {
@@ -611,6 +612,18 @@ void MainComponent::handleUiCommand (Cmd command)
         if (! showing)
             sidePanel.showTab (SidePanel::notesTab);
         studio.sendChangeMessage();
+    }
+    else if (command == Cmd::smartControlsWindow)
+    {
+        // D-UI-52: the Smart Controls in a window of their own.
+        if (auto* existing = windowNamed ("Smart Controls"))
+            existing->toFront (true);
+        else
+        {
+            auto content = std::make_unique<SmartControlsPanel> (studio);
+            content->setSize (760, 240);
+            openWindow ("Smart Controls", std::move (content));
+        }
     }
     else if (command == Cmd::keyCommands)
     {
@@ -1360,7 +1373,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         }
         case 5:
             for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::listEditors, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor, Cmd::toggleAudioFileEditor,
-                            Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
+                            Cmd::toggleSmartControls, Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             {
                 // D-UI-44: which global tracks show, and the global-track commands.
@@ -1414,7 +1427,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 windows.addSubMenu ("Screensets", sets);
                 windows.addSeparator();
                 for (auto c : { Cmd::openMainWindow, Cmd::mixerWindow, Cmd::pianoRollWindow, Cmd::audioEditorWindow, Cmd::projectAudioWindow,
-                                Cmd::regionInspectorWindow, Cmd::undoHistory })
+                                Cmd::regionInspectorWindow, Cmd::smartControlsWindow, Cmd::undoHistory })
                     item (windows, c);
                 windows.addSeparator();
                 for (auto c : { Cmd::openEventList, Cmd::openMarkerList, Cmd::openTempoList, Cmd::openSignatureList, Cmd::openMarkerText })

@@ -6,6 +6,7 @@
 // disabled in preferences are dropped here.
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
@@ -41,9 +42,14 @@ public:
         False when it was dropped (disabled input, or the engine's queue is full). */
     bool deliver (const std::string& deviceName, std::uint8_t status, std::uint8_t data1, std::uint8_t data2);
 
+    /** Also hands every controller message from an enabled device to `tap` (Smart Controls, D-UI-52), on the
+        device's thread; the message still goes on to the engine. Null removes it. */
+    void setControllerTap (std::function<void (std::uint8_t status, std::uint8_t data1, std::uint8_t data2)> tap);
+
 private:
     Engine& eng;
     mutable std::mutex lock;
     std::set<std::string> off;
+    std::function<void (std::uint8_t, std::uint8_t, std::uint8_t)> controllerTap;
 };
 } // namespace weft::engine

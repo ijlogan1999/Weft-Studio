@@ -265,6 +265,8 @@ std::vector<CommandInfo> build()
         { Cmd::openMarkerText, "Open Marker Text", "", {} },
         { Cmd::toggleAudioFileEditor, "Show/Hide Audio File Editor", "W", { key ('W') } },
         { Cmd::keyCommands, "Key Commands...", "Alt+K", { key ('K', alt) } },
+        { Cmd::toggleSmartControls, "Smart Controls", "B", { key ('B') } },
+        { Cmd::smartControlsWindow, "Open Smart Controls", "", {} },
         { Cmd::addSection, "Add Arrangement Section", "", {} },
         { Cmd::automationAllOff, "Set All Tracks to Automation Off", "", {} },
         { Cmd::automationAllRead, "Set All Tracks to Automation Read", "", {} },

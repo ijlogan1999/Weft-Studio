@@ -227,7 +227,7 @@ PanelLayout PanelLayout::fromString (const juce::String& text)
     l.inspector = get ("inspector", l.inspector);
     l.sidePanel = get ("sidePanel", l.sidePanel);
     l.globalTracks = get ("globalTracks", l.globalTracks);
-    l.bottom = static_cast<BottomTab> (std::clamp (get ("bottom", 0), 0, 3));
+    l.bottom = static_cast<BottomTab> (std::clamp (get ("bottom", 0), 0, 4));
     l.inspectorWidth = std::clamp (get ("inspectorWidth", l.inspectorWidth), 160, 600);
     l.sidePanelWidth = std::clamp (get ("sidePanelWidth", l.sidePanelWidth), 200, 700);
     l.bottomHeight = std::clamp (get ("bottomHeight", l.bottomHeight), 160, 2000);
@@ -295,6 +295,13 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
     eng = std::make_unique<engine::Engine> (pool, rack);
     live = std::make_unique<engine::LiveAutomation> (*eng);
     midiRouter = std::make_unique<engine::MidiInputRouter> (*eng);
+    // Controllers from MIDI devices also reach the Smart Controls, on the message thread.
+    midiRouter->setControllerTap ([weak = std::weak_ptr<bool> (alive), this] (std::uint8_t status, std::uint8_t d1, std::uint8_t d2) {
+        juce::MessageManager::callAsync ([weak, this, status, d1, d2] {
+            if (weak.lock())
+                smartControlMidi (status, d1, d2);
+        });
+    });
     catalog = std::make_unique<engine::PluginCatalog> (settingsFolder() / "plugins.json");
     catalog->load();
     host = std::make_unique<engine::Vst3Host> (*catalog);
@@ -325,6 +332,7 @@ Studio::Studio (std::unique_ptr<engine::AudioDevice> device, const fs::path& pro
 
 Studio::~Studio()
 {
+    midiRouter->setControllerTap (nullptr);
     if (silentClock != nullptr)
         silentClock->stop();
     if (audioDevice != nullptr)
@@ -1123,6 +1131,178 @@ std::optional<double> Studio::automationValue (const Id& trackId, const model::A
     return eng->automationValue (trackId, target);
 }
 
+double Studio::targetValue (const Id& trackId, const model::AutomationTarget& target) const
+{
+    if (const auto v = eng->automationValue (trackId, target))
+        return *v;
+    const auto* t = model().track (trackId);
+    if (t == nullptr)
+        return 0.0;
+    double fallback = 0.0;
+    if (target.kind == "pluginParam")
+        if (const auto proc = eng->processor (target.pluginId))
+            if (const auto index = proc->parameterIndex (target.paramId); index >= 0)
+                fallback = proc->parameter (index);
+    return automation::staticValue (*t, target, fallback);
+}
+
+juce::String Studio::targetValueText (const Id& trackId, const model::AutomationTarget& target, double normalized) const
+{
+    juce::ignoreUnused (trackId);
+    if (target.kind == "volume" || target.kind == "sendLevel")
+    {
+        const auto db = automation::toDb (normalized);
+        return db <= -100.0 ? juce::String ("-inf dB") : juce::String (db, 1) + " dB";
+    }
+    if (target.kind == "pan")
+    {
+        const auto pan = juce::roundToInt (automation::toPan (normalized) * 64.0);
+        return pan == 0 ? juce::String ("C") : (pan < 0 ? "L " : "R ") + juce::String (std::abs (pan));
+    }
+    if (target.kind == "mute")
+        return automation::toMute (normalized) ? "On" : "Off";
+    if (const auto proc = eng->processor (target.pluginId))
+        if (const auto index = proc->parameterIndex (target.paramId); index >= 0)
+            return juce::String (proc->parameterText (index, normalized));
+    return juce::String (juce::roundToInt (normalized * 100.0)) + "%";
+}
+
+model::SmartControls Studio::smartControls (const Id& trackId, int layout) const
+{
+    const auto* t = model().track (trackId);
+    if (t != nullptr && t->smartControls)
+    {
+        auto own = *t->smartControls;
+        if (layout > 0 && layout != own.layout)
+        {
+            own.layout = layout;
+            own.controls.resize (static_cast<std::size_t> (layout));
+        }
+        return own;
+    }
+    // Automatic: the plug-ins' parameters (instrument first, then inserts in slot order) and the sends on the
+    // first knobs, Volume and Pan on the last two.
+    model::SmartControls out;
+    out.layout = layout > 0 ? layout : 8;
+    out.controls.resize (static_cast<std::size_t> (out.layout));
+    if (t == nullptr)
+        return out;
+    std::vector<model::AutomationTarget> first, last;
+    for (const auto& choice : automationTargets (trackId))
+    {
+        if (choice.target.kind == "volume" || choice.target.kind == "pan")
+            last.push_back (choice.target);
+        else if (choice.target.kind == "pluginParam")
+            first.push_back (choice.target);
+    }
+    for (const auto& choice : automationTargets (trackId))
+        if (choice.target.kind == "sendLevel")
+            first.push_back (choice.target);
+    const auto ends = std::min (last.size(), out.controls.size());
+    const auto room = out.controls.size() - ends;
+    for (std::size_t i = 0; i < room && i < first.size(); ++i)
+        out.controls[i].mappings.push_back ({ first[i], 0.0, 1.0 });
+    for (std::size_t i = 0; i < ends; ++i)
+        out.controls[room + i].mappings.push_back ({ last[i], 0.0, 1.0 });
+    return out;
+}
+
+std::optional<double> Studio::smartControlPosition (const Id& trackId, const model::SmartControl& control) const
+{
+    for (const auto& m : control.mappings)
+    {
+        if (! automation::targetExists (model(), trackId, m.target))
+            continue;
+        const auto v = targetValue (trackId, m.target);
+        if (std::abs (m.max - m.min) < 1e-9)
+            return 0.0;
+        return std::clamp ((v - m.min) / (m.max - m.min), 0.0, 1.0);
+    }
+    return std::nullopt;
+}
+
+juce::String Studio::smartControlName (const Id& trackId, const model::SmartControl& control) const
+{
+    if (! control.name.empty())
+        return juce::String (control.name);
+    for (const auto& m : control.mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            return automationTargetName (trackId, m.target);
+    return {};
+}
+
+juce::String Studio::smartControlText (const Id& trackId, const model::SmartControl& control) const
+{
+    for (const auto& m : control.mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            return targetValueText (trackId, m.target, targetValue (trackId, m.target));
+    return {};
+}
+
+void Studio::turnSmartControl (const Id& trackId, int index, double position)
+{
+    const auto controls = smartControls (trackId);
+    if (index < 0 || index >= static_cast<int> (controls.controls.size()))
+        return;
+    position = std::clamp (position, 0.0, 1.0);
+    for (const auto& m : controls.controls[static_cast<std::size_t> (index)].mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            touchControl (trackId, m.target, m.min + position * (m.max - m.min));
+}
+
+void Studio::releaseSmartControl (const Id& trackId, int index)
+{
+    const auto controls = smartControls (trackId);
+    if (index < 0 || index >= static_cast<int> (controls.controls.size()))
+        return;
+    for (const auto& m : controls.controls[static_cast<std::size_t> (index)].mappings)
+        if (automation::targetExists (model(), trackId, m.target))
+            releaseControl (trackId, m.target);
+}
+
+bool Studio::smartControlMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2)
+{
+    if ((status & 0xF0) != 0xB0 || data1 > 127)
+        return false;
+    const auto trackId = selectedTrack();
+    if (trackId.empty() || model().track (trackId) == nullptr)
+        return false;
+    const int channel = (status & 0x0F) + 1;
+    auto controls = smartControls (trackId);
+    if (smartLearn)
+    {
+        const auto index = *smartLearn;
+        smartLearn.reset();
+        if (index < 0 || index >= static_cast<int> (controls.controls.size()))
+            return false;
+        // A controller turns one knob: it leaves any other it was on.
+        for (auto& c : controls.controls)
+            if (c.cc == data1 && (c.ccChannel == 0 || c.ccChannel == channel))
+                c.cc = -1;
+        controls.controls[static_cast<std::size_t> (index)].cc = data1;
+        controls.controls[static_cast<std::size_t> (index)].ccChannel = channel;
+        check (sess->setSmartControls (trackId, controls));
+        edited();
+        return true;
+    }
+    bool used = false;
+    for (std::size_t i = 0; i < controls.controls.size(); ++i)
+    {
+        const auto& c = controls.controls[i];
+        if (c.cc != data1 || (c.ccChannel != 0 && c.ccChannel != channel))
+            continue;
+        if (! hardwareGesture)
+        {
+            sess->beginGesture ("Smart Control");
+            hardwareGesture = true;
+        }
+        hardwareTurnMs = juce::Time::getMillisecondCounterHiRes();
+        turnSmartControl (trackId, static_cast<int> (i), static_cast<double> (data2) / 127.0);
+        used = true;
+    }
+    return used;
+}
+
 Studio::ViewSnapshot Studio::viewSnapshot() const
 {
     ViewSnapshot v;
@@ -1197,6 +1377,13 @@ bool Studio::recording() const { return eng->state() == engine::TransportState::
 void Studio::tick()
 {
     checkDevice();
+    // A knob turned from hardware is one undo step until it rests for half a second.
+    if (hardwareGesture && juce::Time::getMillisecondCounterHiRes() - hardwareTurnMs > 500.0)
+    {
+        hardwareGesture = false;
+        sess->endGesture();
+        edited();
+    }
     // D-UI-41: say so when the audio engine drops out.
     if (const auto dropouts = eng->dropouts(); dropouts > dropoutsSeen)
     {
@@ -1869,7 +2056,7 @@ std::optional<bool> Studio::performNotes (Cmd command)
         case Cmd::cycleWindows: case Cmd::cycleWindowsBack: case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject: case Cmd::cycleWindowViews: case Cmd::cycleWindowViewsBack:
         case Cmd::toggleNotes: case Cmd::mixerNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList:
         case Cmd::openTempoList: case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::toggleAudioFileEditor:
-        case Cmd::keyCommands:
+        case Cmd::keyCommands: case Cmd::toggleSmartControls: case Cmd::smartControlsWindow:
             break;
     }
     return std::nullopt;
@@ -2446,6 +2633,7 @@ bool Studio::perform (Cmd command)
             break;
         case Cmd::toggleMixer: toggleBottom (layout, BottomTab::mixer); break;
         case Cmd::togglePianoRoll: toggleBottom (layout, BottomTab::pianoRoll); break;
+        case Cmd::toggleSmartControls: toggleBottom (layout, BottomTab::smartControls); break;
         case Cmd::toggleAudioFileEditor:
         {
             // D-UI-49: the audio editor as the Audio File Editor, on the selected audio region when none is open.
@@ -3034,16 +3222,16 @@ bool Studio::perform (Cmd command)
         case Cmd::cycleWindowViews:
         case Cmd::cycleWindowViewsBack:
         {
-            // The bottom area's views in turn: none, Mixer, Piano Roll, Audio Editor (D-UI-46).
-            const int step = command == Cmd::cycleWindowViews ? 1 : 3;
-            layout.bottom = static_cast<BottomTab> ((static_cast<int> (layout.bottom) + step) % 4);
+            // The bottom area's views in turn: none, Mixer, Piano Roll, Audio Editor, Smart Controls (D-UI-46).
+            const int step = command == Cmd::cycleWindowViews ? 1 : 4;
+            layout.bottom = static_cast<BottomTab> ((static_cast<int> (layout.bottom) + step) % 5);
             break;
         }
         case Cmd::undoHistory: case Cmd::openMainWindow: case Cmd::mixerWindow: case Cmd::pianoRollWindow: case Cmd::audioEditorWindow:
         case Cmd::projectAudioWindow: case Cmd::regionInspectorWindow: case Cmd::closeWindow: case Cmd::cycleWindows: case Cmd::cycleWindowsBack:
         case Cmd::minimizeWindow: case Cmd::minimizeAllWindows: case Cmd::zoomWindow: case Cmd::fullScreen: case Cmd::closeProject:
         case Cmd::toggleNotes: case Cmd::listEditors: case Cmd::openEventList: case Cmd::openMarkerList: case Cmd::openTempoList:
-        case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::keyCommands:
+        case Cmd::openSignatureList: case Cmd::openMarkerText: case Cmd::keyCommands: case Cmd::smartControlsWindow:
             if (uiCommand)
                 uiCommand (command);
             break;
@@ -4615,6 +4803,7 @@ void Studio::updatePresence()
         case BottomTab::pianoRoll: p.view = collab::Presence::View::pianoRoll; break;
         case BottomTab::audioEditor: p.view = collab::Presence::View::audioEditor; break;
         case BottomTab::mixer: p.view = collab::Presence::View::mixer; break;
+        case BottomTab::smartControls: p.view = collab::Presence::View::mixer; break;
         case BottomTab::none: p.view = collab::Presence::View::arrange; break;
     }
     p.focusTrack = local.selectedTrack;

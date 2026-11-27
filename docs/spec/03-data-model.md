@@ -109,6 +109,11 @@ Track {
   groupId: Id?                  // its group (D-W6-15); a missing group = none. Not on the master
   vcaId: Id?                    // the VCA fader that scales it (D-W6-16); a missing VCA = none. Not on the master
   notes: string?                // the track's notes (D-UI-47); missing = none. Not on the master
+  smartControls: {              // Smart Controls (D-UI-52); missing = mapped automatically
+    layout: 4 | 8 | 12,         // knobs
+    controls: [ { name: string, mappings: [ { target: AutomationTarget, min: 0..1, max: 0..1 } ],
+                  cc: -1..127, ccChannel: 0..16 } ]   // one per knob; cc -1 = no controller, channel 0 = any
+  }?
   stack: 'folder' | 'summing'?  // buses only: this track is a stack's main (D-W6-17)
   stackOpen: bool = true        // a stack main: its members have rows (and strips, following stacks)
   stackId: Id?                  // a member: its stack's main; a missing or non-main track = not in a stack

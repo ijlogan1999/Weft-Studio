@@ -318,6 +318,8 @@ Track Track::fromValue (const Id& id, const Value& v)
         t.stackId = v["stackId"].asString();
     }
     t.notes = v["notes"].asString();
+    if (v["smartControls"].isMap())
+        t.smartControls = SmartControls::fromValue (v["smartControls"]);
     if (t.kind == TrackKind::bus)
     {
         t.stack = oneOf (v["stack"], { "", "folder", "summing" }, "");
@@ -352,7 +354,8 @@ Value Track::toValue() const
         .set ("stackId", stackId.empty() ? Value() : Value (stackId))
         .set ("stack", stack.empty() ? Value() : Value (stack))
         .set ("stackOpen", stack.empty() ? Value() : Value (stackOpen))
-        .set ("notes", notes.empty() ? Value() : Value (notes));
+        .set ("notes", notes.empty() ? Value() : Value (notes))
+        .set ("smartControls", smartControls ? smartControls->toValue() : Value());
 }
 
 // Region --------------------------------------------------------------------
@@ -905,6 +908,44 @@ Value AutomationTarget::toValue() const
     if (kind == "pluginParam")
         v.set ("pluginId", pluginId).set ("paramId", paramId);
     return v;
+}
+
+SmartControls SmartControls::fromValue (const Value& v)
+{
+    SmartControls out;
+    const auto layout = v["layout"].asInt (8);
+    out.layout = std::find (std::begin (layouts), std::end (layouts), layout) != std::end (layouts) ? static_cast<int> (layout) : 8;
+    for (const auto& cv : v["controls"].asList())
+    {
+        if (static_cast<int> (out.controls.size()) >= out.layout)
+            break;
+        SmartControl c;
+        c.name = cv["name"].asString();
+        c.cc = static_cast<int> (std::clamp<std::int64_t> (cv["cc"].asInt (-1), -1, 127));
+        c.ccChannel = static_cast<int> (std::clamp<std::int64_t> (cv["ccChannel"].asInt (0), 0, 16));
+        for (const auto& mv : cv["mappings"].asList())
+            c.mappings.push_back ({ AutomationTarget::fromValue (mv["target"]), clampDouble (mv["min"], 0.0, 0.0, 1.0), clampDouble (mv["max"], 1.0, 0.0, 1.0) });
+        out.controls.push_back (std::move (c));
+    }
+    out.controls.resize (static_cast<std::size_t> (out.layout));
+    return out;
+}
+
+Value SmartControls::toValue() const
+{
+    auto list = Value::list();
+    for (const auto& c : controls)
+    {
+        auto maps = Value::list();
+        for (const auto& m : c.mappings)
+            maps.listRef().push_back (Value::map().set ("target", m.target.toValue()).set ("min", m.min).set ("max", m.max));
+        list.listRef().push_back (Value::map()
+                                      .set ("name", c.name)
+                                      .set ("mappings", std::move (maps))
+                                      .set ("cc", c.cc)
+                                      .set ("ccChannel", c.ccChannel));
+    }
+    return Value::map().set ("layout", layout).set ("controls", std::move (list));
 }
 
 AutomationLane AutomationLane::fromValue (const Id& id, const Value& v)

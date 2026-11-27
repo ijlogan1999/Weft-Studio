@@ -79,7 +79,8 @@ enum class BottomTab
     none,
     mixer,
     pianoRoll,
-    audioEditor
+    audioEditor,
+    smartControls // D-UI-52
 };
 
 /** Customize Control Bar (D-UI-43): which controls the control bar shows, the master
@@ -592,6 +593,30 @@ public:
     /** What the engine plays for a target while automation drives it (controls follow it). */
     std::optional<double> automationValue (const Id& trackId, const model::AutomationTarget& target) const;
     engine::LiveAutomation& liveAutomation() noexcept { return *live; }
+    /** A target's value now, normalized: what automation plays, else its static value. */
+    double targetValue (const Id& trackId, const model::AutomationTarget& target) const;
+    /** A normalized value of a target as the user reads it ("-6.0 dB", "L 30", "On", the plug-in's own text). */
+    juce::String targetValueText (const Id& trackId, const model::AutomationTarget& target, double normalized) const;
+
+    // Smart Controls (D-UI-52) ---------------------------------------------------------------
+    /** The track's Smart Controls: its own, or mapped automatically (its plug-ins' parameters and its sends on the
+        first knobs, Volume and Pan on the last two). `layout` 0 keeps the track's own knob count. */
+    model::SmartControls smartControls (const Id& trackId, int layout = 0) const;
+    /** A knob's position 0..1, from its first mapping that still exists; nothing when nothing it maps is there. */
+    std::optional<double> smartControlPosition (const Id& trackId, const model::SmartControl& control) const;
+    juce::String smartControlName (const Id& trackId, const model::SmartControl& control) const;
+    juce::String smartControlText (const Id& trackId, const model::SmartControl& control) const;
+    /** Turns knob `index` to `position`: each mapping moves to its place in its range, through touchControl. */
+    void turnSmartControl (const Id& trackId, int index, double position);
+    void releaseSmartControl (const Id& trackId, int index);
+    /**
+        A controller message from a MIDI input (message thread). While Learn waits on a knob of the selected track,
+        the controller is assigned to it ("Smart Controls"); otherwise it turns the selected track's knobs assigned
+        to it, one undo step per burst. True when it was used.
+    */
+    bool smartControlMidi (std::uint8_t status, std::uint8_t data1, std::uint8_t data2);
+    /** The selected track's knob waiting for a controller (Learn), if any. */
+    std::optional<int> smartLearn;
 
     // Bounce (M8) ------------------------------------------------------------------------
     /** The Bounce dialog's starting values (W-9 step 2): default range, 24-bit WAV at the project
@@ -859,6 +884,10 @@ private:
     std::map<Id, std::vector<model::AutomationTarget>> lanesShown;
     std::unique_ptr<engine::LiveAutomation> live;
     std::unique_ptr<engine::MidiInputRouter> midiRouter;
+    /** Smart Controls turned from hardware: the open gesture and when the last message came (ms). */
+    bool hardwareGesture = false;
+    double hardwareTurnMs = 0;
+    std::shared_ptr<bool> alive = std::make_shared<bool> (true);
     std::unique_ptr<engine::BounceJob> bounceJob;
     std::vector<engine::BounceSettings> bounceQueue; // still to run after this one
     std::vector<std::filesystem::path> bouncedSoFar;

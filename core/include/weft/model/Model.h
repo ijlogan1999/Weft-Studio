@@ -141,6 +141,45 @@ struct TrackPlayback
     bool operator== (const TrackPlayback&) const = default;
 };
 
+struct AutomationTarget
+{
+    std::string kind = "volume"; // volume | pan | mute | sendLevel | pluginParam
+    Id sendId;
+    Id pluginId;
+    std::string paramId;
+
+    /** Identity of the target, for "one lane per (track, target)" (D-DM-11). */
+    std::string key() const;
+    /** The target a key() came from, if it parses. */
+    static std::optional<AutomationTarget> fromKey (const std::string& key);
+    static AutomationTarget fromValue (const Value& v);
+    Value toValue() const;
+};
+
+/** Smart Controls (D-UI-52): screen knobs for a track, each sweeping one or more of its parameters. */
+struct SmartMapping
+{
+    AutomationTarget target;
+    double min = 0.0, max = 1.0; // the part of the target's (normalized) range the knob sweeps; max < min turns it backwards
+};
+
+struct SmartControl
+{
+    std::string name; // empty: named after its first mapping
+    std::vector<SmartMapping> mappings;
+    int cc = -1;       // hardware: MIDI controller 0..127 that turns it, -1 none
+    int ccChannel = 0; // its MIDI channel 1..16, 0 any
+};
+
+struct SmartControls
+{
+    static constexpr int layouts[] = { 4, 8, 12 };
+    int layout = 8;                      // how many knobs
+    std::vector<SmartControl> controls;  // `layout` of them
+    static SmartControls fromValue (const Value& v);
+    Value toValue() const;
+};
+
 struct Track
 {
     Id id;
@@ -170,6 +209,8 @@ struct Track
     bool isStackMain() const noexcept { return kind == TrackKind::bus && ! stack.empty(); }
     bool isFolderStack() const noexcept { return kind == TrackKind::bus && stack == "folder"; }
     std::string notes; // track notes (D-UI-47)
+    /** Smart Controls (D-UI-52); absent, they're mapped automatically from the track's parameters. */
+    std::optional<SmartControls> smartControls;
 
     static Track fromValue (const Id& id, const Value& v);
     Value toValue() const;
@@ -408,20 +449,6 @@ struct VersionTag
     Value toValue() const;
 };
 
-struct AutomationTarget
-{
-    std::string kind = "volume"; // volume | pan | mute | sendLevel | pluginParam
-    Id sendId;
-    Id pluginId;
-    std::string paramId;
-
-    /** Identity of the target, for "one lane per (track, target)" (D-DM-11). */
-    std::string key() const;
-    /** The target a key() came from, if it parses. */
-    static std::optional<AutomationTarget> fromKey (const std::string& key);
-    static AutomationTarget fromValue (const Value& v);
-    Value toValue() const;
-};
 
 struct AutoPoint
 {

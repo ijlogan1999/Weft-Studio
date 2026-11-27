@@ -518,3 +518,22 @@ TEST_CASE ("AT-PRL-23: Apply All Parameters writes the region parameters into th
     CHECK (s.model().sequence (r.midi.sequenceId)->sortedNotes()[0]->pos == 250);
     CHECK (s.model().sequence (r.midi.sequenceId)->notes.contains (note));
 }
+
+TEST_CASE ("AT-UI-20: controllers from enabled MIDI inputs reach the Smart Controls tap and still play", "[E][midi][AT-UI-20]")
+{
+    Rig rig;
+    engine::MidiInputRouter router (rig.engine);
+    std::vector<std::array<std::uint8_t, 3>> tapped;
+    router.setControllerTap ([&] (std::uint8_t status, std::uint8_t d1, std::uint8_t d2) { tapped.push_back ({ status, d1, d2 }); });
+    router.setDisabled ({ "Off Port" });
+    CHECK (router.deliver ("Pad Controller", 0xB0, 21, 64));
+    CHECK (router.deliver ("Pad Controller", 0x90, 60, 100)); // notes aren't tapped
+    CHECK_FALSE (router.deliver ("Off Port", 0xB3, 22, 1));   // a disabled input is dropped before the tap
+    CHECK (router.deliver ("Pad Controller", 0xB2, 7, 127));
+    REQUIRE (tapped.size() == 2);
+    CHECK (tapped[0] == std::array<std::uint8_t, 3> { 0xB0, 21, 64 });
+    CHECK (tapped[1] == std::array<std::uint8_t, 3> { 0xB2, 7, 127 });
+    router.setControllerTap (nullptr);
+    CHECK (router.deliver ("Pad Controller", 0xB0, 21, 0));
+    CHECK (tapped.size() == 2);
+}

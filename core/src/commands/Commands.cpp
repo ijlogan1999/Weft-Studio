@@ -339,6 +339,34 @@ EditResult Session::setTrackNotes (const Id& trackId, const std::string& text)
     return run ("Track Notes", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "notes", text.empty() ? Value() : Value (text))); });
 }
 
+EditResult Session::setSmartControls (const Id& trackId, std::optional<model::SmartControls> controls)
+{
+    const auto* t = projection.track (trackId);
+    if (t == nullptr || ! projection.tracks.contains (trackId))
+        return reject ("That track no longer exists.");
+    if (controls)
+    {
+        if (std::find (std::begin (model::SmartControls::layouts), std::end (model::SmartControls::layouts), controls->layout) == std::end (model::SmartControls::layouts))
+            return reject ("Smart Controls have 4, 8 or 12 knobs.");
+        controls->controls.resize (static_cast<std::size_t> (controls->layout));
+        for (auto& c : controls->controls)
+        {
+            if (c.cc < -1 || c.cc > 127 || c.ccChannel < 0 || c.ccChannel > 16)
+                return reject ("A controller is 0 to 127 on channel 1 to 16.");
+            for (auto& m : c.mappings)
+            {
+                m.min = std::clamp (m.min, 0.0, 1.0);
+                m.max = std::clamp (m.max, 0.0, 1.0);
+            }
+        }
+    }
+    const auto next = controls ? controls->toValue() : Value();
+    const auto now = t->smartControls ? t->smartControls->toValue() : Value();
+    if (next == now)
+        return reject ("The Smart Controls haven't changed.");
+    return run ("Smart Controls", [&] (TxnWriter& w) { return wrote (w.put (trackPath (trackId) / "smartControls", next)); });
+}
+
 EditResult Session::setShowHiddenTracks (bool show)
 {
     return run (show ? "Show Hidden Tracks" : "Hide Hidden Tracks",

@@ -163,6 +163,8 @@ public:
     EditResult setShowHiddenTracks (bool show);
     /** Project and track notes (D-UI-47): plain text, one undo step "Project Notes" / "Track Notes". */
     EditResult setProjectNotes (const std::string& text);
+    /** A track's Smart Controls (D-UI-52), or nullopt for the automatic mapping. One undo step "Smart Controls". */
+    EditResult setSmartControls (const Id& trackId, std::optional<model::SmartControls> controls);
     EditResult setTrackNotes (const Id& trackId, const std::string& text);
     /** Project Settings (W-35): the pan law for mono sources, and the live MIDI the project ignores (model::midiFilter bits). */
     EditResult setPanLaw (double centreDb);

@@ -565,12 +565,13 @@ void AudioEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 
 // Bottom area ---------------------------------------------------------------------------------
 
-BottomArea::BottomArea (Studio& s) : studio (s), editor (s), mixer (s), roll (s)
+BottomArea::BottomArea (Studio& s) : studio (s), editor (s), mixer (s), roll (s), smart (s)
 {
     setTitle ("Editors");
     addChildComponent (editor);
     addChildComponent (mixer);
     addChildComponent (roll);
+    addChildComponent (smart);
     studio.addChangeListener (this);
     changeListenerCallback (nullptr);
 }
@@ -582,6 +583,7 @@ void BottomArea::changeListenerCallback (juce::ChangeBroadcaster*)
     editor.setVisible (studio.layout.bottom == BottomTab::audioEditor);
     mixer.setVisible (studio.layout.bottom == BottomTab::mixer);
     roll.setVisible (studio.layout.bottom == BottomTab::pianoRoll);
+    smart.setVisible (studio.layout.bottom == BottomTab::smartControls);
 }
 
 void BottomArea::paint (juce::Graphics& g)
@@ -594,7 +596,7 @@ void BottomArea::paint (juce::Graphics& g)
 void BottomArea::resized()
 {
     const auto r = getLocalBounds().withTrimmedTop (1);
-    for (auto* c : std::initializer_list<juce::Component*> { &editor, &mixer, &roll })
+    for (auto* c : std::initializer_list<juce::Component*> { &editor, &mixer, &roll, &smart })
         c->setBounds (r);
 }
 } // namespace weft::ui

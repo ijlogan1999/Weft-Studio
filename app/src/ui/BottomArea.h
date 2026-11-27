@@ -4,6 +4,7 @@
 
 #include "Mixer.h"
 #include "PianoRoll.h"
+#include "SmartControls.h"
 #include "Studio.h"
 #include "Widgets.h"
 
@@ -114,6 +115,7 @@ public:
     AudioEditor& audioEditor() noexcept { return editor; }
     PianoRoll& pianoRoll() noexcept { return roll; }
     MixerView& mixerView() noexcept { return mixer; }
+    SmartControlsPanel& smartControls() noexcept { return smart; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -121,5 +123,6 @@ private:
     AudioEditor editor;
     MixerView mixer;
     PianoRoll roll;
+    SmartControlsPanel smart;
 };
 } // namespace weft::ui

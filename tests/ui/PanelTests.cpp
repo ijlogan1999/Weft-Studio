@@ -773,11 +773,13 @@ TEST_CASE ("AT-UI-15 screensets, Undo History, panes in their own windows, windo
     CHECK (ui.main->windowNamed ("Inspector") == nullptr);
     CHECK (ui.main->floatingWindows().size() == 3);
 
-    // Cycle Through Window Views: none, Mixer, Piano Roll, Audio Editor, and back.
+    // Cycle Through Window Views: none, Mixer, Piano Roll, Audio Editor, Smart Controls, and back.
     studio.layout.bottom = BottomTab::none;
     REQUIRE (studio.perform (Cmd::cycleWindowViews));
     CHECK (studio.layout.bottom == BottomTab::mixer);
     REQUIRE (studio.perform (Cmd::cycleWindowViewsBack));
+    REQUIRE (studio.perform (Cmd::cycleWindowViewsBack));
+    CHECK (studio.layout.bottom == BottomTab::smartControls);
     REQUIRE (studio.perform (Cmd::cycleWindowViewsBack));
     CHECK (studio.layout.bottom == BottomTab::audioEditor);
 
@@ -1119,4 +1121,129 @@ TEST_CASE ("AT-UI-18 Key Commands: search, show, learn, add, clear, default, con
     panel->defaultSelected();
     CHECK (commandInfo (Cmd::deleteSelection).shortcut == "Delete");
     CHECK (commandInfo (Cmd::deleteSelection).keys.size() == 2);
+}
+
+TEST_CASE ("AT-UI-20 Smart Controls: the pane, automatic knobs, turning them, the inspector and hardware learn", "[UI][AT-UI-20]")
+{
+    Ui ui;
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto instruments = ui.studio.pluginChoices (true);
+    REQUIRE_FALSE (instruments.empty());
+    REQUIRE (ui.studio.setInstrument (keys, instruments.front()));
+    ui.studio.selectTrack (keys);
+    ui.studio.edited();
+    ui.settle();
+
+    // B shows the pane in the bottom area, and again hides it; the control bar's Smart button follows.
+    CHECK (commandInfo (Cmd::toggleSmartControls).shortcut == "B");
+    ui.key ('B');
+    CHECK (ui.studio.layout.bottom == BottomTab::smartControls);
+    auto& panel = ui.main->bottom().smartControls();
+    CHECK (panel.isVisible());
+    const auto buttons = ui.main->controlBar().commandButtons();
+    const auto smartButton = std::find_if (buttons.begin(), buttons.end(), [] (CommandButton* b) { return b->command == Cmd::toggleSmartControls; });
+    REQUIRE (smartButton != buttons.end());
+    CHECK ((*smartButton)->getToggleState());
+
+    // Automatic: eight knobs, the instrument's parameters first and Volume and Pan last.
+    REQUIRE (panel.track() == keys);
+    REQUIRE (panel.knobCount() == 8);
+    auto controls = ui.studio.smartControls (keys);
+    CHECK (controls.controls[6].mappings.front().target.kind == "volume");
+    CHECK (controls.controls[7].mappings.front().target.kind == "pan");
+    REQUIRE_FALSE (controls.controls[0].mappings.empty());
+    CHECK (controls.controls[0].mappings.front().target.kind == "pluginParam");
+    CHECK (ui.studio.smartControlName (keys, controls.controls[6]) == "Volume");
+    CHECK (ui.studio.smartControlText (keys, controls.controls[7]) == "C");
+    CHECK (panel.knob (7).getValue() == Catch::Approx (0.5));
+
+    // Turning the Pan knob pans the track; a drag is one undo step.
+    ui.studio.session().beginGesture ("Smart Control");
+    panel.knob (7).setValue (1.0, juce::sendNotificationSync);
+    ui.studio.session().endGesture();
+    ui.settle();
+    CHECK (ui.m().track (keys)->strip.pan == Catch::Approx (1.0));
+    CHECK (ui.studio.smartControlText (keys, ui.studio.smartControls (keys).controls[7]) == "R 64");
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.m().track (keys)->strip.pan == Catch::Approx (0.0));
+    CHECK_FALSE (ui.m().track (keys)->smartControls); // turning knobs doesn't store a layout
+
+    // The inspector: knob 1 named "Tone", mapped to Volume (25 to 75%) as well, its plug-in mapping removed.
+    panel.setInspectorShown (true);
+    panel.selectKnob (0);
+    ui.settle();
+    CHECK (panel.nameField.isVisible());
+    REQUIRE (panel.rows.size() == 1);
+    panel.setKnobName ("Tone");
+    ui.settle();
+    REQUIRE (ui.m().track (keys)->smartControls);
+    CHECK (ui.studio.session().undoName() == "Smart Controls");
+    CHECK (ui.m().track (keys)->smartControls->controls[0].name == "Tone");
+    const auto choices = ui.studio.automationTargets (keys);
+    const auto volume = std::find_if (choices.begin(), choices.end(), [] (const automation::TargetChoice& c) { return c.target.kind == "volume"; });
+    REQUIRE (volume != choices.end());
+    panel.addMapping (static_cast<int> (volume - choices.begin()));
+    ui.settle();
+    REQUIRE (panel.rows.size() == 2);
+    panel.setMappingRange (1, 0.25, 0.75);
+    ui.settle();
+    panel.removeMapping (0);
+    ui.settle();
+    REQUIRE (panel.rows.size() == 1);
+    controls = ui.studio.smartControls (keys);
+    REQUIRE (controls.controls[0].mappings.size() == 1);
+    CHECK (controls.controls[0].mappings[0].target.kind == "volume");
+    CHECK (controls.controls[0].mappings[0].min == Catch::Approx (0.25));
+    CHECK (ui.studio.smartControlName (keys, controls.controls[0]) == "Tone");
+    // The knob turns within its range (0 dB is above 75%, so it shows all the way up).
+    CHECK (panel.knob (0).getValue() == Catch::Approx (1.0));
+    panel.knob (0).setValue (0.5, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->strip.volumeDb == Catch::Approx (automation::toDb (0.5)).margin (0.01));
+    panel.knob (0).setValue (0.0, juce::sendNotificationSync);
+    ui.settle();
+    CHECK (ui.m().track (keys)->strip.volumeDb == Catch::Approx (automation::toDb (0.25)).margin (0.01));
+
+    // Hardware: Learn, then controller 21 on channel 1 is the knob's; it turns it, and is one undo step.
+    panel.learnController();
+    CHECK (ui.studio.smartLearn == 0);
+    CHECK (panel.controllerLabel.getText() == "Move a controller");
+    CHECK (ui.studio.smartControlMidi (0xB0, 21, 10));
+    ui.settle();
+    CHECK_FALSE (ui.studio.smartLearn);
+    CHECK (ui.m().track (keys)->smartControls->controls[0].cc == 21);
+    CHECK (panel.controllerLabel.getText() == "CC 21, channel 1");
+    CHECK_FALSE (ui.studio.smartControlMidi (0xB1, 21, 127)); // another channel
+    CHECK (ui.studio.smartControlMidi (0xB0, 21, 127));
+    CHECK (ui.studio.smartControlMidi (0xB0, 21, 127));
+    ui.studio.tick(); // still turning: the gesture stays open
+    CHECK (ui.m().track (keys)->strip.volumeDb == Catch::Approx (automation::toDb (0.75)).margin (0.01));
+    juce::Thread::sleep (520);
+    ui.studio.tick();
+    CHECK (ui.studio.session().undoName() == "Smart Control");
+    ui.main->run (Cmd::undo);
+    ui.settle();
+    CHECK (ui.m().track (keys)->strip.volumeDb == Catch::Approx (automation::toDb (0.25)).margin (0.01));
+    panel.clearController();
+    ui.settle();
+    CHECK (ui.m().track (keys)->smartControls->controls[0].cc == -1);
+
+    // Layout: 12 knobs; Automatic maps them all again.
+    panel.setLayout (12);
+    ui.settle();
+    CHECK (panel.knobCount() == 12);
+    CHECK (ui.m().track (keys)->smartControls->controls.size() == 12);
+    panel.useAutomatic();
+    ui.settle();
+    CHECK_FALSE (ui.m().track (keys)->smartControls);
+    CHECK (panel.knobCount() == 8);
+
+    // Window › Open Smart Controls: one window.
+    ui.main->run (Cmd::smartControlsWindow);
+    ui.main->run (Cmd::smartControlsWindow);
+    ui.settle();
+    CHECK (ui.main->windowNamed ("Smart Controls") != nullptr);
+    ui.key ('B');
+    CHECK (ui.studio.layout.bottom == BottomTab::none);
 }
