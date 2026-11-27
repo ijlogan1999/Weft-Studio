@@ -43,13 +43,17 @@ public:
         return text (d);
     }
     std::string defaultDriver() override { return engine::JuceAudioDevice::defaultDriverType(); }
-    std::vector<std::string> outputs (const std::string& d) override { return engine::JuceAudioDevice::deviceNames (d, false); }
-    std::vector<std::string> inputs (const std::string& d) override { return engine::JuceAudioDevice::deviceNames (d, true); }
-    std::string defaultOutput (const std::string& d) override { return engine::JuceAudioDevice::defaultDeviceName (d, false); }
-    std::string defaultInput (const std::string& d) override { return engine::JuceAudioDevice::defaultDeviceName (d, true); }
+    // Every driver but ASIO follows the system's default devices, so offer "System default" first (D-ARCH-56).
+    std::vector<std::string> outputs (const std::string& d) override { return withDefault (d, engine::JuceAudioDevice::deviceNames (d, false)); }
+    std::vector<std::string> inputs (const std::string& d) override { return withDefault (d, engine::JuceAudioDevice::deviceNames (d, true)); }
+    std::string defaultOutput (const std::string& d) override { return hasDefault (d) ? engine::JuceAudioDevice::systemDefault : engine::JuceAudioDevice::defaultDeviceName (d, false); }
+    std::string defaultInput (const std::string& d) override { return hasDefault (d) ? engine::JuceAudioDevice::systemDefault : engine::JuceAudioDevice::defaultDeviceName (d, true); }
     Capabilities capabilities (const std::string& d, const std::string& out, const std::string& in) override
     {
-        const auto c = engine::JuceAudioDevice::capabilities (d, out, in);
+        const auto real = [&d] (const std::string& name, bool input) {
+            return name == engine::JuceAudioDevice::systemDefault ? engine::JuceAudioDevice::defaultDeviceName (d, input) : name;
+        };
+        const auto c = engine::JuceAudioDevice::capabilities (d, real (out, false), real (in, true));
         return { c.sampleRates, c.bufferSizes, c.currentRate, c.defaultBufferSize };
     }
     std::unique_ptr<engine::AudioDevice> make (const AudioSettings& s) override
@@ -57,6 +61,15 @@ public:
         return std::make_unique<engine::JuceAudioDevice> (s.driver, s.output, s.input);
     }
     std::vector<std::string> midiInputs() override { return engine::JuceMidiInputs::deviceNames(); }
+
+private:
+    static bool hasDefault (const std::string& d) { return d != "ASIO"; }
+    static std::vector<std::string> withDefault (const std::string& d, std::vector<std::string> names)
+    {
+        if (hasDefault (d) && ! names.empty())
+            names.insert (names.begin(), engine::JuceAudioDevice::systemDefault);
+        return names;
+    }
 };
 } // namespace
 
@@ -65,6 +78,9 @@ public:
 engine::DeviceConfig AudioSettings::config() const
 {
     engine::DeviceConfig c;
+    // Every hardware input, so a track can record from any of them (F-MIX-12). Output stays the
+    // stereo pair the master feeds (F-MIX-11).
+    c.numInputChannels = engine::DeviceConfig::allChannels;
     if (sampleRate > 0)
         c.sampleRate = sampleRate;
     if (bufferSize > 0)
@@ -307,7 +323,10 @@ void AudioSetupDialog::showLatency()
     }
     const auto c = studio.device().config();
     const auto ms = c.sampleRate > 0 ? 1000.0 * (c.inputLatency + c.outputLatency) / c.sampleRate : 0.0;
-    latency.setText ("Round-trip latency: " + juce::String (ms, 1) + " ms (as reported by the driver)", juce::dontSendNotification);
+    latency.setText ("Round-trip latency: " + juce::String (ms, 1) + " ms (as reported by the driver). "
+                         + juce::String (c.numInputChannels) + (c.numInputChannels == 1 ? " input, " : " inputs, ")
+                         + juce::String (c.numOutputChannels) + (c.numOutputChannels == 1 ? " output." : " outputs."),
+                     juce::dontSendNotification);
 }
 
 void AudioSetupDialog::paint (juce::Graphics& g)

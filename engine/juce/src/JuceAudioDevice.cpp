@@ -179,9 +179,19 @@ bool JuceAudioDevice::open (const DeviceConfig& config)
     }
     const auto outputs = type->getDeviceNames (false);
     const auto inputs = type->getDeviceNames (true);
-    auto outName = impl->deviceName.empty() ? outputs[type->getDefaultDeviceIndex (false)] : juce::String (impl->deviceName);
-    auto inName = ! impl->inputName.empty() ? juce::String (impl->inputName)
-                  : impl->deviceName.empty() ? inputs[type->getDefaultDeviceIndex (true)] : juce::String (impl->deviceName);
+    // System default, or a device that isn't plugged in (say the interface is unplugged and the
+    // headphones are in): use the default device the system offers right now.
+    const auto resolve = [type] (const juce::StringArray& names, const std::string& wanted, bool input) {
+        if (! wanted.empty() && wanted != systemDefault && names.contains (juce::String (wanted)))
+            return juce::String (wanted);
+        const auto i = type->getDefaultDeviceIndex (input);
+        return names[i >= 0 ? i : 0];
+    };
+    const auto outName = resolve (outputs, impl->deviceName, false);
+    auto inName = ! impl->inputName.empty()           ? resolve (inputs, impl->inputName, true)
+                  : impl->deviceName.empty()          ? resolve (inputs, {}, true)
+                  : impl->deviceName == systemDefault ? juce::String()
+                                                      : juce::String (impl->deviceName);
     if (! type->hasSeparateInputsAndOutputs())
         inName = outName;
     impl->device.reset (type->createDevice (outName, inName));
@@ -192,8 +202,9 @@ bool JuceAudioDevice::open (const DeviceConfig& config)
     }
 
     juce::BigInteger ins, outs;
-    ins.setRange (0, config.numInputChannels, true);
-    outs.setRange (0, config.numOutputChannels, true);
+    // Never ask for more channels than the device reports: drivers differ in how they treat extra bits.
+    ins.setRange (0, std::min (config.numInputChannels, impl->device->getInputChannelNames().size()), true);
+    outs.setRange (0, std::min (config.numOutputChannels, impl->device->getOutputChannelNames().size()), true);
     const auto result = impl->device->open (ins, outs, config.sampleRate, config.maxBlockSize);
     if (result.isNotEmpty())
     {

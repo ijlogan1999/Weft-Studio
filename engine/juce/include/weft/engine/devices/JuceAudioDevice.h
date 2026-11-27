@@ -20,6 +20,9 @@ namespace weft::engine
 class JuceAudioDevice final : public AudioDevice
 {
 public:
+    /** A device name meaning "whatever the system's default is when the device opens" (D-ARCH-56). */
+    static constexpr const char* systemDefault = "System default";
+
     /** Driver types available on this machine, e.g. "Windows Audio", "ASIO". */
     static std::vector<std::string> driverTypes();
     /** Output (or input) device names for a driver type. */
@@ -39,7 +42,8 @@ public:
     };
     static Capabilities capabilities (const std::string& driverType, const std::string& output, const std::string& input = {});
 
-    /** Empty strings pick the default driver type and its default devices; an empty input uses the output's name. */
+    /** Empty strings pick the default driver type and its default devices; an empty input uses the output's name
+        (no input when the output is systemDefault). A named device that isn't plugged in falls back to the default. */
     explicit JuceAudioDevice (std::string driverType = {}, std::string deviceName = {}, std::string inputName = {});
     ~JuceAudioDevice() override;
 
