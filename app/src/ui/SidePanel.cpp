@@ -686,6 +686,7 @@ SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
     chatPanel = new ChatPanel (studio);
     historyPanel = new HistoryPanel (studio);
     notesPanel = new NotesPanel (studio);
+    listsPanel = new ListsPanel (studio);
     const auto tab = colour (Token::surface);
     tabbed.addTab ("Browser", tab, fileBrowser, true);
     tabbed.addTab ("Media", tab, mediaList, true);
@@ -693,6 +694,7 @@ SidePanel::SidePanel (Studio& s, const juce::File& browserRoot) : studio (s)
     tabbed.addTab ("Chat", tab, chatPanel, true);
     tabbed.addTab ("History", tab, historyPanel, true);
     tabbed.addTab ("Notes", tab, notesPanel, true);
+    tabbed.addTab ("Lists", tab, listsPanel, true);
     tabbed.setTabBarDepth (size::panelHeader);
     tabbed.setOutline (0);
     addAndMakeVisible (tabbed);

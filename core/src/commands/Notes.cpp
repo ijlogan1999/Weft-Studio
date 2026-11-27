@@ -662,6 +662,38 @@ EditResult Session::moveController (const Id& regionId, const Id& eventId, Ticks
     });
 }
 
+EditResult Session::setControllerEvent (const Id& regionId, const model::CcEvent& event)
+{
+    const auto* r = projection.region (regionId);
+    const auto* seq = sequenceOf (projection, r);
+    if (seq == nullptr || ! seq->controllers.contains (event.id))
+        return reject ("That event no longer exists.");
+    const auto& e = seq->controllers.at (event.id);
+    const bool bend = e.kind == "pitchBend";
+    if (event.number < 0 || event.number > 127 || event.channel < 1 || event.channel > 16
+        || (bend ? (event.value < -8192 || event.value > 8191) : (event.value < 0 || event.value > 127)))
+        return reject ("Controller values are out of range.");
+    if (event.pos < r->start)
+        return reject ("An event can't start before its region.");
+    auto now = e;
+    now.pos = noteSequenceTick (*r, event.pos);
+    now.number = event.number;
+    now.value = event.value;
+    now.channel = event.channel;
+    const auto before = e.toValue();
+    const auto after = now.toValue();
+    if (before == after)
+        return reject ("The event hasn't changed.");
+    return run ("Change Event", [&] (TxnWriter& w) {
+        bool good = true;
+        for (const auto* key : { "pos", "number", "value", "channel" })
+            if (! (before[key] == after[key]))
+                good = good && w.put (ccPath (r->midi.sequenceId, e.id) / key, after[key]);
+        stamp (w, regionId);
+        return wrote (good);
+    });
+}
+
 EditResult Session::deleteControllers (const Id& regionId, const std::vector<Id>& eventIds)
 {
     const auto* r = projection.region (regionId);

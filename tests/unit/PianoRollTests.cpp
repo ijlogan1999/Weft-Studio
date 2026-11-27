@@ -441,3 +441,48 @@ TEST_CASE ("AT-PRL-21 scale quantize moves pitches to the nearest note of the sc
     for (const auto& sc : list)
         CHECK ((sc.degrees & 1) == 1);
 }
+
+TEST_CASE ("AT-PRL-25 the event list changes a controller event's position, number, value and channel", "[U][AT-PRL-25]")
+{
+    Roll roll (3840, 7680);
+    model::CcEvent cc;
+    cc.kind = "cc";
+    cc.number = 1;
+    cc.pos = 3840;
+    cc.value = 64;
+    const auto id = roll.s.addController (roll.region, cc);
+    REQUIRE (id);
+    const auto stored = [&] { return roll.s.model().sequence (roll.r().midi.sequenceId)->controllers.at (*id); };
+
+    auto e = stored();
+    e.pos = 3840 + 960; // timeline ticks
+    e.number = 7;
+    e.value = 100;
+    e.channel = 2;
+    REQUIRE (roll.s.setControllerEvent (roll.region, e));
+    CHECK (roll.s.undoName() == "Change Event");
+    CHECK (commands::noteTimelineTick (roll.r(), stored().pos) == 3840 + 960);
+    CHECK (stored().number == 7);
+    CHECK (stored().value == 100);
+    CHECK (stored().channel == 2);
+
+    // Unchanged, out of range, or before the region: refused.
+    CHECK_FALSE (roll.s.setControllerEvent (roll.region, e));
+    auto bad = e;
+    bad.value = 128;
+    CHECK_FALSE (roll.s.setControllerEvent (roll.region, bad));
+    bad = e;
+    bad.channel = 17;
+    CHECK_FALSE (roll.s.setControllerEvent (roll.region, bad));
+    bad = e;
+    bad.pos = 100;
+    CHECK_FALSE (roll.s.setControllerEvent (roll.region, bad));
+    bad = e;
+    bad.id = "missing";
+    CHECK_FALSE (roll.s.setControllerEvent (roll.region, bad));
+
+    REQUIRE (roll.s.undo().done);
+    CHECK (stored().number == 1);
+    CHECK (stored().value == 64);
+    CHECK (commands::noteTimelineTick (roll.r(), stored().pos) == 3840);
+}

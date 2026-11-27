@@ -378,7 +378,7 @@ Results are computed in float64 and rounded to the nearest sample only at the po
 
 ### 8.1 Marker
 ```ts
-Marker { id: Id, pos: Ticks, name: string, color: Color?, createdBy: UserId }
+Marker { id: Id, pos: Ticks, name: string, color: Color?, createdBy: UserId, text: string? }   // text: the marker text (D-UI-48); missing = none
 KeyChange { id: Id, pos: Ticks /* > 0 */, key: { tonic: 0..11, mode: "major" | "minor" } }
 Section { id: Id, start: Ticks, length: Ticks, name: string, color: Color? }   // sections don't overlap
 ```

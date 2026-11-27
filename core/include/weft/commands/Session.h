@@ -331,6 +331,8 @@ public:
     std::optional<Id> addController (const Id& regionId, model::CcEvent event);
     EditResult moveController (const Id& regionId, const Id& eventId, Ticks at, int value);
     EditResult deleteControllers (const Id& regionId, const std::vector<Id>& eventIds);
+    /** Event List edit (D-UI-48): a controller event's position (timeline ticks), number, value and channel. */
+    EditResult setControllerEvent (const Id& regionId, const model::CcEvent& event);
 
     // Plugins and sends ---------------------------------------------------------
     std::optional<Id> addInsert (const Id& trackId, model::PluginInstance plugin, std::optional<std::size_t> index = {});
@@ -409,6 +411,8 @@ public:
     /** A palette colour for the marker's chip, or none (04 §5); step "Marker Color". */
     EditResult setMarkerColor (const Id& markerId, std::optional<model::Color> color);
     EditResult deleteMarker (const Id& markerId);
+    /** The marker's text (D-UI-48); step "Marker Text". The same text again is refused. */
+    EditResult setMarkerText (const Id& markerId, const std::string& text);
 
     // Key track (D-UI-44) ---------------------------------------------------------------
     /** A key change at pos (after the project start; one per position). */

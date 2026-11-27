@@ -4,6 +4,7 @@
 // Comments, Chat and History tabs.
 
 #include "CollabPanels.h"
+#include "ListsPanel.h"
 #include "NotesPanel.h"
 #include "Studio.h"
 #include "Widgets.h"
@@ -175,6 +176,7 @@ public:
     ChatPanel& chat() noexcept { return *chatPanel; }
     HistoryPanel& history() noexcept { return *historyPanel; }
     NotesPanel& notes() noexcept { return *notesPanel; }
+    ListsPanel& lists() noexcept { return *listsPanel; }
     juce::TabbedComponent& tabs() noexcept { return tabbed; }
     enum Tab
     {
@@ -183,7 +185,8 @@ public:
         commentsTab,
         chatTab,
         historyTab,
-        notesTab
+        notesTab,
+        listsTab
     };
     void showTab (Tab tab);
     /** Tab names with the unread markers: "Comments •", "Chat (2)" (04 §9.3, §9.4). */
@@ -208,5 +211,6 @@ private:
     ChatPanel* chatPanel = nullptr;
     HistoryPanel* historyPanel = nullptr;
     NotesPanel* notesPanel = nullptr;
+    ListsPanel* listsPanel = nullptr;
 };
 } // namespace weft::ui

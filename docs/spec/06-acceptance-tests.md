@@ -316,6 +316,8 @@ Notation: *Given* / *When* / *Then*.
 
 **AT-ARR-46** [U] · D-UI-45 · With Intro (bars 1-4) and Verse (5-8), a drop inside a section is refused and a drop at the section's own edge changes nothing. Moving Intro to the end of Verse is one undo step "Move Section": Verse starts at bar 1, the region crossing their edge is split, and the regions, marker and key change go with their section; undo restores all of it. Copying Verse to the start is "Copy Section": a twin Verse at bar 1 with copies of both its regions, everything else one Verse later; undo removes them.
 
+**AT-ARR-47** [U] · D-UI-48 · A marker's text is set as undo step "Marker Text"; the same text again, or text for a missing marker, is refused; it survives saving and reopening; undo clears it.
+
 **AT-ARR-43** [UI] · D-UI-39 · With markers Intro (bar 1), Verse (bar 3), Chorus (bar 5) and a selected region "Bridge" at bar 7, Shift+; adds a marker "Bridge" at bar 7. With the playhead at bar 4 Set Cycle to Marker sets bars 3-5 with Cycle on and the playhead unmoved; Set Cycle to Next Marker sets bars 5-7 and moves the playhead to bar 5; Previous goes back to bars 3-5. From bar 8, Set Cycle to Marker runs from bar 7 to the project end. With Cycle off at bar 2, Ctrl+Alt+Shift+. goes to bar 3 and sets bars 3-5, Cycle still off; Previous Marker and Set Locators goes to bar 1 with bars 1-3. Go to Marker Number 3 goes to bar 5; 9 does nothing.
 
 ## 6. Audio editor (EDA)
@@ -373,6 +375,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-PRL-23** [E] · D-W4-16 · A note at 250 (length 480, pitch 60, velocity 100) in a region with 1/16 quantize, Transpose +2, Velocity +10, Gate 50% and a 120-tick delay: Apply All Except Delay writes it as 240, 240, 62, 110, resets those parameters, keeps the delay and plays exactly as before ("Apply All Except Delay"); Apply All Parameters then moves it to 360 and resets the delay ("Apply All Parameters"); two undos bring back the original note and settings.
 
 **AT-PRL-24** [UI] · D-W4-16 · With a MIDI region selected the inspector shows Dynamics Off, Gate Time Off, Clip Length ticked, delay in ms and no Reverse. Dynamics 2:1, Gate Legato and Clip Length off set the region. Q-Range and Q-Flam are disabled until a quantize value is chosen, then set it keeping the grid. The ticks unit sets the delay to 0 with a ±960 range, and 240 reads "240". Edit › MIDI Region Parameters lists Apply All Parameters Permanently and Apply All Except Delay; the second resets the region's quantize and dynamics and keeps the delay. An audio region shows Reverse unticked; ticking it reverses the region ("Reverse") and it shows ticked.
+
+**AT-PRL-25** [U] · D-UI-48 · Changing a controller event's position, number, value and channel is one undo step "Change Event"; an unchanged event, a value of 128, channel 17, a position before the region or a missing event is refused; undo restores it.
 
 ## 8. Quantize (QNT)
 
@@ -605,6 +609,8 @@ Notation: *Given* / *When* / *Then*.
 **AT-UI-15** [UI] · D-UI-46 · Recall Screenset 2, hide the inspector, Screenset 1 brings it back and 2 hides it again; Screenset 1x then 3 gives screenset 13 without moving to a marker; the screensets survive being written out and read back. After two renames, Undo History lists "Start" first and "Rename Track" last, current; clicking two rows up undoes both (the steps stay listed) and clicking the last redoes them; asking again doesn't open a second window. Open Mixer, Open Piano Roll and Region Inspector Float open windows holding those views; Close Window closes the inspector's. Cycle Through Window Views goes from none to Mixer, and backwards twice to Audio Editor. Close Project gives a new project with one track.
 
 **AT-UI-16** [UI] · D-UI-47 · View › Notes opens the side panel on the Notes tab showing "Audio 1"; both notes are read-only until Edit, and Done saves them (the last undo step is "Track Notes"). Selecting another track while editing saves what was typed for the first and shows the second's empty notes. Text Size large makes the text bigger. The mixer's Notes button shows the track's notes on its strip (not on the master's); Track Notes in the Mixer hides them again. Notes again closes the side panel.
+
+**AT-UI-17** [UI] · D-UI-48 · List Editors opens the Lists tab on the Event list, which lists the one region (at 2.1.1.0, 2.0.0.0 long) while none is selected; double-clicking it lists its note (Note, C3, 100, 0.0.1.0) and controller (2.3.1.0, Control, 1, 64). Typing D3, 90, 0 1 0 0 and 2 2 1 0 changes the note; 200, or a position before the region, is refused. Hiding Notes leaves the controller. + adds a note at 3.1.1.0 and a pitch bend; deleting both is one undo step. Clicking a note selects it in the piano roll; Display Level shows the regions. The Marker list adds a marker at 3.1.1.0, renames it Chorus and moves it to 5 1 1 0; clicking it moves the playhead there; its text is saved when the text area is hidden. The Tempo list adds a change at bar 5 at 120 and types 90 (bar 1 stays 120); 5000 is refused. The Signature list shows 4/4 and the project key; it adds 3/4 at bar 3 and an F# minor key change there and sets the project key to G. Open Event List twice gives one window; Open Tempo List shows the Tempo list; Open Marker Text shows the marker's text.
 
 ## 16. Collaboration (COL)
 

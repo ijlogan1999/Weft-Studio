@@ -25,6 +25,7 @@ add_library(weft_app_lib STATIC
     src/ui/GroupsPanel.cpp
     src/ui/UndoHistory.cpp
     src/ui/NotesPanel.cpp
+    src/ui/ListsPanel.cpp
     src/ui/Inspector.cpp
     src/ui/MainComponent.cpp
     src/ui/Mixer.cpp

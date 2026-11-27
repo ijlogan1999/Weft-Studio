@@ -333,6 +333,8 @@ struct Marker
     std::string name;
     std::optional<Color> color;
     UserId createdBy;
+    /** The marker's text (D-UI-48): notes shown in the Marker List's text area and the Marker Text window. */
+    std::string text;
 
     static Marker fromValue (const Id& id, const Value& v);
     Value toValue() const;

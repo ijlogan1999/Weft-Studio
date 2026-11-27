@@ -991,6 +991,19 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
     const auto lane = p.y >= rulerHeight ? laneAt (p.y) : std::nullopt;
     if (! lane)
         return;
+    // D-UI-48: Shift+double-click opens the lane's list; Alt+double-click a marker opens its text.
+    if (e.mods.isShiftDown() && (lane == laneSignature || lane == laneKey || lane == laneTempo))
+    {
+        studio.perform (lane == laneTempo ? Cmd::openTempoList : Cmd::openSignatureList);
+        return;
+    }
+    if (e.mods.isAltDown() && lane == laneMarkers)
+        if (const auto* marker = markerAt (p.x))
+        {
+            studio.locate (marker->pos);
+            studio.perform (Cmd::openMarkerText);
+            return;
+        }
     if (lane == laneSignature || lane == laneTempo || lane == laneKey)
         pickContext (contextEdit, p);
     else if (lane == laneArrangement)

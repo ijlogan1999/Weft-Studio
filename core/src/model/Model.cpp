@@ -609,12 +609,14 @@ Marker Marker::fromValue (const Id& id, const Value& v)
     if (! v["color"].isNull())
         m.color = Color::fromValue (v["color"]);
     m.createdBy = v["createdBy"].asString();
+    m.text = v["text"].asString();
     return m;
 }
 
 Value Marker::toValue() const
 {
-    return Value::map().set ("id", id).set ("pos", pos).set ("name", name).set ("color", color ? color->toValue() : Value()).set ("createdBy", createdBy);
+    return Value::map().set ("id", id).set ("pos", pos).set ("name", name).set ("color", color ? color->toValue() : Value()).set ("createdBy", createdBy)
+        .set ("text", text.empty() ? Value() : Value (text));
 }
 
 KeyChange KeyChange::fromValue (const Id& id, const Value& v)

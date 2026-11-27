@@ -865,3 +865,165 @@ TEST_CASE ("AT-UI-16 project and track notes in the Notes tab and under the mixe
     ui.settle();
     CHECK_FALSE (studio.layout.sidePanel);
 }
+
+TEST_CASE ("AT-UI-17 the Event, Marker, Tempo and Signature lists", "[UI][AT-UI-17]")
+{
+    Ui ui;
+    auto& studio = ui.studio;
+    auto& s = studio.session();
+    const auto keys = ui.instrumentTracks (1).front();
+    const auto region = *s.createMidiRegion (keys, 3840, 7680);
+    REQUIRE (s.drawNote (region, 3840, 60, 240, 100));
+    model::CcEvent cc;
+    cc.kind = "cc";
+    cc.number = 1;
+    cc.value = 64;
+    cc.pos = 3840 + 1920;
+    REQUIRE (s.addController (region, cc));
+    studio.edited();
+    studio.selection.clear();
+    ui.settle();
+
+    // List Editors opens the side panel's Lists tab on the Event list; with no MIDI region selected it lists the regions.
+    REQUIRE (ui.main->run (Cmd::listEditors));
+    ui.settle();
+    CHECK (studio.layout.sidePanel);
+    CHECK (ui.main->side().tabs().getCurrentTabIndex() == SidePanel::listsTab);
+    auto& lists = ui.main->side().lists();
+    CHECK (lists.current() == ListsPanel::List::events);
+    CHECK (lists.showingRegions());
+    CHECK (lists.columnNames().joinIntoString (",") == "Position,Name,Track,Length");
+    REQUIRE (lists.getNumRows() == 1);
+    CHECK (lists.cellText (0, 0) == "2.1.1.0");
+    CHECK (lists.cellText (0, 3) == "2.0.0.0");
+    // Double-click opens the region's events.
+    lists.openRow (0);
+    ui.settle();
+    CHECK_FALSE (lists.showingRegions());
+    CHECK (lists.columnNames().joinIntoString (",") == "Position,Status,Ch,Num,Val,Length");
+    REQUIRE (lists.getNumRows() == 2);
+    CHECK (lists.cellText (0, 1) == "Note");
+    CHECK (lists.cellText (0, 3) == "C3");
+    CHECK (lists.cellText (0, 4) == "100");
+    CHECK (lists.cellText (0, 5) == "0.0.1.0");
+    CHECK (lists.cellText (1, 0) == "2.3.1.0");
+    CHECK (lists.cellText (1, 1) == "Control");
+    CHECK (lists.cellText (1, 3) == "1");
+    CHECK (lists.cellText (1, 4) == "64");
+
+    // Edited in place.
+    const auto note = [&] { return ui.m().sequence (ui.region (region).midi.sequenceId)->sortedNotes().front(); };
+    REQUIRE (lists.setCell (0, 3, "D3"));
+    CHECK (note()->pitch == 62);
+    REQUIRE (lists.setCell (0, 4, "90"));
+    CHECK (note()->velocity == 90);
+    REQUIRE (lists.setCell (0, 5, "0 1 0 0"));
+    CHECK (note()->length == 960);
+    REQUIRE (lists.setCell (0, 0, "2 2 1 0"));
+    CHECK (commands::noteTimelineTick (ui.region (region), note()->pos) == 3840 + 960);
+    CHECK_FALSE (lists.setCell (0, 4, "200")); // out of range
+    CHECK_FALSE (lists.setCell (0, 0, "1 1 1 0")); // before the region
+    CHECK (note()->velocity == 90);
+    REQUIRE (lists.setCell (1, 4, "100"));
+    CHECK (lists.cellText (1, 4) == "100");
+
+    // Event Type buttons filter the list.
+    lists.setKindShown ("note", false);
+    CHECK (lists.getNumRows() == 1);
+    CHECK (lists.cellText (0, 1) == "Control");
+    lists.setKindShown ("note", true);
+    CHECK (lists.getNumRows() == 2);
+
+    // + adds at the playhead; Delete removes the selected rows as one undo step.
+    studio.locate (3840 + 3840);
+    REQUIRE (lists.create ("note"));
+    REQUIRE (lists.getNumRows() == 3);
+    CHECK (lists.cellText (2, 0) == "3.1.1.0");
+    REQUIRE (lists.create ("pitchBend"));
+    REQUIRE (lists.getNumRows() == 4);
+    lists.table.selectRow (2);
+    lists.table.selectRow (3, false, false);
+    lists.deleteSelected();
+    CHECK (lists.getNumRows() == 2);
+    REQUIRE (s.undo().done);
+    studio.edited();
+    ui.settle();
+    CHECK (lists.getNumRows() == 4);
+
+    // Selecting an event selects it in the piano roll.
+    lists.clickRow (0);
+    CHECK (studio.piano.selection.size() == 1);
+
+    // Display Level goes up to the regions.
+    lists.levelUp();
+    CHECK (lists.showingRegions());
+
+    // Markers: Create at the playhead, rename, click to move the playhead, text.
+    lists.show (ListsPanel::List::markers);
+    CHECK (lists.columnNames().joinIntoString (",") == "Position,Name");
+    studio.locate (3840 * 2);
+    REQUIRE (lists.create());
+    REQUIRE (lists.getNumRows() == 1);
+    CHECK (lists.cellText (0, 0) == "3.1.1.0");
+    REQUIRE (lists.setCell (0, 1, "Chorus"));
+    CHECK (ui.m().markers.begin()->second->name == "Chorus");
+    REQUIRE (lists.setCell (0, 0, "5 1 1 0"));
+    CHECK (ui.m().markers.begin()->second->pos == 4 * 3840);
+    studio.locate (0);
+    lists.clickRow (0);
+    CHECK (studio.playhead() == 4 * 3840);
+    lists.setTextArea (true);
+    ui.settle();
+    CHECK (lists.markerText.isVisible());
+    CHECK (lists.textMarker() == ui.m().markers.begin()->first);
+    lists.markerText.setText ("Bring in the strings.");
+    lists.setTextArea (false); // hiding the text area saves it
+    CHECK (ui.m().markers.begin()->second->text == "Bring in the strings.");
+
+    // Tempo: Create at the playhead takes the tempo there; type a new one.
+    lists.show (ListsPanel::List::tempo);
+    CHECK (lists.getNumRows() == 1);
+    CHECK (lists.cellText (0, 1) == "120.00");
+    studio.locate (3840 * 4);
+    REQUIRE (lists.create());
+    REQUIRE (lists.getNumRows() == 2);
+    REQUIRE (lists.setCell (1, 1, "90"));
+    CHECK (ui.m().tempo.bpmAt (3840 * 4) == Catch::Approx (90.0));
+    CHECK (ui.m().tempo.bpmAt (0) == Catch::Approx (120.0));
+    CHECK_FALSE (lists.setCell (1, 1, "5000"));
+
+    // Signatures: the project's key, then the time signatures and key changes.
+    lists.show (ListsPanel::List::signatures);
+    CHECK (lists.columnNames().joinIntoString (",") == "Position,Type,Value");
+    REQUIRE (lists.getNumRows() == 2);
+    CHECK (lists.cellText (0, 1) == "Time Signature");
+    CHECK (lists.cellText (0, 2) == "4/4");
+    CHECK (lists.cellText (1, 1) == "Key (project)");
+    studio.locate (3840 * 2);
+    REQUIRE (lists.create ("time"));
+    REQUIRE (lists.getNumRows() == 3);
+    REQUIRE (lists.setCell (2, 2, "3/4"));
+    CHECK (ui.m().signatures.signatureAtBar (2).numerator == 3);
+    CHECK_FALSE (lists.setCell (2, 2, "three"));
+    REQUIRE (lists.create ("key"));
+    REQUIRE (lists.getNumRows() == 4);
+    REQUIRE (lists.setCell (3, 2, "F# minor"));
+    CHECK (ui.m().keyAt (3840 * 2).name() == "F# minor");
+    REQUIRE (lists.setCell (1, 2, "G"));
+    CHECK (ui.m().info.key.name() == "G major");
+
+    // The lists in windows of their own; asking again doesn't open a second.
+    REQUIRE (ui.main->run (Cmd::openEventList));
+    REQUIRE (ui.main->run (Cmd::openEventList));
+    REQUIRE (ui.main->windowNamed ("Event List") != nullptr);
+    CHECK (dynamic_cast<ListsPanel*> (ui.main->windowNamed ("Event List")->getContentComponent()) != nullptr);
+    REQUIRE (ui.main->run (Cmd::openTempoList));
+    auto* tempo = dynamic_cast<ListsPanel*> (ui.main->windowNamed ("Tempo List")->getContentComponent());
+    REQUIRE (tempo != nullptr);
+    CHECK (tempo->current() == ListsPanel::List::tempo);
+    REQUIRE (ui.main->run (Cmd::openMarkerText));
+    auto* text = dynamic_cast<ListsPanel*> (ui.main->windowNamed ("Marker Text")->getContentComponent());
+    REQUIRE (text != nullptr);
+    CHECK (text->textAreaShown());
+    CHECK (text->markerText.getText() == "Bring in the strings.");
+}

@@ -611,6 +611,49 @@ void MainComponent::handleUiCommand (Cmd command)
             sidePanel.showTab (SidePanel::notesTab);
         studio.sendChangeMessage();
     }
+    else if (command == Cmd::listEditors)
+    {
+        // List Editors (D-UI-48): the side panel's Lists tab; again while it shows, the side panel closes.
+        const bool showing = studio.layout.sidePanel && sidePanel.tabs().getCurrentTabIndex() == SidePanel::listsTab;
+        studio.layout.sidePanel = ! showing;
+        if (! showing)
+            sidePanel.showTab (SidePanel::listsTab);
+        studio.sendChangeMessage();
+    }
+    else if (command == Cmd::openEventList || command == Cmd::openMarkerList || command == Cmd::openTempoList || command == Cmd::openSignatureList
+             || command == Cmd::openMarkerText)
+    {
+        // D-UI-48: a list in a window of its own (the event list's is the Event Float).
+        using List = ListsPanel::List;
+        const auto list = command == Cmd::openEventList ? List::events : command == Cmd::openTempoList ? List::tempo
+                        : command == Cmd::openSignatureList                                       ? List::signatures
+                                                                                                  : List::markers;
+        const juce::String title = command == Cmd::openEventList    ? "Event List"
+                                 : command == Cmd::openTempoList     ? "Tempo List"
+                                 : command == Cmd::openSignatureList ? "Signature List"
+                                 : command == Cmd::openMarkerText    ? "Marker Text"
+                                                                     : "Marker List";
+        if (auto* existing = windowNamed (title))
+            existing->toFront (true);
+        else
+        {
+            auto content = std::make_unique<ListsPanel> (studio, list);
+            if (command == Cmd::openMarkerText)
+            {
+                content->setTextArea (true);
+                // The marker at the playhead (or the first) is the one whose text shows.
+                const auto& m = studio.model();
+                int row = -1;
+                for (int i = 0; i < content->getNumRows(); ++i)
+                    if (content->rows()[static_cast<std::size_t> (i)].pos <= studio.playhead() || row < 0)
+                        row = i;
+                if (row >= 0 && ! m.markers.empty())
+                    content->table.selectRow (row);
+                content->setSize (420, 520);
+            }
+            openWindow (title, std::move (content));
+        }
+    }
     else if (command >= Cmd::undoHistory && command <= Cmd::closeProject)
         windowCommand (command);
     else if (command == Cmd::groupsWindow)
@@ -1249,7 +1292,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 return sub;
             };
             menu.addSubMenu ("Markers", subMenu ({ Cmd::markerForSelection, Cmd::goToMarkerNumber, Cmd::cycleToMarker, Cmd::cycleToPreviousMarker,
-                                                   Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators })); // D-UI-39
+                                                   Cmd::cycleToNextMarker, Cmd::previousMarkerSetLocators, Cmd::nextMarkerSetLocators,
+                                                   Cmd::openMarkerList, Cmd::openMarkerText })); // D-UI-39, D-UI-48
             menu.addSubMenu ("Go To", subMenu ({ Cmd::goToPosition, Cmd::goToCycleStart, Cmd::goToCycleEnd, Cmd::goToSelectionStart, Cmd::goToSelectionEnd,
                                                  Cmd::goToLastLocate }));
             menu.addSubMenu ("Play From", subMenu ({ Cmd::playFromStart, Cmd::playFromCycleStart, Cmd::playFromSelection, Cmd::playFromWindowEdge,
@@ -1305,7 +1349,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             break;
         }
         case 5:
-            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
+            for (auto c : { Cmd::toggleInspector, Cmd::toggleSidePanel, Cmd::toggleNotes, Cmd::listEditors, Cmd::toggleMixer, Cmd::togglePianoRoll, Cmd::toggleAudioEditor,
                             Cmd::toggleGlobalTracks, Cmd::toggleAutomation })
                 add (c);
             {
@@ -1361,6 +1405,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
                 windows.addSeparator();
                 for (auto c : { Cmd::openMainWindow, Cmd::mixerWindow, Cmd::pianoRollWindow, Cmd::audioEditorWindow, Cmd::projectAudioWindow,
                                 Cmd::regionInspectorWindow, Cmd::undoHistory })
+                    item (windows, c);
+                windows.addSeparator();
+                for (auto c : { Cmd::openEventList, Cmd::openMarkerList, Cmd::openTempoList, Cmd::openSignatureList, Cmd::openMarkerText })
                     item (windows, c);
                 windows.addSeparator();
                 for (auto c : { Cmd::cycleWindows, Cmd::cycleWindowsBack, Cmd::cycleWindowViews, Cmd::cycleWindowViewsBack, Cmd::closeWindow,

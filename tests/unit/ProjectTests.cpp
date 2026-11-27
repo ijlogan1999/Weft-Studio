@@ -696,3 +696,28 @@ TEST_CASE ("AT-PRJ-21 project and track notes: set, undo, unchanged is refused, 
     const auto stored = s.document().get (doc::path ({ "notes" }));
     CHECK ((! stored || stored->isNull()));
 }
+
+TEST_CASE ("AT-ARR-47 a marker's text: set, unchanged refused, undo, saved with the project", "[U][arrange][AT-ARR-47]")
+{
+    TempDir tmp;
+    project::ProjectFolder folder (tmp.path / "Markers.weft");
+    REQUIRE (folder.create());
+    auto s = newSession();
+    const auto marker = s.addMarker (3840, "Verse");
+    REQUIRE (marker);
+    CHECK (s.model().markers.at (*marker)->text.empty());
+    REQUIRE (s.setMarkerText (*marker, "Double the vocal here."));
+    CHECK (s.undoName() == "Marker Text");
+    CHECK (s.model().markers.at (*marker)->text == "Double the vocal here.");
+    CHECK_FALSE (s.setMarkerText (*marker, "Double the vocal here."));
+    CHECK_FALSE (s.setMarkerText ("missing", "x"));
+
+    REQUIRE (folder.save (s.document()));
+    auto opened = folder.open();
+    REQUIRE (opened.document);
+    Session reopened (std::move (*opened.document), "userB", fixedClock, 7);
+    CHECK (reopened.model().markers.at (*marker)->text == "Double the vocal here.");
+
+    REQUIRE (s.undo().done);
+    CHECK (s.model().markers.at (*marker)->text.empty());
+}
